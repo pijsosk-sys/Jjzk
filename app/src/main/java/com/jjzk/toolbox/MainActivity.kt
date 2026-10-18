@@ -59,16 +59,34 @@ class MainActivity : AppCompatActivity() {
         CurrentWorld.listeners -= ::syncHeader
     }
 
+    private val fragmentTags = mapOf(
+        R.id.nav_home    to "home",
+        R.id.nav_items   to "items",
+        R.id.nav_world   to "world",
+        R.id.nav_mods    to "mods",
+        R.id.nav_backups to "backups"
+    )
+
     private fun show(itemId: Int) {
-        val f: Fragment = when (itemId) {
-            R.id.nav_items   -> ItemsFragment()
-            R.id.nav_world   -> WorldFragment()
-            R.id.nav_mods    -> ModsFragment()
-            R.id.nav_backups -> BackupsFragment()
-            else             -> HomeFragment()
+        val fm = supportFragmentManager
+        val tag = fragmentTags[itemId] ?: "home"
+        val tx = fm.beginTransaction()
+        // Hide every known fragment, show (or create) the requested one.
+        for (t in fragmentTags.values) fm.findFragmentByTag(t)?.let { tx.hide(it) }
+        val existing = fm.findFragmentByTag(tag)
+        if (existing != null) {
+            tx.show(existing)
+        } else {
+            val f: Fragment = when (itemId) {
+                R.id.nav_items   -> ItemsFragment()
+                R.id.nav_world   -> WorldFragment()
+                R.id.nav_mods    -> ModsFragment()
+                R.id.nav_backups -> BackupsFragment()
+                else             -> HomeFragment()
+            }
+            tx.add(R.id.container, f, tag)
         }
-        supportFragmentManager.beginTransaction()
-            .replace(R.id.container, f).commitAllowingStateLoss()
+        tx.commitAllowingStateLoss()
     }
 
     private fun syncHeader() {

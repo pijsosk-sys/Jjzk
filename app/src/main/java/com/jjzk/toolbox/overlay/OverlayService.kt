@@ -14,108 +14,134 @@ import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import com.jjzk.toolbox.MainActivity
 import com.jjzk.toolbox.R
 
 /**
- * Draws the floating "handle + side-panel" overlay above whatever app is
- * foreground (Minecraft, usually). Starts a foreground notification so the
- * OS doesn't kill it mid-session, and listens for a stop action from the
- * notification to tear itself down.
+ * Floating overlay: an always-on-top drag-handle plus a lazy-attached
+ * panel. Panel is inflated once and cached — toggling it only flips
+ * window attachment, so expanding the menu never costs an inflate pass.
+ * Dragging the handle no longer re-layouts the panel on every move
+ * event; the panel repositions once on ACTION_UP.
  */
 class OverlayService : Service() {
 
-    private lateinit var windowManager: WindowManager
+    private lateinit var wm: WindowManager
+    private lateinit var controller: OverlayController
     private var handle: View? = null
     private var panel: View? = null
-    private lateinit var controller: OverlayController
+    private var panelAttached = false
+    private lateinit var handleLp: WindowManager.LayoutParams
+    private lateinit var panelLp: WindowManager.LayoutParams
+    private var touchSlop = 10
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
-        windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        wm = getSystemService(WINDOW_SERVICE) as WindowManager
         controller = OverlayController(this)
+        touchSlop = ViewConfiguration.get(this).scaledTouchSlop
         startInForeground()
-        showHandle()
+        attachHandle()
+        buildPanel()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
-            stopSelf()
-            return START_NOT_STICKY
-        }
+        if (intent?.action == ACTION_STOP) { stopSelf(); return START_NOT_STICKY }
         return START_STICKY
     }
 
     override fun onDestroy() {
-        panel?.let { safeRemove(it) }; panel = null
-        handle?.let { safeRemove(it) }; handle = null
+        if (panelAttached) safeRemove(panel!!)
+        handle?.let { safeRemove(it) }
+        panel = null; handle = null; panelAttached = false
         super.onDestroy()
     }
 
-    private fun showHandle() {
-        val inflater = LayoutInflater.from(this)
-        val view = inflater.inflate(R.layout.overlay_handle, null)
-        val lp = WindowManager.LayoutParams(
+    private fun attachHandle() {
+        val view = LayoutInflater.from(this).inflate(R.layout.overlay_handle, null)
+        handleLp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             overlayType(),
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
             x = 24; y = 240
         }
-        attachDrag(view, lp)
-        view.setOnClickListener { togglePanel(lp) }
-        windowManager.addView(view, lp)
+        attachDragWithTap(view, handleLp) { togglePanel() }
+        wm.addView(view, handleLp)
         handle = view
     }
 
-    private fun togglePanel(handleLp: WindowManager.LayoutParams) {
-        if (panel != null) {
-            safeRemove(panel!!); panel = null; return
-        }
+    private fun buildPanel() {
         val view = LayoutInflater.from(this).inflate(R.layout.overlay_panel, null)
         controller.bind(view) { stopSelf() }
-        val lp = WindowManager.LayoutParams(
+        panelLp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             overlayType(),
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = handleLp.x + 80
-            y = handleLp.y
+            x = 100; y = 200
         }
-        windowManager.addView(view, lp)
         panel = view
     }
 
+    private fun togglePanel() {
+        val p = panel ?: return
+        if (panelAttached) {
+            safeRemove(p); panelAttached = false
+            return
+        }
+        panelLp.x = handleLp.x + 72
+        panelLp.y = (handleLp.y - 40).coerceAtLeast(0)
+        wm.addView(p, panelLp)
+        panelAttached = true
+    }
+
     @Suppress("ClickableViewAccessibility")
-    private fun attachDrag(view: View, lp: WindowManager.LayoutParams) {
-        var startX = 0; var startY = 0; var rawX = 0f; var rawY = 0f
+    private fun attachDragWithTap(view: View, lp: WindowManager.LayoutParams, onTap: () -> Unit) {
+        var startLpX = 0; var startLpY = 0
+        var downX = 0f; var downY = 0f
+        var moved = false
         view.setOnTouchListener { v, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    startX = lp.x; startY = lp.y
-                    rawX = event.rawX; rawY = event.rawY
-                    false
+                    startLpX = lp.x; startLpY = lp.y
+                    downX = event.rawX; downY = event.rawY
+                    moved = false
+                    true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    lp.x = startX + (event.rawX - rawX).toInt()
-                    lp.y = startY + (event.rawY - rawY).toInt()
-                    windowManager.updateViewLayout(v, lp)
-                    panel?.let {
-                        val plp = it.layoutParams as WindowManager.LayoutParams
-                        plp.x = lp.x + 80
-                        plp.y = lp.y
-                        windowManager.updateViewLayout(it, plp)
+                    val dx = event.rawX - downX
+                    val dy = event.rawY - downY
+                    if (!moved && (kotlin.math.abs(dx) > touchSlop || kotlin.math.abs(dy) > touchSlop))
+                        moved = true
+                    if (moved) {
+                        lp.x = startLpX + dx.toInt()
+                        lp.y = startLpY + dy.toInt()
+                        wm.updateViewLayout(v, lp)
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    if (!moved) {
+                        v.performClick(); onTap()
+                    } else if (panelAttached) {
+                        panelLp.x = lp.x + 72
+                        panelLp.y = (lp.y - 40).coerceAtLeast(0)
+                        wm.updateViewLayout(panel!!, panelLp)
                     }
                     true
                 }
@@ -124,7 +150,7 @@ class OverlayService : Service() {
         }
     }
 
-    private fun safeRemove(v: View) = try { windowManager.removeView(v) } catch (_: Throwable) {}
+    private fun safeRemove(v: View) = try { wm.removeView(v) } catch (_: Throwable) {}
 
     private fun overlayType(): Int =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
@@ -150,17 +176,16 @@ class OverlayService : Service() {
         )
         val notif = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Toolbox overlay active")
-            .setContentText("Tap the floating handle to open the menu")
+            .setContentText("Tap the floating handle for the menu")
             .setSmallIcon(android.R.drawable.ic_menu_manage)
             .setContentIntent(openApp)
             .addAction(android.R.drawable.ic_delete, "Stop", stop)
             .setOngoing(true)
             .build()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
             startForeground(NOTIF_ID, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-        } else {
+        else
             startForeground(NOTIF_ID, notif)
-        }
     }
 
     companion object {
@@ -173,9 +198,6 @@ class OverlayService : Service() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ctx.startForegroundService(i)
             else ctx.startService(i)
         }
-
-        fun stop(ctx: Context) {
-            ctx.stopService(Intent(ctx, OverlayService::class.java))
-        }
+        fun stop(ctx: Context) { ctx.stopService(Intent(ctx, OverlayService::class.java)) }
     }
 }

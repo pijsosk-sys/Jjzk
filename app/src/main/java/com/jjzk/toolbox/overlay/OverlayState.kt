@@ -10,7 +10,8 @@ package com.jjzk.toolbox.overlay
 object OverlayState {
 
     enum class Toggle(val label: String, val needsRoot: Boolean) {
-        X_RAY       ("X-Ray",         true),
+        X_RAY       ("X-Ray",         false),  // resource-pack hook
+        KILLAURA    ("Kill Aura",     false),  // script-pack hook
         CHEST_ESP   ("Chest ESP",     true),
         PLAYER_ESP  ("Player ESP",    true),
         SPEED       ("Speed",         true),
@@ -18,7 +19,6 @@ object OverlayState {
         JETPACK     ("Jetpack",       true),
         GOD         ("God Mode",      true),
         INSTAKILL   ("Instakill",     true),
-        KILLAURA    ("Kill Aura",     true),
         REACH       ("Reach",         true),
         FULLBRIGHT  ("Fullbright",    true),
         NO_FALL     ("No Fall",       true),

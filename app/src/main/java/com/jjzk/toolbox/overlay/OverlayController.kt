@@ -8,6 +8,8 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import com.jjzk.toolbox.R
+import com.jjzk.toolbox.hacks.KillAuraPack
+import com.jjzk.toolbox.hacks.XrayPack
 import com.jjzk.toolbox.ui.CurrentWorld
 import com.jjzk.toolbox.world.WorldEditor
 
@@ -63,7 +65,11 @@ class OverlayController(private val ctx: Context) {
             val sub:   TextView = row.findViewById(R.id.rowSub)
             val sw:    android.widget.Switch = row.findViewById(R.id.rowSwitch)
             label.text = t.label
-            sub.text = if (t.needsRoot) "Needs ptrace (rooted MCPE)" else "Writes to level.dat"
+            sub.text = when (t) {
+                OverlayState.Toggle.X_RAY    -> "Installs a resource pack"
+                OverlayState.Toggle.KILLAURA -> "Installs a behavior pack · chat: .ka on"
+                else -> if (t.needsRoot) "Needs ptrace (rooted MCPE)" else "Writes to level.dat"
+            }
             sw.isChecked = OverlayState.isOn(t)
             sw.setOnCheckedChangeListener { _, checked ->
                 OverlayState.set(t, checked)
@@ -77,6 +83,31 @@ class OverlayController(private val ctx: Context) {
     }
 
     private fun applyToggle(t: OverlayState.Toggle, on: Boolean) {
+        val install = CurrentWorld.install
+        try {
+            when (t) {
+                OverlayState.Toggle.X_RAY -> {
+                    if (install == null) { toast("Open Toolbox once to detect Minecraft"); return }
+                    if (on) XrayPack.install(install) else XrayPack.remove(install)
+                    toast(if (on)
+                        "X-Ray pack installed. Enable it on the world's Resource Packs page."
+                    else "X-Ray pack removed.")
+                    return
+                }
+                OverlayState.Toggle.KILLAURA -> {
+                    if (install == null) { toast("Open Toolbox once to detect Minecraft"); return }
+                    if (on) KillAuraPack.install(install) else KillAuraPack.remove(install)
+                    toast(if (on)
+                        "KillAura pack installed. Enable it (behavior pack + Beta APIs experiment); in-game type .ka on"
+                    else "KillAura pack removed.")
+                    return
+                }
+                else -> Unit
+            }
+        } catch (e: Throwable) {
+            toast("Pack op failed: ${e.message}"); return
+        }
+
         val world = CurrentWorld.world ?: run {
             if (!t.needsRoot) toast("Pick a world in Toolbox first")
             return

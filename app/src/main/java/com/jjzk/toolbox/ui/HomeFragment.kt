@@ -78,6 +78,13 @@ class HomeFragment : Fragment() {
             Toast.makeText(requireContext(), "Minecraft launch intent unavailable", Toast.LENGTH_SHORT).show()
             return
         }
+        // Chain: ensure overlay permission and the service is running, then
+        // hand control to Minecraft. The overlay floats on top from first frame.
+        if (!canDrawOverlays()) { requestOverlayPermission(); return }
+        if (!overlayRunning) {
+            OverlayService.start(requireContext()); overlayRunning = true
+            b.toggleOverlay.text = "Stop Overlay"
+        }
         launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         startActivity(launch)
     }
