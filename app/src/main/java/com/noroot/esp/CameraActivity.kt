@@ -98,10 +98,10 @@ class CameraActivity : AppCompatActivity() {
                 val rot = ip.imageInfo.rotationDegrees
                 val boxes = det.detect(bmp)
                 frames++
+                val peak = det.lastPeakScore
                 runOnUiThread {
                     overlay.submit(boxes, bmp.width, bmp.height, rot)
-                    tvStatus.text =
-                        "f=$frames  ms=$lastMs  box=${boxes.size}  peak=%.2f  rot=$rot"
+                    tvStatus.text = "f=$frames ms=$lastMs box=${boxes.size} peak=%.2f rot=$rot".format(peak)
                 }
                 bmp.recycle()
             } catch (t: Throwable) {
