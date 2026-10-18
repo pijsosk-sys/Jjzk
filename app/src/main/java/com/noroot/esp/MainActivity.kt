@@ -88,6 +88,10 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, CameraActivity::class.java))
         }
 
+        b.btnToolbox.setOnClickListener {
+            startActivity(Intent(this, ToolboxActivity::class.java))
+        }
+
         b.btnAimPerm.setOnClickListener {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }

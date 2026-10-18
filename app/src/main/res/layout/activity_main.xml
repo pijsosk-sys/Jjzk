@@ -52,6 +52,14 @@
             android:text="Open Camera ESP"
             android:backgroundTint="#2E7D32" />
 
+        <Button
+            android:id="@+id/btnToolbox"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Minecraft Toolbox"
+            android:backgroundTint="#6D4C41" />
+
         <SeekBar
             android:id="@+id/seekConf"
             android:layout_width="match_parent"
