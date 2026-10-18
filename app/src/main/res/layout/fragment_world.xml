@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <TextView android:id="@+id/empty"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:padding="32dp"
+        android:text="Pick a world from Home to edit it."
+        android:textColor="@color/textSecondary"
+        android:visibility="gone"/>
+
+    <ScrollView android:id="@+id/form"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <TextView android:text="Name" style="@style/Toolbox.Label"/>
+            <EditText android:id="@+id/nameInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="@color/textPrimary"
+                android:inputType="text"/>
+
+            <TextView android:text="Game mode" style="@style/Toolbox.Label"/>
+            <RadioGroup android:id="@+id/modeGroup" android:orientation="horizontal"
+                android:layout_width="match_parent" android:layout_height="wrap_content">
+                <RadioButton android:id="@+id/modeSurvival"  android:text="Survival"  android:textColor="@color/textPrimary"/>
+                <RadioButton android:id="@+id/modeCreative"  android:text="Creative"  android:textColor="@color/textPrimary"/>
+                <RadioButton android:id="@+id/modeAdventure" android:text="Adventure" android:textColor="@color/textPrimary"/>
+                <RadioButton android:id="@+id/modeSpectator" android:text="Spectator" android:textColor="@color/textPrimary"/>
+            </RadioGroup>
+
+            <TextView android:text="Difficulty" style="@style/Toolbox.Label"/>
+            <RadioGroup android:id="@+id/diffGroup" android:orientation="horizontal"
+                android:layout_width="match_parent" android:layout_height="wrap_content">
+                <RadioButton android:id="@+id/diffPeaceful" android:text="Peaceful" android:textColor="@color/textPrimary"/>
+                <RadioButton android:id="@+id/diffEasy"     android:text="Easy"     android:textColor="@color/textPrimary"/>
+                <RadioButton android:id="@+id/diffNormal"   android:text="Normal"   android:textColor="@color/textPrimary"/>
+                <RadioButton android:id="@+id/diffHard"     android:text="Hard"     android:textColor="@color/textPrimary"/>
+            </RadioGroup>
+
+            <TextView android:text="Weather" style="@style/Toolbox.Label"/>
+            <RadioGroup android:id="@+id/weatherGroup" android:orientation="horizontal"
+                android:layout_width="match_parent" android:layout_height="wrap_content">
+                <RadioButton android:id="@+id/weatherClear"   android:text="Clear"   android:textColor="@color/textPrimary"/>
+                <RadioButton android:id="@+id/weatherRain"    android:text="Rain"    android:textColor="@color/textPrimary"/>
+                <RadioButton android:id="@+id/weatherThunder" android:text="Thunder" android:textColor="@color/textPrimary"/>
+            </RadioGroup>
+
+            <TextView android:id="@+id/timeLabel" android:text="Time" style="@style/Toolbox.Label"/>
+            <RadioGroup android:id="@+id/timeGroup" android:orientation="horizontal"
+                android:layout_width="match_parent" android:layout_height="wrap_content">
+                <RadioButton android:id="@+id/timeSunrise"  android:text="Sunrise"  android:textColor="@color/textPrimary"/>
+                <RadioButton android:id="@+id/timeNoon"     android:text="Noon"     android:textColor="@color/textPrimary"/>
+                <RadioButton android:id="@+id/timeSunset"   android:text="Sunset"   android:textColor="@color/textPrimary"/>
+                <RadioButton android:id="@+id/timeNight"    android:text="Night"    android:textColor="@color/textPrimary"/>
+                <RadioButton android:id="@+id/timeMidnight" android:text="Midnight" android:textColor="@color/textPrimary"/>
+            </RadioGroup>
+
+            <TextView android:text="Flags" style="@style/Toolbox.Label"/>
+            <CheckBox android:id="@+id/cheats"        android:text="Cheats enabled"  android:textColor="@color/textPrimary"/>
+            <CheckBox android:id="@+id/keepInventory" android:text="Keep inventory"  android:textColor="@color/textPrimary"/>
+            <CheckBox android:id="@+id/mobGriefing"   android:text="Mob griefing"    android:textColor="@color/textPrimary"/>
+
+            <TextView android:text="Spawn point" style="@style/Toolbox.Label"/>
+            <LinearLayout android:orientation="horizontal"
+                android:layout_width="match_parent" android:layout_height="wrap_content">
+                <EditText android:id="@+id/spawnX" android:layout_width="0dp" android:layout_weight="1"
+                    android:layout_height="wrap_content" android:hint="X" android:inputType="numberSigned"
+                    android:textColor="@color/textPrimary" android:textColorHint="@color/textSecondary"/>
+                <EditText android:id="@+id/spawnY" android:layout_width="0dp" android:layout_weight="1"
+                    android:layout_height="wrap_content" android:hint="Y" android:inputType="numberSigned"
+                    android:textColor="@color/textPrimary" android:textColorHint="@color/textSecondary"/>
+                <EditText android:id="@+id/spawnZ" android:layout_width="0dp" android:layout_weight="1"
+                    android:layout_height="wrap_content" android:hint="Z" android:inputType="numberSigned"
+                    android:textColor="@color/textPrimary" android:textColorHint="@color/textSecondary"/>
+            </LinearLayout>
+
+            <Button android:id="@+id/save"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="Save changes"/>
+        </LinearLayout>
+    </ScrollView>
+</FrameLayout>

@@ -69,8 +69,9 @@ object WorldRepository {
     }
 
     suspend fun rename(world: WorldSummary, newName: String) = withContext(Dispatchers.IO) {
+        // Renames now flow through WorldEditor's full round-trip save; keep a
+        // minimal fallback for callers that only have a folder in hand.
         File(world.folder, "levelname.txt").writeText(newName)
-        LevelDat.writeName(File(world.folder, "level.dat"), newName)
     }
 
     fun exportDirInApp(ctx: Context): File =

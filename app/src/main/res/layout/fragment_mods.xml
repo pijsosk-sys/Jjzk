@@ -3,23 +3,21 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:padding="16dp"
-    android:background="@color/bgDark">
-    <EditText android:id="@+id/name"
+    android:padding="12dp">
+    <Button android:id="@+id/importBtn"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:hint="World name"
-        android:textColor="@color/textPrimary"
-        android:inputType="text"/>
-    <TextView android:id="@+id/detail"
+        android:text="Import .mcpack / .mcaddon / .mcworld"/>
+    <TextView android:id="@+id/empty"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:paddingTop="16dp"
-        android:paddingBottom="16dp"
+        android:padding="24dp"
+        android:gravity="center"
+        android:text="Install Minecraft to see installed packs."
         android:textColor="@color/textSecondary"
-        android:fontFamily="monospace"/>
-    <Button android:id="@+id/renameBtn"
+        android:visibility="gone"/>
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/list"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Save"/>
+        android:layout_height="match_parent"/>
 </LinearLayout>

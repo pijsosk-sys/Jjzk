@@ -45,11 +45,6 @@
             </intent-filter>
         </activity>
 
-        <activity android:name=".WorldDetailActivity" android:exported="false"/>
-        <activity android:name=".AddonManagerActivity" android:exported="false"/>
-        <activity android:name=".BackupActivity" android:exported="false"/>
-        <activity android:name=".SeedPickerActivity" android:exported="false"/>
-
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="com.jjzk.toolbox.fileprovider"
