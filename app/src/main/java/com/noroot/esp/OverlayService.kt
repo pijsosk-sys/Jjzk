@@ -88,7 +88,10 @@ class OverlayService : Service() {
                 val r = b.rect.right * sx
                 val btm = b.rect.bottom * sy
                 canvas.drawRect(l, t, r, btm, stroke)
-                canvas.drawText("%.2f".format(b.score), l, (t - 6f).coerceAtLeast(28f), text)
+                canvas.drawText(
+                    "${b.label} %.2f".format(b.score),
+                    l, (t - 6f).coerceAtLeast(28f), text
+                )
                 canvas.drawLine(cx, cy, (l + r) / 2f, (t + btm) / 2f, line)
             }
         }
