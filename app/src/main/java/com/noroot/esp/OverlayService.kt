@@ -23,6 +23,13 @@ class OverlayService : Service() {
 
     private lateinit var wm: WindowManager
     private var view: OverlayView? = null
+    private val tickHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val tick = object : Runnable {
+        override fun run() {
+            view?.postInvalidateOnAnimation()
+            tickHandler.postDelayed(this, 500)
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -46,6 +53,7 @@ class OverlayService : Service() {
         )
         try { wm.addView(view, lp) } catch (_: Throwable) {}
         instance = this
+        tickHandler.post(tick)
     }
 
     fun update(boxes: List<Box>, srcW: Int, srcH: Int, peak: Float) {
@@ -53,6 +61,7 @@ class OverlayService : Service() {
     }
 
     override fun onDestroy() {
+        tickHandler.removeCallbacks(tick)
         try { view?.let { wm.removeView(it) } } catch (_: Throwable) {}
         view = null
         if (instance === this) instance = null
@@ -96,10 +105,20 @@ class OverlayService : Service() {
             canvas.drawLine(cx - 20f, cy, cx + 20f, cy, cross)
             canvas.drawLine(cx, cy - 20f, cx, cy + 20f, cross)
 
-            // HUD: pipeline liveness
-            val hudText = "ESP f=$frames  box=${boxes.size}  peak=%.2f".format(peak)
-            canvas.drawRect(0f, 0f, 560f, 54f, hudBg)
+            // HUD: pipeline liveness. Two counters answer "where is it dead?"
+            //   rx = ImageReader frames arrived from MediaProjection
+            //   px = frames fully processed and pushed to overlay
+            //   f  = overlay invalidations (this view's own count)
+            val rx = ProjectionService.framesReceived
+            val px = ProjectionService.framesPushed
+            val err = ProjectionService.lastError
+            val hudText = "ESP rx=$rx px=$px f=$frames box=${boxes.size} peak=%.2f".format(peak)
+            canvas.drawRect(0f, 0f, 820f, 54f, hudBg)
             canvas.drawText(hudText, 12f, 38f, hud)
+            if (err.isNotEmpty()) {
+                canvas.drawRect(0f, 54f, 820f, 94f, hudBg)
+                canvas.drawText("err=$err", 12f, 86f, hud)
+            }
 
             for (b in boxes) {
                 val l = b.rect.left * sx

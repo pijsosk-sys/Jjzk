@@ -33,6 +33,10 @@ class ProjectionService : Service() {
         const val CHANNEL = "esp_capture"
         const val NOTIF_ID = 7001
         private const val TAG = "ProjectionService"
+
+        @Volatile var framesReceived: Long = 0
+        @Volatile var framesPushed: Long = 0
+        @Volatile var lastError: String = ""
     }
 
     private var projection: MediaProjection? = null
@@ -40,6 +44,7 @@ class ProjectionService : Service() {
     private var reader: ImageReader? = null
     private var detector: Detector? = null
     private var scope: CoroutineScope? = null
+    private var captureThread: HandlerThread? = null
     private var confThresh: Float = 0.35f
     private var width = 0
     private var height = 0
@@ -119,21 +124,34 @@ class ProjectionService : Service() {
 
         detector = Detector(this).also { it.confThreshold = confThresh }
 
+        captureThread = HandlerThread("esp-capture").apply { start() }
+        val captureHandler = Handler(captureThread!!.looper)
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        framesReceived = 0; framesPushed = 0; lastError = ""
+
         reader!!.setOnImageAvailableListener({ r ->
-            val img = try { r.acquireLatestImage() } catch (_: Throwable) { null } ?: return@setOnImageAvailableListener
+            val img = try { r.acquireLatestImage() }
+                catch (t: Throwable) { lastError = "acq:${t.javaClass.simpleName}"; null }
+                ?: return@setOnImageAvailableListener
+            framesReceived++
             if (busy) { img.close(); return@setOnImageAvailableListener }
             busy = true
-            val bmp = try { toBitmap(img) } catch (t: Throwable) { Log.w(TAG, "toBitmap", t); null } finally { img.close() }
+            val bmp = try { toBitmap(img) }
+                catch (t: Throwable) { lastError = "bmp:${t.javaClass.simpleName}"; null }
+                finally { img.close() }
             if (bmp == null) { busy = false; return@setOnImageAvailableListener }
             scope!!.launch {
                 try {
                     val boxes = detector!!.detect(bmp)
-                    OverlayService.push(this@ProjectionService, boxes, width, height, detector!!.lastPeakScore)
-                } catch (t: Throwable) { Log.w(TAG, "detect", t) }
-                finally { bmp.recycle(); busy = false }
+                    framesPushed++
+                    OverlayService.push(this@ProjectionService, boxes, width, height,
+                        detector!!.lastPeakScore)
+                } catch (t: Throwable) {
+                    lastError = "det:${t.javaClass.simpleName}"
+                    Log.w(TAG, "detect", t)
+                } finally { bmp.recycle(); busy = false }
             }
-        }, Handler(Looper.getMainLooper()))
+        }, captureHandler)
     }
 
     private fun toBitmap(image: Image): Bitmap {
@@ -156,8 +174,10 @@ class ProjectionService : Service() {
         try { reader?.close() } catch (_: Throwable) {}
         try { projection?.stop() } catch (_: Throwable) {}
         try { detector?.close() } catch (_: Throwable) {}
+        try { captureThread?.quitSafely() } catch (_: Throwable) {}
         scope?.cancel()
-        vdisplay = null; reader = null; projection = null; detector = null; scope = null
+        vdisplay = null; reader = null; projection = null; detector = null
+        scope = null; captureThread = null
     }
 
     override fun onDestroy() {
