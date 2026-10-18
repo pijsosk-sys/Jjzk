@@ -4,8 +4,6 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.RectF
 import org.tensorflow.lite.Interpreter
-import org.tensorflow.lite.gpu.CompatibilityList
-import org.tensorflow.lite.gpu.GpuDelegate
 import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -23,7 +21,6 @@ class Detector(ctx: Context) {
 
     private val inputSize = 320
     private var interpreter: Interpreter
-    private var gpu: GpuDelegate? = null
     private val outputFlat: FloatArray
     private val outShape: IntArray
     private val isV8: Boolean
@@ -34,15 +31,7 @@ class Detector(ctx: Context) {
 
     init {
         val model: MappedByteBuffer = loadModel(ctx, "model.tflite")
-        val opts = Interpreter.Options()
-        try {
-            if (CompatibilityList().isDelegateSupportedOnThisDevice) {
-                gpu = GpuDelegate(CompatibilityList().bestOptionsForThisDevice)
-                opts.addDelegate(gpu)
-            } else {
-                opts.numThreads = 4
-            }
-        } catch (_: Throwable) { opts.numThreads = 4 }
+        val opts = Interpreter.Options().apply { numThreads = 4 }
         interpreter = Interpreter(model, opts)
 
         outShape = interpreter.getOutputTensor(0).shape()
@@ -143,6 +132,5 @@ class Detector(ctx: Context) {
 
     fun close() {
         try { interpreter.close() } catch (_: Throwable) {}
-        try { gpu?.close() } catch (_: Throwable) {}
     }
 }
