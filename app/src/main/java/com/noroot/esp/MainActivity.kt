@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.SeekBar
+import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import com.noroot.esp.databinding.ActivityMainBinding
@@ -17,6 +18,24 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var b: ActivityMainBinding
     private lateinit var mpm: MediaProjectionManager
+
+    private val modelPicker = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@registerForActivityResult
+        try {
+            val dest = java.io.File(getExternalFilesDir(null), "model.tflite")
+            contentResolver.openInputStream(uri).use { input ->
+                if (input == null) throw java.io.IOException("null stream")
+                dest.outputStream().use { out -> input.copyTo(out) }
+            }
+            val mb = dest.length() / (1024.0 * 1024.0)
+            b.tvStatus.text = "Model imported: %.1f MB".format(mb)
+            Toast.makeText(this, "Imported to ${dest.absolutePath}", Toast.LENGTH_LONG).show()
+        } catch (t: Throwable) {
+            b.tvStatus.text = "Import failed: ${t.message}"
+        }
+    }
 
     private val projectionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -59,6 +78,10 @@ class MainActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
             projectionLauncher.launch(mpm.createScreenCaptureIntent())
+        }
+
+        b.btnImportModel.setOnClickListener {
+            modelPicker.launch(arrayOf("*/*"))
         }
 
         b.btnStop.setOnClickListener {
