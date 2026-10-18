@@ -4,13 +4,28 @@
     android:layout_height="match_parent"
     android:orientation="vertical"
     android:padding="12dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+        <Button android:id="@+id/launchMc"
+            android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
+            android:text="Launch Minecraft"/>
+        <Button android:id="@+id/toggleOverlay"
+            android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
+            android:text="Start Overlay"/>
+    </LinearLayout>
+
     <TextView
         android:id="@+id/hero"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:textColor="@color/textPrimary"
         android:textSize="14sp"
+        android:paddingTop="8dp"
         android:paddingBottom="8dp"/>
+
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/list"
         android:layout_width="match_parent"
