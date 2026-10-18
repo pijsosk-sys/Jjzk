@@ -112,12 +112,15 @@ class OverlayService : Service() {
             val rx = ProjectionService.framesReceived
             val px = ProjectionService.framesPushed
             val err = ProjectionService.lastError
-            val hudText = "ESP rx=$rx px=$px f=$frames box=${boxes.size} peak=%.2f".format(peak)
+            val st = ProjectionService.setupStatus
+            val hudText = "ESP rx=$rx px=$px box=${boxes.size} peak=%.2f".format(peak)
             canvas.drawRect(0f, 0f, 820f, 54f, hudBg)
             canvas.drawText(hudText, 12f, 38f, hud)
+            canvas.drawRect(0f, 54f, 820f, 94f, hudBg)
+            canvas.drawText("cap=$st  f=$frames", 12f, 86f, hud)
             if (err.isNotEmpty()) {
-                canvas.drawRect(0f, 54f, 820f, 94f, hudBg)
-                canvas.drawText("err=$err", 12f, 86f, hud)
+                canvas.drawRect(0f, 94f, 820f, 134f, hudBg)
+                canvas.drawText("err=$err", 12f, 126f, hud)
             }
 
             for (b in boxes) {

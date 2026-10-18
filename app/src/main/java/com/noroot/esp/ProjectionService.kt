@@ -37,6 +37,7 @@ class ProjectionService : Service() {
         @Volatile var framesReceived: Long = 0
         @Volatile var framesPushed: Long = 0
         @Volatile var lastError: String = ""
+        @Volatile var setupStatus: String = "idle"
     }
 
     private var projection: MediaProjection? = null
@@ -108,19 +109,34 @@ class ProjectionService : Service() {
     }
 
     private fun setupCapture() {
+        setupStatus = "setup"
         val wm = getSystemService(WINDOW_SERVICE) as WindowManager
         val m = DisplayMetrics()
         @Suppress("DEPRECATION") wm.defaultDisplay.getRealMetrics(m)
-        width = m.widthPixels
-        height = m.heightPixels
+        val fullW = m.widthPixels; val fullH = m.heightPixels
         density = m.densityDpi
+        // Scale capture to ~720 on longest side; faster, same aspect.
+        val target = 720
+        val scale = target.toFloat() / maxOf(fullW, fullH)
+        width = (fullW * scale).toInt().coerceAtLeast(64)
+        height = (fullH * scale).toInt().coerceAtLeast(64)
+        setupStatus = "sz=${width}x${height}"
 
-        reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
-        vdisplay = projection!!.createVirtualDisplay(
-            "esp-vd", width, height, density,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            reader!!.surface, null, null
-        )
+        reader = try {
+            ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
+        } catch (t: Throwable) { lastError = "reader:${t.javaClass.simpleName}"; null }
+        if (reader == null) { setupStatus = "no-reader"; return }
+
+        vdisplay = try {
+            projection!!.createVirtualDisplay(
+                "esp-vd", width, height, density,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR or
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC,
+                reader!!.surface, null, null
+            )
+        } catch (t: Throwable) { lastError = "vd:${t.javaClass.simpleName}"; null }
+        if (vdisplay == null) { setupStatus = "no-vd"; return }
+        setupStatus = "live ${width}x${height}"
 
         detector = Detector(this).also { it.confThreshold = confThresh }
 
