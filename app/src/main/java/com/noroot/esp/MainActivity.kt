@@ -84,6 +84,10 @@ class MainActivity : AppCompatActivity() {
             modelPicker.launch(arrayOf("*/*"))
         }
 
+        b.btnCamera.setOnClickListener {
+            startActivity(Intent(this, CameraActivity::class.java))
+        }
+
         b.btnStop.setOnClickListener {
             stopService(Intent(this, ProjectionService::class.java))
             stopService(Intent(this, OverlayService::class.java))
