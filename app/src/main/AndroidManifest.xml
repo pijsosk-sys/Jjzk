@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.jjzk.toolbox">
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
@@ -21,8 +21,7 @@
         android:label="Jjzk Toolbox"
         android:icon="@mipmap/ic_launcher"
         android:requestLegacyExternalStorage="true"
-        android:theme="@style/Theme.Toolbox"
-        xmlns:tools="http://schemas.android.com/tools">
+        android:theme="@style/Theme.Toolbox">
 
         <activity
             android:name=".MainActivity"

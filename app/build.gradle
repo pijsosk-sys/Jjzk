@@ -46,11 +46,7 @@ dependencies {
     implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.8.4'
     implementation 'com.google.android.material:material:1.12.0'
     implementation 'com.google.code.gson:gson:2.11.0'
-    // Bedrock-level NBT (LevelDB region, little-endian NBT, SNBT)
-    implementation 'com.github.PowerNukkitX:NBTIO:1.1.0'
-    // LevelDB native wrapper for reading world chunk DBs
-    implementation 'com.github.protolambda:leveldb-mcpe:0.3.0'
-    // Zip handling for .mcpack/.mcaddon/.mcworld (also handles encrypted entries)
+    // Zip handling for .mcpack/.mcaddon/.mcworld (plain-zip entries)
     implementation 'net.lingala.zip4j:zip4j:2.11.5'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1'
 }
