@@ -88,6 +88,27 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, CameraActivity::class.java))
         }
 
+        b.btnAimPerm.setOnClickListener {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }
+
+        b.swAim.isChecked = AimService.aimEnabled
+        b.swAim.setOnCheckedChangeListener { _, c -> AimService.aimEnabled = c }
+
+        b.swAutoFire.isChecked = AimService.autoFire
+        b.swAutoFire.setOnCheckedChangeListener { _, c -> AimService.autoFire = c }
+
+        b.seekAim.progress = (AimService.aimStrength * 100).toInt()
+        b.tvAimStr.text = "Aim Strength: ${"%.2f".format(AimService.aimStrength)}"
+        b.seekAim.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, p: Int, u: Boolean) {
+                AimService.aimStrength = p / 100f
+                b.tvAimStr.text = "Aim Strength: ${"%.2f".format(AimService.aimStrength)}"
+            }
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        })
+
         b.btnStop.setOnClickListener {
             stopService(Intent(this, ProjectionService::class.java))
             stopService(Intent(this, OverlayService::class.java))

@@ -162,6 +162,21 @@ class ProjectionService : Service() {
                     framesPushed++
                     OverlayService.push(this@ProjectionService, boxes, width, height,
                         detector!!.lastPeakScore)
+                    // Aim at the box whose center is nearest the screen's center.
+                    if (AimService.aimEnabled && boxes.isNotEmpty()) {
+                        val cx = width / 2f; val cy = height / 2f
+                        var best = boxes[0]; var bestD2 = Float.MAX_VALUE
+                        for (b in boxes) {
+                            val mx = (b.rect.left + b.rect.right) / 2f
+                            val my = (b.rect.top + b.rect.bottom) / 2f
+                            val d2 = (mx - cx) * (mx - cx) + (my - cy) * (my - cy)
+                            if (d2 < bestD2) { bestD2 = d2; best = b }
+                        }
+                        val tx = (best.rect.left + best.rect.right) / 2f
+                        // Aim slightly above center (head shot bias)
+                        val ty = best.rect.top + (best.rect.bottom - best.rect.top) * 0.25f
+                        AimService.aimAt(tx, ty, cx, cy)
+                    }
                 } catch (t: Throwable) {
                     lastError = "det:${t.javaClass.simpleName}"
                     Log.w(TAG, "detect", t)
