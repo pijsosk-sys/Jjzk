@@ -25,8 +25,24 @@ data class Box(val rect: RectF, val score: Float, val label: String)
  */
 class Detector(private val ctx: Context) {
 
-    @Volatile var confThreshold: Float = 0.25f
+    @Volatile var confThreshold: Float = 0.20f
     @Volatile var iouThreshold: Float = 0.45f
+
+    // COCO 80 — labels for bundled yolov8n fallback. Fortnite-trained models
+    // override by number of classes; unknown ids fall back to "c<id>".
+    private val cocoLabels = arrayOf(
+        "person","bike","car","motor","plane","bus","train","truck","boat",
+        "light","hydrant","stopsign","meter","bench","bird","cat","dog",
+        "horse","sheep","cow","elephant","bear","zebra","giraffe","backpack",
+        "umbrella","handbag","tie","suitcase","frisbee","ski","snowboard",
+        "ball","kite","bat","glove","skateboard","surfboard","racket",
+        "bottle","wineglass","cup","fork","knife","spoon","bowl","banana",
+        "apple","sandwich","orange","broccoli","carrot","hotdog","pizza",
+        "donut","cake","chair","couch","plant","bed","table","toilet","tv",
+        "laptop","mouse","remote","keyboard","phone","microwave","oven",
+        "toaster","sink","fridge","book","clock","vase","scissors","teddy",
+        "hairdryer","toothbrush"
+    )
 
     private var interpreter: Interpreter? = null
     private var inW: Int = 320
@@ -158,7 +174,9 @@ class Detector(private val ctx: Context) {
             val t = (cy - h / 2f) * sy
             val r = (cx + w / 2f) * sx
             val b = (cy + h / 2f) * sy
-            candidates.add(Box(RectF(l, t, r, b), bestScore, "c$bestCls"))
+            val lbl = if (numClasses == cocoLabels.size && bestCls in cocoLabels.indices)
+                cocoLabels[bestCls] else if (numClasses == 1) "enemy" else "c$bestCls"
+            candidates.add(Box(RectF(l, t, r, b), bestScore, lbl))
         }
         return nms(candidates, iouThreshold)
     }
