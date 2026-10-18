@@ -83,7 +83,8 @@ class OverlayService : Service() {
 
     private fun buildPanel() {
         val view = LayoutInflater.from(this).inflate(R.layout.overlay_panel, null)
-        controller.bind(view) { stopSelf() }
+        // X on the panel hides the panel only; the handle and service stay.
+        controller.bind(view) { if (panelAttached) togglePanel() }
         panelLp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,

@@ -26,7 +26,6 @@ class HomeFragment : Fragment() {
     private var _b: FragmentHomeBinding? = null
     private val b get() = _b!!
     private lateinit var adapter: WorldAdapter
-    private var overlayRunning = false
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, s: Bundle?): View {
         _b = FragmentHomeBinding.inflate(inflater, container, false)
@@ -42,7 +41,6 @@ class HomeFragment : Fragment() {
         b.list.layoutManager = LinearLayoutManager(requireContext())
         b.list.adapter = adapter
         b.launchMc.setOnClickListener { launchMinecraft() }
-        b.toggleOverlay.setOnClickListener { toggleOverlay() }
         refresh()
     }
 
@@ -61,7 +59,7 @@ class HomeFragment : Fragment() {
             CurrentWorld.notifyChanged()
             return
         }
-        b.hero.text = "Pick a world to edit, give items, or back up."
+        b.hero.text = "Pick a world first, then tap Launch — the overlay drops in on top."
         b.launchMc.isEnabled = true
         lifecycleScope.launch {
             val worlds = WorldRepository.list(primary)
@@ -78,25 +76,10 @@ class HomeFragment : Fragment() {
             Toast.makeText(requireContext(), "Minecraft launch intent unavailable", Toast.LENGTH_SHORT).show()
             return
         }
-        // Chain: ensure overlay permission and the service is running, then
-        // hand control to Minecraft. The overlay floats on top from first frame.
         if (!canDrawOverlays()) { requestOverlayPermission(); return }
-        if (!overlayRunning) {
-            OverlayService.start(requireContext()); overlayRunning = true
-            b.toggleOverlay.text = "Stop Overlay"
-        }
+        OverlayService.start(requireContext())
         launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         startActivity(launch)
-    }
-
-    private fun toggleOverlay() {
-        if (overlayRunning) {
-            OverlayService.stop(requireContext()); overlayRunning = false
-            b.toggleOverlay.text = "Start Overlay"; return
-        }
-        if (!canDrawOverlays()) { requestOverlayPermission(); return }
-        OverlayService.start(requireContext()); overlayRunning = true
-        b.toggleOverlay.text = "Stop Overlay"
     }
 
     private fun canDrawOverlays(): Boolean =
@@ -106,7 +89,7 @@ class HomeFragment : Fragment() {
     private fun requestOverlayPermission() {
         AlertDialog.Builder(requireContext())
             .setTitle("Enable overlay")
-            .setMessage("Grant 'Display over other apps' so the Toolbox menu floats above Minecraft.")
+            .setMessage("Grant 'Display over other apps' so the Toolbox menu floats above Minecraft, then tap Launch again.")
             .setPositiveButton("Open settings") { _, _ ->
                 startActivity(
                     Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
