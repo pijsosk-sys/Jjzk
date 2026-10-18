@@ -1,0 +1,15 @@
+Drop your YOLO TFLite model in this folder as `model.tflite`.
+
+Expected: float32 input [1,320,320,3], values 0..1, RGB order.
+Output: YOLOv5 [1,N,5+C] or YOLOv8 [1,4+C,N].
+
+If you don't have a Fortnite-trained model yet:
+1. Collect ~500-2000 gameplay screenshots.
+2. Label enemies with Roboflow / CVAT.
+3. Train YOLOv8n: `yolo detect train model=yolov8n.pt data=fn.yaml imgsz=320 epochs=80`.
+4. Export: `yolo export model=best.pt format=tflite imgsz=320`.
+5. Rename `best_float32.tflite` to `model.tflite`, place here.
+
+A generic COCO model will detect "person" boxes on nameplates / banner art but
+will not find in-game characters reliably — a game-specific model is required
+for usable detections.
