@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true"
+    android:background="#0E0E12">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:text="FORTNITE ESP"
+            android:textColor="#00E676"
+            android:textSize="26sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="4dp" />
+
+        <TextView
+            android:id="@+id/status"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:text="Idle"
+            android:textColor="#AAAAAA"
+            android:textSize="13sp"
+            android:layout_marginBottom="24dp" />
+
+        <Button
+            android:id="@+id/btnLaunch"
+            android:layout_width="match_parent"
+            android:layout_height="64dp"
+            android:text="LAUNCH FORTNITE + ESP"
+            android:textStyle="bold"
+            android:textSize="16sp"
+            android:backgroundTint="#00C853"
+            android:textColor="#000000"
+            android:layout_marginBottom="12dp" />
+
+        <Button
+            android:id="@+id/btnStop"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:text="STOP ESP"
+            android:backgroundTint="#D32F2F"
+            android:textColor="#FFFFFF"
+            android:layout_marginBottom="28dp" />
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/swEsp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="ESP Boxes"
+            android:textColor="#FFFFFF"
+            android:checked="true"
+            android:layout_marginBottom="8dp" />
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/swTracers"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Tracers (line to targets)"
+            android:textColor="#FFFFFF"
+            android:checked="false"
+            android:layout_marginBottom="8dp" />
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/swDistance"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Show distance labels"
+            android:textColor="#FFFFFF"
+            android:checked="true"
+            android:layout_marginBottom="24dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Detection confidence"
+            android:textColor="#BBBBBB"
+            android:textSize="13sp" />
+
+        <SeekBar
+            android:id="@+id/seekConf"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="100"
+            android:progress="45"
+            android:layout_marginBottom="16dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Box color"
+            android:textColor="#BBBBBB"
+            android:textSize="13sp" />
+
+        <RadioGroup
+            android:id="@+id/colorGroup"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <RadioButton android:id="@+id/cGreen"  android:text="Green"  android:textColor="#FFFFFF" android:checked="true"
+                android:layout_width="wrap_content" android:layout_height="wrap_content" />
+            <RadioButton android:id="@+id/cRed"    android:text="Red"    android:textColor="#FFFFFF"
+                android:layout_width="wrap_content" android:layout_height="wrap_content" />
+            <RadioButton android:id="@+id/cCyan"   android:text="Cyan"   android:textColor="#FFFFFF"
+                android:layout_width="wrap_content" android:layout_height="wrap_content" />
+        </RadioGroup>
+
+    </LinearLayout>
+</ScrollView>
