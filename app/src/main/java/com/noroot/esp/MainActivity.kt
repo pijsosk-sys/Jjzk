@@ -41,6 +41,9 @@ class MainActivity : AppCompatActivity() {
 
         mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
 
+        val modelPath = java.io.File(getExternalFilesDir(null), "model.tflite").absolutePath
+        b.tvConf.text = "Model: $modelPath\nConfidence: 0.35"
+
         b.btnOverlay.setOnClickListener {
             if (!Settings.canDrawOverlays(this)) {
                 startActivity(Intent(

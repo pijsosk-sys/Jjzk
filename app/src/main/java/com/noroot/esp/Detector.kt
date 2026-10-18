@@ -3,7 +3,10 @@ package com.noroot.esp
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.RectF
+import android.os.Environment
+import android.util.Log
 import org.tensorflow.lite.Interpreter
+import java.io.File
 import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -20,34 +23,64 @@ data class Box(val rect: RectF, val score: Float, val cls: Int)
 class Detector(ctx: Context) {
 
     private val inputSize = 320
-    private var interpreter: Interpreter
-    private val outputFlat: FloatArray
-    private val outShape: IntArray
-    private val isV8: Boolean
-    private val numClasses: Int
+    private var interpreter: Interpreter? = null
+    private var outShape: IntArray = intArrayOf(0)
+    private var isV8: Boolean = false
+    private var numClasses: Int = 0
+    val hasModel: Boolean get() = interpreter != null
 
     @Volatile var confThreshold: Float = 0.35f
     var iouThreshold: Float = 0.45f
 
     init {
-        val model: MappedByteBuffer = loadModel(ctx, "model.tflite")
-        val opts = Interpreter.Options().apply { numThreads = 4 }
-        interpreter = Interpreter(model, opts)
-
-        outShape = interpreter.getOutputTensor(0).shape()
-        isV8 = outShape.size == 3 && outShape[1] < outShape[2]
-        numClasses = if (isV8) outShape[1] - 4 else outShape[2] - 5
-        outputFlat = FloatArray(outShape.reduce { a, b -> a * b })
-    }
-
-    private fun loadModel(ctx: Context, name: String): MappedByteBuffer {
-        val afd = ctx.assets.openFd(name)
-        FileInputStream(afd.fileDescriptor).use { fis ->
-            return fis.channel.map(FileChannel.MapMode.READ_ONLY, afd.startOffset, afd.declaredLength)
+        try {
+            val model = loadModel(ctx)
+            if (model == null) {
+                Log.w("Detector", "No model.tflite found — overlay will run with 0 boxes. " +
+                    "Push one to /sdcard/Android/data/com.noroot.esp/files/model.tflite")
+            } else {
+                val opts = Interpreter.Options().apply { numThreads = 4 }
+                val itp = Interpreter(model, opts)
+                outShape = itp.getOutputTensor(0).shape()
+                isV8 = outShape.size == 3 && outShape[1] < outShape[2]
+                numClasses = if (isV8) outShape[1] - 4 else outShape[2] - 5
+                interpreter = itp
+            }
+        } catch (t: Throwable) {
+            Log.e("Detector", "model load failed", t)
+            interpreter = null
         }
     }
 
+    private fun loadModel(ctx: Context): MappedByteBuffer? {
+        // 1. External file so a model can be dropped without a rebuild.
+        val ext = File(ctx.getExternalFilesDir(null), "model.tflite")
+        if (ext.exists() && ext.length() > 0) {
+            FileInputStream(ext).use { fis ->
+                return fis.channel.map(FileChannel.MapMode.READ_ONLY, 0, ext.length())
+            }
+        }
+        // 2. Public downloads convenience location.
+        val pub = File(
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+            "model.tflite"
+        )
+        if (pub.exists() && pub.length() > 0) {
+            FileInputStream(pub).use { fis ->
+                return fis.channel.map(FileChannel.MapMode.READ_ONLY, 0, pub.length())
+            }
+        }
+        // 3. Baked-in asset — only present if a model was bundled at build time.
+        return try {
+            val afd = ctx.assets.openFd("model.tflite")
+            FileInputStream(afd.fileDescriptor).use { fis ->
+                fis.channel.map(FileChannel.MapMode.READ_ONLY, afd.startOffset, afd.declaredLength)
+            }
+        } catch (_: Throwable) { null }
+    }
+
     fun detect(src: Bitmap): List<Box> {
+        val itp = interpreter ?: return emptyList()
         val resized = Bitmap.createScaledBitmap(src, inputSize, inputSize, true)
         val input = ByteBuffer.allocateDirect(4 * inputSize * inputSize * 3).order(ByteOrder.nativeOrder())
         val px = IntArray(inputSize * inputSize)
@@ -63,7 +96,7 @@ class Detector(ctx: Context) {
         val out = Array(outShape[0]) {
             Array(outShape[1]) { FloatArray(outShape[2]) }
         }
-        interpreter.run(input, out)
+        itp.run(input, out)
 
         val boxes = ArrayList<Box>()
         val sw = src.width.toFloat()
@@ -131,6 +164,7 @@ class Detector(ctx: Context) {
     }
 
     fun close() {
-        try { interpreter.close() } catch (_: Throwable) {}
+        try { interpreter?.close() } catch (_: Throwable) {}
+        interpreter = null
     }
 }
