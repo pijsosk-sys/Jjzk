@@ -129,7 +129,7 @@ class ProjectionService : Service() {
             scope!!.launch {
                 try {
                     val boxes = detector!!.detect(bmp)
-                    OverlayService.push(this@ProjectionService, boxes, width, height)
+                    OverlayService.push(this@ProjectionService, boxes, width, height, detector!!.lastPeakScore)
                 } catch (t: Throwable) { Log.w(TAG, "detect", t) }
                 finally { bmp.recycle(); busy = false }
             }

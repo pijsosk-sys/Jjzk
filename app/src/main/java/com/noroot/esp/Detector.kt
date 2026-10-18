@@ -25,8 +25,10 @@ data class Box(val rect: RectF, val score: Float, val label: String)
  */
 class Detector(private val ctx: Context) {
 
-    @Volatile var confThreshold: Float = 0.20f
+    @Volatile var confThreshold: Float = 0.10f
     @Volatile var iouThreshold: Float = 0.45f
+    @Volatile var lastInferenceCount: Int = 0
+    @Volatile var lastPeakScore: Float = 0f
 
     // COCO 80 — labels for bundled yolov8n fallback. Fortnite-trained models
     // override by number of classes; unknown ids fall back to "c<id>".
@@ -132,12 +134,24 @@ class Detector(private val ctx: Context) {
         val itp = interpreter ?: return emptyList()
         val outBuf = outputBuf ?: return emptyList()
 
-        // 1. letterbox-free simple resize to model input.
-        val resized = Bitmap.createScaledBitmap(src, inW, inH, true)
+        // Letterbox so aspect ratio is preserved: scale by min(inW/W, inH/H),
+        // center on gray canvas, then invert at box-decode time.
+        val scale = minOf(inW.toFloat() / src.width, inH.toFloat() / src.height)
+        val newW = (src.width * scale).toInt().coerceAtLeast(1)
+        val newH = (src.height * scale).toInt().coerceAtLeast(1)
+        val padX = (inW - newW) / 2
+        val padY = (inH - newH) / 2
+        val resized = Bitmap.createScaledBitmap(src, newW, newH, true)
+        val canvas = Bitmap.createBitmap(inW, inH, Bitmap.Config.ARGB_8888)
+        android.graphics.Canvas(canvas).apply {
+            drawColor(android.graphics.Color.rgb(114, 114, 114)) // yolo pad gray
+            drawBitmap(resized, padX.toFloat(), padY.toFloat(), null)
+        }
         try {
-            fillInput(resized)
+            fillInput(canvas)
         } finally {
             if (resized !== src) resized.recycle()
+            canvas.recycle()
         }
 
         try {
@@ -147,9 +161,9 @@ class Detector(private val ctx: Context) {
         }
 
         val raw = outBuf[0]
-        val sx = src.width.toFloat() / inW
-        val sy = src.height.toFloat() / inH
+        val invScale = 1f / scale
 
+        var peak = 0f
         val candidates = ArrayList<Box>()
         val n = outCols
         for (i in 0 until n) {
@@ -169,16 +183,22 @@ class Detector(private val ctx: Context) {
                     if (s > bestScore) { bestScore = s; bestCls = c }
                 }
             }
+            if (bestScore > peak) peak = bestScore
             if (bestScore < confThreshold) continue
-            val l = (cx - w / 2f) * sx
-            val t = (cy - h / 2f) * sy
-            val r = (cx + w / 2f) * sx
-            val b = (cy + h / 2f) * sy
+            // Model outputs appear to be in input-pixel space (0..inW/inH).
+            // Undo letterbox: subtract pad then scale to source pixels.
+            val l = (cx - w / 2f - padX) * invScale
+            val t = (cy - h / 2f - padY) * invScale
+            val r = (cx + w / 2f - padX) * invScale
+            val b = (cy + h / 2f - padY) * invScale
             val lbl = if (numClasses == cocoLabels.size && bestCls in cocoLabels.indices)
                 cocoLabels[bestCls] else if (numClasses == 1) "enemy" else "c$bestCls"
             candidates.add(Box(RectF(l, t, r, b), bestScore, lbl))
         }
-        return nms(candidates, iouThreshold)
+        lastPeakScore = peak
+        val kept = nms(candidates, iouThreshold)
+        lastInferenceCount = kept.size
+        return kept
     }
 
     private fun fillInput(bmp: Bitmap) {

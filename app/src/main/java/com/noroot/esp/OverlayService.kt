@@ -14,8 +14,8 @@ class OverlayService : Service() {
     companion object {
         @Volatile private var instance: OverlayService? = null
 
-        fun push(ctx: Context, boxes: List<Box>, srcW: Int, srcH: Int) {
-            instance?.update(boxes, srcW, srcH) ?: run {
+        fun push(ctx: Context, boxes: List<Box>, srcW: Int, srcH: Int, peak: Float = 0f) {
+            instance?.update(boxes, srcW, srcH, peak) ?: run {
                 ctx.startService(Intent(ctx, OverlayService::class.java))
             }
         }
@@ -48,8 +48,8 @@ class OverlayService : Service() {
         instance = this
     }
 
-    fun update(boxes: List<Box>, srcW: Int, srcH: Int) {
-        view?.updateBoxes(boxes, srcW, srcH)
+    fun update(boxes: List<Box>, srcW: Int, srcH: Int, peak: Float) {
+        view?.updateBoxes(boxes, srcW, srcH, peak)
     }
 
     override fun onDestroy() {
@@ -62,6 +62,8 @@ class OverlayService : Service() {
     private class OverlayView(ctx: Context) : View(ctx) {
         private var boxes: List<Box> = emptyList()
         private var srcW = 1; private var srcH = 1
+        private var peak = 0f
+        private var frames = 0L
         private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE; strokeWidth = 3f; color = Color.rgb(0, 255, 120)
         }
@@ -71,17 +73,34 @@ class OverlayService : Service() {
         private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.rgb(255, 80, 80); strokeWidth = 2f
         }
+        private val hud = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(255, 220, 60); textSize = 32f; typeface = Typeface.DEFAULT_BOLD
+            setShadowLayer(2f, 0f, 0f, Color.BLACK)
+        }
+        private val hudBg = Paint().apply { color = Color.argb(140, 0, 0, 0) }
+        private val cross = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(0, 255, 255); strokeWidth = 2f
+        }
 
-        fun updateBoxes(b: List<Box>, w: Int, h: Int) {
-            boxes = b; srcW = w; srcH = h
+        fun updateBoxes(b: List<Box>, w: Int, h: Int, p: Float) {
+            boxes = b; srcW = w; srcH = h; peak = p; frames++
             postInvalidateOnAnimation()
         }
 
         override fun onDraw(canvas: Canvas) {
-            if (boxes.isEmpty()) return
             val sx = width.toFloat() / srcW
             val sy = height.toFloat() / srcH
             val cx = width / 2f; val cy = height / 2f
+
+            // crosshair always on — proves overlay is drawing
+            canvas.drawLine(cx - 20f, cy, cx + 20f, cy, cross)
+            canvas.drawLine(cx, cy - 20f, cx, cy + 20f, cross)
+
+            // HUD: pipeline liveness
+            val hudText = "ESP f=$frames  box=${boxes.size}  peak=%.2f".format(peak)
+            canvas.drawRect(0f, 0f, 560f, 54f, hudBg)
+            canvas.drawText(hudText, 12f, 38f, hud)
+
             for (b in boxes) {
                 val l = b.rect.left * sx
                 val t = b.rect.top * sy
