@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "overlord_baritone",
+  "version": "${version}",
+  "name": "Overlord Baritone",
+  "description": "Autonomous progression process for Baritone: bootstraps from an empty inventory to fully enchanted netherite gear.",
+  "authors": ["roothack"],
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "com.roothack.overlord.OverlordMod"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.15.0",
+    "minecraft": "~1.20.4",
+    "baritone": "*"
+  }
+}
