@@ -46,6 +46,30 @@ API and Baritone.
 /overlord stop      # halt and release Baritone
 ```
 
+## Combat, speed and camouflage
+
+- **Fights mobs.** `combat/CombatModule` scans for hostiles (and provoked
+  neutrals) inside engage range, eases the view onto the closest through the
+  humanizer, and swings only when vanilla reach, rotation and the attack-cooldown
+  bar all allow it. While a mob is in melee the progression process pauses pathing
+  and holds ground to fight instead of walking away. Other players are never
+  auto-attacked.
+- **Thinks fast.** On attach the process raises Baritone's planning lookahead and
+  turns on sprint, parkour and water-sprint, so pathing stays snappy — while
+  break speed is held at the legit value.
+- **Human movement and breaking.** `util/Humanizer` eases every combat rotation
+  with per-tick jitter and a small constant tremor instead of snapping, and hands
+  out jittered swing/break delays so nothing lands on a fixed cadence. Baritone's
+  `smoothLook`, `randomLooking` and `antiCheatCompatibility` are enabled so mining
+  and walking don't read as a straight-line machine.
+- **Spectator camouflage.** `evasion/SpectatorWatch` reads the tab-list game mode
+  every tick, so a spectator is spotted even while invisible. When one is present
+  the bot drops its obvious tells: it stops blatant straight-line grinding, mostly
+  idles with human head-drift while watched up close, and hardens the
+  human-looking look settings — so a watching player can't easily tell it's
+  Baritone. It restores normal behaviour once the spectator leaves. `/overlord
+  status` shows `CAMOUFLAGE` while this is active.
+
 ## Notes and limits
 
 - Interaction-heavy stages (placing/opening a table, furnace, portal, enchanting

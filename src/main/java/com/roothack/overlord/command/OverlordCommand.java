@@ -31,7 +31,9 @@ public final class OverlordCommand {
             }))
             .then(literal("status").executes(ctx -> {
                 feedback(ctx.getSource(), "Stage: " + process.currentStage().name()
-                        + " — " + process.currentStage().description);
+                        + " — " + process.currentStage().description
+                        + (process.isCamouflage() ? " | CAMOUFLAGE (spectator watching)" : "")
+                        + (process.isEnabled() ? " | running" : " | idle"));
                 return 1;
             }))
         );

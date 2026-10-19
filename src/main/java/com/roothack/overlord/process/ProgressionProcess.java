@@ -6,10 +6,13 @@ import baritone.api.process.IBaritoneProcess;
 import baritone.api.process.PathingCommand;
 import baritone.api.process.PathingCommandType;
 
+import com.roothack.overlord.combat.CombatModule;
+import com.roothack.overlord.evasion.SpectatorWatch;
 import com.roothack.overlord.stages.Stage;
 import com.roothack.overlord.util.BlockPlacer;
 import com.roothack.overlord.util.CraftingHelper;
 import com.roothack.overlord.util.EnchantHelper;
+import com.roothack.overlord.util.Humanizer;
 import com.roothack.overlord.util.InventoryHelper;
 import com.roothack.overlord.util.SmeltingHelper;
 
@@ -38,6 +41,10 @@ public class ProgressionProcess implements IBaritoneProcess {
     private IBaritone baritone;
     private final MinecraftClient mc = MinecraftClient.getInstance();
 
+    private final Humanizer human = new Humanizer();
+    private final CombatModule combat = new CombatModule(human);
+    private final SpectatorWatch spectator = new SpectatorWatch(human);
+
     private boolean enabled = false;
     private Stage stage = Stage.GATHER_WOOD;
     private int cooldown = 0; // ticks to wait after a screen action
@@ -48,6 +55,45 @@ public class ProgressionProcess implements IBaritoneProcess {
     /** Bound once Baritone's primary instance exists. */
     public void attach(IBaritone baritone) {
         this.baritone = baritone;
+        applyFastHumanSettings();
+    }
+
+    /**
+     * Snappy decisions that still look human: fast path recalculation and
+     * sprinting on, with smoothed looking and anti-cheat-safe movement so the
+     * speed never reads as teleport-straight botting.
+     */
+    private void applyFastHumanSettings() {
+        var s = baritone.settings();
+        s.allowSprint.value = true;
+        s.sprintInWater.value = true;
+        s.allowParkour.value = true;
+        s.allowParkourPlace.value = true;
+        s.smoothLook.value = true;          // eased camera, not snap turns
+        s.randomLooking.value = true;       // small human-looking variance
+        s.antiCheatCompatibility.value = true;
+        s.blockBreakSpeed.value = 100;      // legit break speed, never faster
+        s.planningTickLookahead.value = 200; // think further ahead each tick
+        s.movementTimeoutTicks.value = 100;
+    }
+
+    public boolean isEnabled() {
+        return enabled;
+    }
+
+    public boolean isCamouflage() {
+        return spectator.isCamouflage();
+    }
+
+    /**
+     * Fight and camouflage pass. Driven every client tick by the entry point so
+     * mobs are answered and spectators are handled even between Baritone's own
+     * process ticks. Returns true when it has taken over the view this tick.
+     */
+    public boolean defendTick() {
+        if (!enabled || baritone == null || mc.player == null) return false;
+        spectator.tick(mc, baritone);
+        return combat.tick(mc);
     }
 
     public boolean isAttached() {
@@ -81,6 +127,24 @@ public class ProgressionProcess implements IBaritoneProcess {
         if (mc.player == null) {
             return new PathingCommand(null, PathingCommandType.CANCEL_AND_SET_GOAL);
         }
+
+        // Fight first. If a hostile is in melee reach the combat module has the
+        // view; hold position and swing rather than pathing away mid-fight.
+        if (combat.currentTarget() != null
+                && mc.player.squaredDistanceTo(combat.currentTarget()) <= 9.0) {
+            baritone.getMineProcess().cancel();
+            return new PathingCommand(null, PathingCommandType.REQUEST_PAUSE);
+        }
+
+        // Under a spectator's eye, stop the blatant tells: let the bot breathe
+        // between actions and drift like a person instead of grinding visibly.
+        if (spectator.isCamouflage()) {
+            human.idleTwitch(mc, 0.2);
+            if (spectator.spectatorNearby() && human.rng().nextInt(3) != 0) {
+                return defer(); // mostly idle while actively observed up close
+            }
+        }
+
         if (cooldown > 0) {
             cooldown--;
             return defer();

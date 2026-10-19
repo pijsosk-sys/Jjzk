@@ -37,14 +37,20 @@ public class OverlordMod implements ClientModInitializer {
                 OverlordCommand.register(dispatcher, process));
 
         ClientTickEvents.END_CLIENT_TICK.register(mc -> {
-            if (attached) return;
-            IBaritone baritone = BaritoneAPI.getProvider().getPrimaryBaritone();
-            if (baritone == null) return;
+            if (!attached) {
+                IBaritone baritone = BaritoneAPI.getProvider().getPrimaryBaritone();
+                if (baritone == null) return;
 
-            process.attach(baritone);
-            baritone.getPathingControlManager().registerProcess(process);
-            attached = true;
-            LOG.info("Overlord progression process attached to Baritone.");
+                process.attach(baritone);
+                baritone.getPathingControlManager().registerProcess(process);
+                attached = true;
+                LOG.info("Overlord progression process attached to Baritone.");
+            }
+
+            // Fighting and spectator-camouflage run every client tick while
+            // engaged, not only on Baritone's process ticks, so mobs are met
+            // instantly and a watcher never catches an idle, robotic pause.
+            process.defendTick();
         });
     }
 }
