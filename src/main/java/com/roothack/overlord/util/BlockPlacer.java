@@ -25,7 +25,7 @@ public final class BlockPlacer {
         var inv = mc.player.getInventory();
         for (int i = 0; i < 9; i++) {
             if (inv.getStack(i).isOf(item)) {
-                inv.selectedSlot = i;
+                inv.setSelectedSlot(i);
                 return true;
             }
         }
@@ -36,7 +36,7 @@ public final class BlockPlacer {
         mc.interactionManager.clickSlot(
                 mc.player.playerScreenHandler.syncId, slot, 0,
                 net.minecraft.screen.slot.SlotActionType.SWAP, mc.player);
-        inv.selectedSlot = 0;
+        inv.setSelectedSlot(0);
         return inv.getStack(0).isOf(item);
     }
 

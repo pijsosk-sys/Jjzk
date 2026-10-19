@@ -71,7 +71,7 @@ public final class Humanizer {
 
     /** Aim point for an entity: its body centre, not the feet. */
     public static Vec3d aimPointFor(Entity e) {
-        return e.getPos().add(0, e.getHeight() * 0.6, 0);
+        return new Vec3d(e.getX(), e.getY() + e.getHeight() * 0.6, e.getZ());
     }
 
     /**

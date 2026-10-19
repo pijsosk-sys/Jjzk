@@ -32,9 +32,7 @@ public final class EnchantHelper {
 
         // Top option must be unlocked (needs 15 bookshelves + 30 levels).
         if (handler.enchantmentPower[TOP_OPTION] < 1) return false;
-        if (!handler.isAcceptingInventory()) {
-            // Still fine to send; server validates affordability.
-        }
+        // The server validates affordability; just send the click.
         mc.interactionManager.clickButton(syncId, TOP_OPTION);
 
         // Pull the enchanted item back to the inventory.

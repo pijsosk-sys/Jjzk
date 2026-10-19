@@ -60,8 +60,8 @@ public final class CombatModule {
         if (inReach && aimed && cooled && swingGate == 0) {
             mc.interactionManager.attackEntity(mc.player, target);
             mc.player.swingHand(Hand.MAIN_HAND);
-            // Reset vanilla cooldown and set a jittered floor before the next.
-            mc.player.resetLastAttackedTicks();
+            // Attacking resets the vanilla cooldown; add a jittered floor so
+            // swings never land on a fixed period.
             swingGate = human.nextDelay(3, 0.5);
         }
         return true;

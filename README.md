@@ -25,9 +25,10 @@ death or relog by jumping to the first stage whose output is not yet held.
 
 ## Requirements
 
-- Minecraft **1.20.4**, Fabric Loader ≥ 0.15
-- Fabric API
-- **Baritone** installed as a Fabric mod (this project depends only on its API)
+- Minecraft **1.21.11**, Fabric Loader ≥ 0.16
+- Fabric API (0.141.6+1.21.11)
+- **Baritone** installed as a Fabric mod — this uses Meteor's maintained build
+  (`meteordevelopment:baritone:1.21.11-SNAPSHOT`), which is also the runtime mod
 
 ## Build
 
@@ -35,16 +36,21 @@ death or relog by jumping to the first stage whose output is not yet held.
 ./gradlew build
 ```
 
-The jar lands in `build/libs/`. Drop it in `.minecraft/mods/` alongside Fabric
-API and Baritone.
+The jar lands in `build/libs/overlord-baritone-1.0.0.jar`. Drop it in
+`.minecraft/mods/` alongside Fabric API and Baritone.
 
 ## Use
 
+Type straight into the chat box — the message is swallowed, never sent, and a
+toast + banner pops up:
+
 ```
-/overlord start     # begin from the first unmet stage
-/overlord status    # print the current stage and its goal
-/overlord stop      # halt and release Baritone
+#start     # engage from the first unmet stage
+#stop      # halt and release Baritone
+#status    # show current stage / camouflage / running state
 ```
+
+The same actions are also available as `/overlord start|stop|status`.
 
 ## Combat, speed and camouflage
 

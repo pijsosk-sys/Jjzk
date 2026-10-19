@@ -1,5 +1,6 @@
 package com.roothack.overlord.process;
 
+import baritone.api.BaritoneAPI;
 import baritone.api.IBaritone;
 import baritone.api.pathing.goals.GoalYLevel;
 import baritone.api.process.IBaritoneProcess;
@@ -15,6 +16,7 @@ import com.roothack.overlord.util.EnchantHelper;
 import com.roothack.overlord.util.Humanizer;
 import com.roothack.overlord.util.InventoryHelper;
 import com.roothack.overlord.util.SmeltingHelper;
+import com.roothack.overlord.util.SmithingHelper;
 
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.item.Item;
@@ -64,13 +66,13 @@ public class ProgressionProcess implements IBaritoneProcess {
      * speed never reads as teleport-straight botting.
      */
     private void applyFastHumanSettings() {
-        var s = baritone.settings();
+        var s = BaritoneAPI.getSettings();
         s.allowSprint.value = true;
         s.sprintInWater.value = true;
         s.allowParkour.value = true;
         s.allowParkourPlace.value = true;
         s.smoothLook.value = true;          // eased camera, not snap turns
-        s.randomLooking.value = true;       // small human-looking variance
+        s.randomLooking.value = 2.0;        // small human-looking variance (deg)
         s.antiCheatCompatibility.value = true;
         s.blockBreakSpeed.value = 100;      // legit break speed, never faster
         s.planningTickLookahead.value = 200; // think further ahead each tick
@@ -162,7 +164,7 @@ public class ProgressionProcess implements IBaritoneProcess {
             case GATHER_DIAMONDS       -> mineDeepUntil(-54, 10, "diamond_ore", "deepslate_diamond_ore");
             case CRAFT_DIAMOND         -> craftDiamondTier();
             case BUILD_PORTAL          -> mineUntil(10, "obsidian");
-            case ENTER_NETHER          -> advanceWhen(mc.player.getWorld()
+            case ENTER_NETHER          -> advanceWhen(mc.world != null && mc.world
                                                .getRegistryKey().getValue().getPath().contains("nether"));
             case GATHER_ANCIENT_DEBRIS -> mineDeepUntil(15, 4, "ancient_debris");
             case SMELT_NETHERITE       -> smelt(Items.ANCIENT_DEBRIS, Items.NETHERITE_SCRAP, 4);
@@ -218,11 +220,15 @@ public class ProgressionProcess implements IBaritoneProcess {
     }
 
     private PathingCommand craftBasics() {
-        craftInInventory("minecraft:oak_planks");
-        craftInInventory("minecraft:crafting_table");
+        Item log = firstLog();
+        // Planks then crafting table in the 2x2 inventory grid.
+        CraftingHelper.craftShaped(mc, CraftingHelper.planks(log), 1, 0);
+        Item planks = firstPlanks();
+        CraftingHelper.craftShaped(mc, CraftingHelper.craftingTable(planks), 1, 0);
+
         if (!placeAndOpen(Items.CRAFTING_TABLE)) return defer();
-        CraftingHelper.craftAll(mc, "minecraft:stick", 0);
-        CraftingHelper.craftAll(mc, "minecraft:wooden_pickaxe", 0);
+        CraftingHelper.craftShaped(mc, CraftingHelper.sticks(firstPlanks()), 1, 0);
+        CraftingHelper.craftShaped(mc, CraftingHelper.pickaxe(firstPlanks()), 1, 0);
         if (InventoryHelper.has(mc, Items.WOODEN_PICKAXE, 1)) {
             mc.player.closeHandledScreen();
             return advance();
@@ -232,9 +238,10 @@ public class ProgressionProcess implements IBaritoneProcess {
 
     private PathingCommand craftStoneTier() {
         if (!placeAndOpen(Items.CRAFTING_TABLE)) return defer();
-        CraftingHelper.craftAll(mc, "minecraft:stone_pickaxe", 0);
-        CraftingHelper.craftAll(mc, "minecraft:stone_sword", 0);
-        CraftingHelper.craftAll(mc, "minecraft:furnace", 0);
+        CraftingHelper.craftShaped(mc, CraftingHelper.sticks(firstPlanks()), 1, 0);
+        CraftingHelper.craftShaped(mc, CraftingHelper.pickaxe(Items.COBBLESTONE), 1, 0);
+        CraftingHelper.craftShaped(mc, CraftingHelper.sword(Items.COBBLESTONE), 1, 0);
+        CraftingHelper.craftShaped(mc, CraftingHelper.furnace(), 1, 0);
         if (InventoryHelper.has(mc, Items.STONE_PICKAXE, 1)
                 && InventoryHelper.has(mc, Items.FURNACE, 1)) {
             mc.player.closeHandledScreen();
@@ -245,12 +252,7 @@ public class ProgressionProcess implements IBaritoneProcess {
 
     private PathingCommand craftIronTier() {
         if (!placeAndOpen(Items.CRAFTING_TABLE)) return defer();
-        for (String r : new String[]{
-                "minecraft:iron_pickaxe", "minecraft:iron_sword",
-                "minecraft:iron_helmet", "minecraft:iron_chestplate",
-                "minecraft:iron_leggings", "minecraft:iron_boots"}) {
-            CraftingHelper.craftAll(mc, r, 0);
-        }
+        craftFullSet(Items.IRON_INGOT);
         if (InventoryHelper.has(mc, Items.IRON_CHESTPLATE, 1)) {
             mc.player.closeHandledScreen();
             return advance();
@@ -260,12 +262,7 @@ public class ProgressionProcess implements IBaritoneProcess {
 
     private PathingCommand craftDiamondTier() {
         if (!placeAndOpen(Items.CRAFTING_TABLE)) return defer();
-        for (String r : new String[]{
-                "minecraft:diamond_pickaxe", "minecraft:diamond_sword",
-                "minecraft:diamond_helmet", "minecraft:diamond_chestplate",
-                "minecraft:diamond_leggings", "minecraft:diamond_boots"}) {
-            CraftingHelper.craftAll(mc, r, 0);
-        }
+        craftFullSet(Items.DIAMOND);
         if (InventoryHelper.has(mc, Items.DIAMOND_CHESTPLATE, 1)) {
             mc.player.closeHandledScreen();
             return advance();
@@ -273,11 +270,26 @@ public class ProgressionProcess implements IBaritoneProcess {
         return defer();
     }
 
+    /** Pickaxe, sword and a full armour set from one material. */
+    private void craftFullSet(Item mat) {
+        CraftingHelper.craftShaped(mc, CraftingHelper.sticks(firstPlanks()), 1, 0);
+        CraftingHelper.craftShaped(mc, CraftingHelper.pickaxe(mat), 1, 0);
+        CraftingHelper.craftShaped(mc, CraftingHelper.sword(mat), 1, 0);
+        CraftingHelper.craftShaped(mc, CraftingHelper.helmet(mat), 1, 0);
+        CraftingHelper.craftShaped(mc, CraftingHelper.chestplate(mat), 1, 0);
+        CraftingHelper.craftShaped(mc, CraftingHelper.leggings(mat), 1, 0);
+        CraftingHelper.craftShaped(mc, CraftingHelper.boots(mat), 1, 0);
+    }
+
     private PathingCommand craftNetheriteTier() {
+        // Netherite ingot = 4 scrap + 4 gold ingot (shapeless, fits the 3x3).
         if (!placeAndOpen(Items.CRAFTING_TABLE)) return defer();
-        // Netherite ingot = 4 scrap + 4 gold ingot; upgrades need a smithing
-        // table, driven separately once ingots exist.
-        CraftingHelper.craftAll(mc, "minecraft:netherite_ingot", 0);
+        java.util.Map<Integer, Item> ingot = new java.util.LinkedHashMap<>();
+        ingot.put(0, Items.NETHERITE_SCRAP); ingot.put(1, Items.NETHERITE_SCRAP);
+        ingot.put(2, Items.NETHERITE_SCRAP); ingot.put(3, Items.NETHERITE_SCRAP);
+        ingot.put(4, Items.GOLD_INGOT); ingot.put(5, Items.GOLD_INGOT);
+        ingot.put(6, Items.GOLD_INGOT); ingot.put(7, Items.GOLD_INGOT);
+        CraftingHelper.craftShaped(mc, ingot, 1, 0);
         if (InventoryHelper.has(mc, Items.NETHERITE_INGOT, 1)) {
             upgradeAllToNetherite();
         }
@@ -290,12 +302,17 @@ public class ProgressionProcess implements IBaritoneProcess {
 
     private void upgradeAllToNetherite() {
         if (!placeAndOpen(Items.SMITHING_TABLE)) return;
-        // Smithing: slot 0 template, 1 base gear, 2 netherite ingot, 3 result.
-        for (String r : new String[]{
-                "minecraft:netherite_pickaxe_smithing", "minecraft:netherite_sword_smithing",
-                "minecraft:netherite_helmet_smithing", "minecraft:netherite_chestplate_smithing",
-                "minecraft:netherite_leggings_smithing", "minecraft:netherite_boots_smithing"}) {
-            CraftingHelper.craftAll(mc, r, 3);
+        // Smithing handler: 0 template, 1 base gear, 2 netherite ingot, 3 result.
+        Item[][] jobs = {
+                {Items.NETHERITE_UPGRADE_SMITHING_TEMPLATE, Items.DIAMOND_PICKAXE},
+                {Items.NETHERITE_UPGRADE_SMITHING_TEMPLATE, Items.DIAMOND_SWORD},
+                {Items.NETHERITE_UPGRADE_SMITHING_TEMPLATE, Items.DIAMOND_HELMET},
+                {Items.NETHERITE_UPGRADE_SMITHING_TEMPLATE, Items.DIAMOND_CHESTPLATE},
+                {Items.NETHERITE_UPGRADE_SMITHING_TEMPLATE, Items.DIAMOND_LEGGINGS},
+                {Items.NETHERITE_UPGRADE_SMITHING_TEMPLATE, Items.DIAMOND_BOOTS},
+        };
+        for (Item[] job : jobs) {
+            SmithingHelper.upgrade(mc, job[0], job[1], Items.NETHERITE_INGOT);
         }
     }
 
@@ -330,11 +347,6 @@ public class ProgressionProcess implements IBaritoneProcess {
         BlockPlacer.placeOnLookedAt(mc);
         cooldown = 4;
         return mc.currentScreen != null;
-    }
-
-    private void craftInInventory(String recipeId) {
-        // The 2x2 player grid is always available without a screen.
-        CraftingHelper.craftAll(mc, recipeId, 0);
     }
 
     private PathingCommand advance() {
@@ -384,6 +396,24 @@ public class ProgressionProcess implements IBaritoneProcess {
     private Item firstFuel() {
         if (InventoryHelper.has(mc, Items.COAL, 1)) return Items.COAL;
         if (InventoryHelper.has(mc, Items.CHARCOAL, 1)) return Items.CHARCOAL;
+        return firstPlanks();
+    }
+
+    private Item firstLog() {
+        for (Item log : new Item[]{Items.OAK_LOG, Items.BIRCH_LOG, Items.SPRUCE_LOG,
+                Items.JUNGLE_LOG, Items.ACACIA_LOG, Items.DARK_OAK_LOG,
+                Items.MANGROVE_LOG, Items.CHERRY_LOG}) {
+            if (InventoryHelper.has(mc, log, 1)) return log;
+        }
+        return Items.OAK_LOG;
+    }
+
+    private Item firstPlanks() {
+        for (Item p : new Item[]{Items.OAK_PLANKS, Items.BIRCH_PLANKS, Items.SPRUCE_PLANKS,
+                Items.JUNGLE_PLANKS, Items.ACACIA_PLANKS, Items.DARK_OAK_PLANKS,
+                Items.MANGROVE_PLANKS, Items.CHERRY_PLANKS}) {
+            if (InventoryHelper.has(mc, p, 1)) return p;
+        }
         return Items.OAK_PLANKS;
     }
 

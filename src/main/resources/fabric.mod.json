@@ -3,7 +3,7 @@
   "id": "overlord_baritone",
   "version": "${version}",
   "name": "Overlord Baritone",
-  "description": "Autonomous progression process for Baritone: bootstraps from an empty inventory to fully enchanted netherite gear.",
+  "description": "Autonomous progression + combat process for Baritone. Trigger in chat with #start.",
   "authors": ["roothack"],
   "license": "MIT",
   "environment": "client",
@@ -13,8 +13,8 @@
     ]
   },
   "depends": {
-    "fabricloader": ">=0.15.0",
-    "minecraft": "~1.20.4",
+    "fabricloader": ">=0.16.0",
+    "minecraft": "~1.21.11",
     "baritone": "*"
   }
 }

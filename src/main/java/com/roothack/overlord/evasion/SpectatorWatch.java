@@ -2,6 +2,7 @@ package com.roothack.overlord.evasion;
 
 import com.roothack.overlord.util.Humanizer;
 
+import baritone.api.BaritoneAPI;
 import baritone.api.IBaritone;
 import baritone.api.Settings;
 
@@ -43,7 +44,7 @@ public final class SpectatorWatch {
 
     // Baritone settings we flip while watched, restored when clear.
     private Boolean savedFreeLook;
-    private Boolean savedRandomLooking;
+    private Double savedRandomLooking;
     private Boolean savedAntiCheat;
 
     public SpectatorWatch(Humanizer human) {
@@ -81,12 +82,12 @@ public final class SpectatorWatch {
         boolean any = false;
 
         for (PlayerListEntry entry : mc.getNetworkHandler().getPlayerList()) {
-            if (entry.getProfile().getId().equals(self)) continue;
+            if (entry.getProfile().id().equals(self)) continue;
             if (entry.getGameMode() != GameMode.SPECTATOR) continue;
             any = true;
 
             PlayerEntity pe = mc.world != null
-                    ? mc.world.getPlayerByUuid(entry.getProfile().getId()) : null;
+                    ? mc.world.getPlayerByUuid(entry.getProfile().id()) : null;
             if (pe != null && pe.squaredDistanceTo(mc.player) <= nearBlocks * nearBlocks) {
                 nearby = true;
             }
@@ -95,21 +96,21 @@ public final class SpectatorWatch {
     }
 
     private void enterCamouflage(IBaritone baritone) {
-        Settings s = baritone.settings();
+        Settings s = BaritoneAPI.getSettings();
         savedFreeLook = s.freeLook.value;
         savedRandomLooking = s.randomLooking.value;
         savedAntiCheat = s.antiCheatCompatibility.value;
 
-        // Body turns with the view, looking is eased and slightly random, and
+        // Body turns with the view, looking is eased and more random, and
         // movement stays inside anti-cheat-safe envelopes.
         s.freeLook.value = false;
-        s.randomLooking.value = true;
+        s.randomLooking.value = 4.0;   // degrees of extra look variance
         s.antiCheatCompatibility.value = true;
         s.blockBreakSpeed.value = 100; // never faster than legit
     }
 
     private void exitCamouflage(IBaritone baritone) {
-        Settings s = baritone.settings();
+        Settings s = BaritoneAPI.getSettings();
         if (savedFreeLook != null) s.freeLook.value = savedFreeLook;
         if (savedRandomLooking != null) s.randomLooking.value = savedRandomLooking;
         if (savedAntiCheat != null) s.antiCheatCompatibility.value = savedAntiCheat;

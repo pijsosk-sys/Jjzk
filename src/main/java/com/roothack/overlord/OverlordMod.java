@@ -3,12 +3,15 @@ package com.roothack.overlord;
 import baritone.api.BaritoneAPI;
 import baritone.api.IBaritone;
 
+import com.roothack.overlord.command.ChatTrigger;
 import com.roothack.overlord.command.OverlordCommand;
 import com.roothack.overlord.process.ProgressionProcess;
+import com.roothack.overlord.ui.Banner;
 
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,6 +38,12 @@ public class OverlordMod implements ClientModInitializer {
         // is attached.
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, access) ->
                 OverlordCommand.register(dispatcher, process));
+
+        // #start / #stop / #status typed straight into chat.
+        ChatTrigger.register(process);
+
+        // Draw the pop-up banner.
+        HudRenderCallback.EVENT.register((ctx, tickCounter) -> Banner.render(ctx));
 
         ClientTickEvents.END_CLIENT_TICK.register(mc -> {
             if (!attached) {

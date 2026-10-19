@@ -1,7 +1,11 @@
 pluginManagement {
     repositories {
         maven { url = 'https://maven.fabricmc.net/' }
+        // Google's mirror carries guava/j2objc/etc.; listed first so the loom
+        // plugin classpath resolves here instead of the rate-limited central.
+        google()
         gradlePluginPortal()
+        mavenCentral()
     }
 }
 
