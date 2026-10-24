@@ -42,6 +42,9 @@ object AgentConfig {
             writeClaudeSettings(File(rootfs, "root/$dir/settings.json"), auto)
         }
         writeCodexConfig(File(rootfs, "root/.codex/config.toml"), auto)
+        // Read by free-ai.sh (Gemini CLI, Qwen Code), which pass --yolo in "just do it" mode.
+        File(rootfs, "root/.config/boddy/agent-mode").apply { parentFile?.mkdirs() }
+            .writeText(if (auto) "auto" else "ask")
     }
 
     /** Only touches the "permissions" block, keeping anything else the user set. */

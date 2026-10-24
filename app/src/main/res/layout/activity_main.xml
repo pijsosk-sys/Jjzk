@@ -99,6 +99,32 @@
             android:textSize="16sp" />
 
         <Button
+            android:id="@+id/gemini"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/button_card"
+            android:gravity="start|center_vertical"
+            android:paddingStart="20dp"
+            android:text="Gemini CLI  ·  free"
+            android:textAllCaps="false"
+            android:textColor="@color/boddy_text"
+            android:textSize="16sp" />
+
+        <Button
+            android:id="@+id/qwen"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/button_card"
+            android:gravity="start|center_vertical"
+            android:paddingStart="20dp"
+            android:text="Qwen Code  ·  free"
+            android:textAllCaps="false"
+            android:textColor="@color/boddy_text"
+            android:textSize="16sp" />
+
+        <Button
             android:id="@+id/deepseek"
             android:layout_width="match_parent"
             android:layout_height="56dp"

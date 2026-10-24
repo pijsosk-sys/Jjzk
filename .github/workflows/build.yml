@@ -5,6 +5,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   # Publishes the prebuilt Boddy system (Debian arm64 with the desktop, apps and AI tools already
   # installed) that the app downloads on first run. Rebuilt only when its inputs change, since
@@ -51,7 +55,8 @@ jobs:
           gh release create "${{ steps.tag.outputs.tag }}" debian-arm64.tar.xz debian-arm64.tar.xz.sha256 \
             -R "$GITHUB_REPOSITORY" --latest=false \
             --title "Boddy system image (${{ steps.tag.outputs.tag }})" \
-            --notes "Prebuilt Boddy system downloaded by the app on first run. Not an app download."
+            --notes "Prebuilt Boddy system downloaded by the app on first run. Not an app download." \
+            || gh release view "${{ steps.tag.outputs.tag }}" -R "$GITHUB_REPOSITORY" >/dev/null  # another run published it
 
   build:
     needs: rootfs

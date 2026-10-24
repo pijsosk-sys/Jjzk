@@ -52,6 +52,8 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.claudeCode).setOnClickListener { openDesktop("claude-code") }
         findViewById<Button>(R.id.codex).setOnClickListener { openDesktop("codex") }
         findViewById<Button>(R.id.deepseek).setOnClickListener { openDesktop("deepseek-code") }
+        findViewById<Button>(R.id.gemini).setOnClickListener { openDesktop("gemini") }
+        findViewById<Button>(R.id.qwen).setOnClickListener { openDesktop("qwen") }
         findViewById<TextView>(R.id.agentMode).setOnClickListener { chooseAgentMode(then = null) }
 
         logToggle.setOnClickListener { setLogVisible(logScroll.visibility != View.VISIBLE, logScroll, logToggle) }
