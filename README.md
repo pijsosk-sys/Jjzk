@@ -29,7 +29,9 @@ A Bluetooth keyboard and mouse, or Samsung DeX on a monitor, also work.
 
 ## Getting the APK
 
-Every push builds the app with GitHub Actions. Open the repo's **Actions** tab,
+**Direct download:** [Boddy.apk](https://github.com/pijsosk-sys/Jjzk/releases/latest/download/Boddy.apk). Open it on your phone and allow "install unknown apps" when asked.
+
+Every push builds the app with GitHub Actions and publishes it as a release. You can also open the **Actions** tab,
 pick the latest run, and download **Boddy-apk** from Artifacts. Unzip it on your
 phone and open the `.apk` (allow "install unknown apps" when asked).
 

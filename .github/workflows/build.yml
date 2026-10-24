@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -27,7 +29,25 @@ jobs:
       - name: Build
         run: ./gradlew --no-daemon assembleRelease
 
+      - name: Rename APK
+        run: cp app/build/outputs/apk/release/app-release.apk Boddy.apk
+
       - uses: actions/upload-artifact@v4
         with:
           name: Boddy-apk
-          path: app/build/outputs/apk/release/*.apk
+          path: Boddy.apk
+
+      # Every push publishes a release, so the newest APK is always at
+      # https://github.com/<owner>/<repo>/releases/latest/download/Boddy.apk
+      - name: Publish release
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Boddy test build ${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          files: Boddy.apk
+          body: |
+            Test build of Boddy, a no-root Linux desktop for Android.
+            Download **Boddy.apk** below and open it on your phone (allow "install unknown apps" when asked).
