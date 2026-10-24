@@ -69,6 +69,8 @@ class Installer(private val context: Context, private val proot: Proot) {
         Boddy.log("Downloading $url")
         val conn = URL(url).openConnection() as HttpURLConnection
         conn.instanceFollowRedirects = true
+        conn.connectTimeout = 30_000
+        conn.readTimeout = 60_000
         conn.connect()
         if (conn.responseCode !in 200..299) throw IOException("Download failed: HTTP ${conn.responseCode}")
         val total = conn.contentLengthLong
@@ -126,7 +128,7 @@ class Installer(private val context: Context, private val proot: Proot) {
                         try {
                             Os.link(target.path, out.path)
                         } catch (_: ErrnoException) {
-                            target.copyTo(out, overwrite = true)
+                            if (target.isFile) target.copyTo(out, overwrite = true)
                         }
                     }
                     entry.isFile -> {
@@ -162,6 +164,11 @@ class Installer(private val context: Context, private val proot: Proot) {
             writeText("APT::Sandbox::User \"root\";\nAcquire::Retries \"3\";\n")
         }
 
+        copyScripts()
+    }
+
+    /** Copies Boddy's scripts into Linux. Also run on every desktop start so they match the app. */
+    fun copyScripts() {
         val dir = File(rootfs, "opt/boddy").apply { mkdirs() }
         context.assets.list("boddy").orEmpty().forEach { name ->
             val out = File(dir, name)
@@ -184,7 +191,7 @@ class Installer(private val context: Context, private val proot: Proot) {
 
     companion object {
         /** Bump when setup.sh or the theme changes so existing installs offer an update. */
-        const val SETUP_VERSION = 3
+        const val SETUP_VERSION = 4
         private const val ROOTFS_URL =
             "https://github.com/pijsosk-sys/Jjzk/releases/download/rootfs-debian-trixie-1/debian-arm64.tar.xz"
     }

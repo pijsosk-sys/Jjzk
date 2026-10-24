@@ -89,6 +89,7 @@ class BoddyService : Service() {
         bridge.start()
         scope.launch {
             try {
+                installer.copyScripts()
                 PhoneApps.writeForLinux(this@BoddyService, proot.rootfs)
                 Settings(this@BoddyService).agentMode?.let { AgentConfig.apply(proot.rootfs, it) }
             } catch (e: Exception) {

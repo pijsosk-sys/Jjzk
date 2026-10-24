@@ -7,6 +7,7 @@ if ! command -v codex >/dev/null; then
     echo "Installing Codex..."
     npm install -g @openai/codex
 fi
-codex
+# The background app-server daemon needs a Unix socket that fails under proot.
+codex --no-daemon
 echo
 read -rp "Codex closed. Press Enter to close this window."

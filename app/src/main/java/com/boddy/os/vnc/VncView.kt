@@ -21,6 +21,8 @@ import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputMethodManager
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.min
@@ -316,17 +318,14 @@ class VncView(context: Context, attrs: AttributeSet?) : View(context, attrs), Rf
 
     // ---- Keyboard ---------------------------------------------------------------------
 
-    private var keyboardShown = false
-
     fun toggleKeyboard() {
         requestFocus()
         val imm = context.getSystemService(InputMethodManager::class.java)
-        keyboardShown = if (keyboardShown) {
+        val shown = ViewCompat.getRootWindowInsets(this)?.isVisible(WindowInsetsCompat.Type.ime()) == true
+        if (shown) {
             imm.hideSoftInputFromWindow(windowToken, 0)
-            false
         } else {
             imm.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT)
-            true
         }
     }
 

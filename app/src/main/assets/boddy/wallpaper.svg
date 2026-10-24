@@ -1,17 +1,69 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+<svg xmlns="http://www.w3.org/2000/svg" width="2400" height="1200" viewBox="0 0 2400 1200">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#1b1035"/>
-      <stop offset="0.55" stop-color="#3b2a8f"/>
-      <stop offset="1" stop-color="#6c5ce7"/>
+    <linearGradient id="sky" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0d0821"/>
+      <stop offset="0.5" stop-color="#1f1452"/>
+      <stop offset="1" stop-color="#2e1d78"/>
     </linearGradient>
-    <radialGradient id="glow" cx="0.75" cy="0.3" r="0.6">
-      <stop offset="0" stop-color="#a29bfe" stop-opacity="0.45"/>
-      <stop offset="1" stop-color="#a29bfe" stop-opacity="0"/>
+    <radialGradient id="orbA" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#8f7cff" stop-opacity="0.75"/>
+      <stop offset="1" stop-color="#8f7cff" stop-opacity="0"/>
     </radialGradient>
+    <radialGradient id="orbB" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ff6fb5" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#ff6fb5" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="orbC" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#4fd1ff" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#4fd1ff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="wave" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#a29bfe" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#a29bfe" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#a29bfe" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#c9c2ff"/>
+      <stop offset="1" stop-color="#7a6af0"/>
+    </linearGradient>
   </defs>
-  <rect width="1920" height="1080" fill="url(#bg)"/>
-  <rect width="1920" height="1080" fill="url(#glow)"/>
-  <text x="1820" y="1000" text-anchor="end" font-family="DejaVu Sans" font-weight="bold"
-        font-size="96" fill="#ffffff" fill-opacity="0.18">Boddy</text>
+
+  <rect width="2400" height="1200" fill="url(#sky)"/>
+
+  <!-- Soft glowing orbs -->
+  <circle cx="1750" cy="320" r="620" fill="url(#orbA)"/>
+  <circle cx="420" cy="980" r="560" fill="url(#orbB)"/>
+  <circle cx="1150" cy="1150" r="480" fill="url(#orbC)"/>
+
+  <!-- Flowing light lines -->
+  <g fill="none" stroke="url(#wave)" stroke-linecap="round">
+    <path d="M-100 820 C 500 640, 900 980, 1400 760 S 2200 560, 2500 700" stroke-width="3"/>
+    <path d="M-100 870 C 520 700, 920 1030, 1420 810 S 2220 620, 2500 760" stroke-width="2" opacity="0.7"/>
+    <path d="M-100 920 C 540 760, 940 1080, 1440 860 S 2240 680, 2500 820" stroke-width="1.5" opacity="0.5"/>
+    <path d="M-100 970 C 560 820, 960 1130, 1460 910 S 2260 740, 2500 880" stroke-width="1" opacity="0.35"/>
+  </g>
+
+  <!-- Tiny stars -->
+  <g fill="#ffffff">
+    <circle cx="210" cy="140" r="2" opacity="0.6"/>
+    <circle cx="520" cy="300" r="1.5" opacity="0.4"/>
+    <circle cx="880" cy="120" r="2" opacity="0.5"/>
+    <circle cx="1240" cy="260" r="1.5" opacity="0.35"/>
+    <circle cx="1460" cy="90" r="2.5" opacity="0.6"/>
+    <circle cx="2050" cy="180" r="1.5" opacity="0.45"/>
+    <circle cx="2260" cy="420" r="2" opacity="0.5"/>
+    <circle cx="320" cy="520" r="1.5" opacity="0.3"/>
+    <circle cx="1020" cy="470" r="1.5" opacity="0.3"/>
+    <circle cx="1880" cy="560" r="2" opacity="0.35"/>
+    <circle cx="660" cy="660" r="1.5" opacity="0.25"/>
+  </g>
+
+  <!-- Boddy mark, bottom right, clear of the dock and desktop icons -->
+  <g transform="translate(2010 980)" opacity="0.9">
+    <rect x="-70" y="-70" width="140" height="140" rx="38" fill="url(#mark)" opacity="0.22"/>
+    <path fill="#ffffff" fill-opacity="0.85"
+          d="M-26 -42h28c13 0 21 7 21 17c0 6-3 11-9 13c8 2 13 8 13 16c0 12-9 20-23 20h-30zM-13 -31v17h13c6 0 10-3 10-8.5c0-5.5-4-8.5-10-8.5zM-13 -3v17h14c7 0 11-3 11-8.5c0-5.5-4-8.5-11-8.5z"/>
+    <text x="100" y="22" font-family="DejaVu Sans" font-weight="bold" font-size="64"
+          fill="#ffffff" fill-opacity="0.82" letter-spacing="2">Boddy</text>
+  </g>
 </svg>

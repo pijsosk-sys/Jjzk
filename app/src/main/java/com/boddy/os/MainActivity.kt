@@ -15,7 +15,9 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -108,9 +110,10 @@ class MainActivity : AppCompatActivity() {
                         }
                 }
                 launch {
-                    Boddy.log.collect {
+                    Boddy.log.conflate().collect {
                         log.text = it
                         logScroll.post { logScroll.fullScroll(View.FOCUS_DOWN) }
+                        delay(200)
                     }
                 }
             }

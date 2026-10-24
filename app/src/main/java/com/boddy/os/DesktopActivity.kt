@@ -51,7 +51,12 @@ class DesktopActivity : AppCompatActivity() {
         vnc.onDisconnected = { error ->
             if (!resizing) {
                 overlay.visibility = View.VISIBLE
-                overlay.text = "Desktop closed" + (error?.message?.let { "\n$it" } ?: "")
+                overlay.text = "Desktop closed" + (error?.message?.let { "\n$it" } ?: "") + "\n\nTap to start it again"
+                overlay.setOnClickListener {
+                    overlay.setOnClickListener(null)
+                    overlay.text = "Starting Boddy…"
+                    startDesktop(BoddyService.ACTION_START)
+                }
             }
         }
         buildKeyBar(findViewById(R.id.keys))

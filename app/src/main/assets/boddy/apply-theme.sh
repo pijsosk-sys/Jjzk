@@ -106,3 +106,6 @@ grep -q "boddy prompt" /root/.bashrc 2>/dev/null || cat >> /root/.bashrc <<'BASH
 PS1='\[\e[1;35m\]boddy\[\e[0m\]:\[\e[1;34m\]\w\[\e[0m\]\$ '
 export PATH="/root/.local/bin:$PATH"
 BASHRC
+
+# Codex's background daemon can't start under proot; always run it without.
+grep -q "codex --no-daemon" /root/.bashrc || echo "alias codex='codex --no-daemon'" >> /root/.bashrc
