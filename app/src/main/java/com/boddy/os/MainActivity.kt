@@ -17,7 +17,6 @@ import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -110,7 +109,7 @@ class MainActivity : AppCompatActivity() {
                         }
                 }
                 launch {
-                    Boddy.log.conflate().collect {
+                    Boddy.log.collect { // StateFlow skips values while we wait below
                         log.text = it
                         logScroll.post { logScroll.fullScroll(View.FOCUS_DOWN) }
                         delay(200)
