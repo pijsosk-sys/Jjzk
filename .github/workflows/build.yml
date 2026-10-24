@@ -51,3 +51,13 @@ jobs:
           body: |
             Test build of Boddy, a no-root Linux desktop for Android.
             Download **Boddy.apk** below and open it on your phone (allow "install unknown apps" when asked).
+
+      # Also keep the newest APK under a git tag so it can be fetched with plain git.
+      - name: Store APK in apk-latest tag
+        if: github.event_name != 'pull_request'
+        run: |
+          blob=$(git hash-object -w Boddy.apk)
+          tree=$(printf '100644 blob %s\tBoddy.apk\n' "$blob" | git mktree)
+          commit=$(git -c user.name=github-actions -c user.email=github-actions@users.noreply.github.com \
+            commit-tree "$tree" -m "Boddy APK, build ${{ github.run_number }}")
+          git push -f origin "$commit:refs/tags/apk-latest"
