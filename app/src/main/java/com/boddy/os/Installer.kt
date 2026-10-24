@@ -8,9 +8,12 @@ import org.apache.commons.compress.compressors.xz.XZCompressorInputStream
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.IOException
+import java.io.RandomAccessFile
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
+import java.util.concurrent.atomic.AtomicLong
+import kotlin.concurrent.thread
 
 /** Downloads Debian, unpacks it, and runs the first-boot setup script. */
 class Installer(private val context: Context, private val proot: Proot) {
@@ -53,43 +56,69 @@ class Installer(private val context: Context, private val proot: Proot) {
         deleteTree(rootfs)
     }
 
-    /** The base system is published as a release of this repo by the CI "rootfs" job. */
+    /**
+     * The prebuilt system is published as a release of this repo by the CI "rootfs" job, which
+     * writes its address into assets/rootfs.txt at build time.
+     */
     private fun resolveRootfs(): Pair<String, String?> {
         Boddy.status.value = "Step 1 of 4: Getting ready…"
+        val url = try {
+            context.assets.open("rootfs.txt").bufferedReader().readText().trim().ifEmpty { null }
+        } catch (_: IOException) {
+            null
+        } ?: FALLBACK_ROOTFS_URL
         val sha = try {
-            URL("$ROOTFS_URL.sha256").readText().trim().takeIf { it.length == 64 }
+            URL("$url.sha256").readText().trim().takeIf { it.length == 64 }
         } catch (_: IOException) {
             null
         }
-        return ROOTFS_URL to sha
+        return url to sha
     }
 
+    /**
+     * Downloads in [PARTS] parallel ranges when the server supports it (GitHub does), which is
+     * much faster on phone connections than one stream. Each part retries on its own.
+     */
     private fun download(url: String, dest: File, sha256: String?) {
-        Boddy.status.value = "Step 1 of 4: Downloading Linux"
+        Boddy.status.value = "Step 1 of 4: Downloading Boddy"
         Boddy.log("Downloading $url")
-        val conn = URL(url).openConnection() as HttpURLConnection
-        conn.instanceFollowRedirects = true
-        conn.connectTimeout = 30_000
-        conn.readTimeout = 60_000
-        conn.connect()
-        if (conn.responseCode !in 200..299) throw IOException("Download failed: HTTP ${conn.responseCode}")
-        val total = conn.contentLengthLong
-        val digest = MessageDigest.getInstance("SHA-256")
-        var done = 0L
-        conn.inputStream.use { input ->
-            dest.outputStream().use { out ->
-                val buf = ByteArray(1 shl 16)
+        dest.delete() // a leftover from an earlier attempt could leave junk at the end
+        val total = contentLength(url)
+        val done = AtomicLong(0)
+        val report = { Boddy.progress.value = if (total > 0) (done.get() * 100 / total).toInt() else -1 }
+
+        if (total <= 0) {
+            downloadRange(url, dest, 0, -1, done, report)
+        } else {
+            RandomAccessFile(dest, "rw").use { it.setLength(total) }
+            val partSize = (total + PARTS - 1) / PARTS
+            val errors = mutableListOf<Throwable>()
+            val workers = (0 until PARTS).map { i ->
+                val start = i * partSize
+                val end = minOf(total, start + partSize) - 1
+                thread(name = "download-$i") {
+                    try {
+                        downloadRange(url, dest, start, end, done, report)
+                    } catch (t: Throwable) {
+                        synchronized(errors) { errors += t }
+                    }
+                }
+            }
+            workers.forEach { it.join() }
+            errors.firstOrNull()?.let { throw it }
+        }
+
+        if (sha256 != null) {
+            Boddy.status.value = "Step 1 of 4: Checking the download"
+            val digest = MessageDigest.getInstance("SHA-256")
+            dest.inputStream().use { input ->
+                val buf = ByteArray(1 shl 20)
                 while (true) {
                     val n = input.read(buf)
                     if (n < 0) break
-                    out.write(buf, 0, n)
                     digest.update(buf, 0, n)
-                    done += n
-                    if (total > 0) Boddy.progress.value = (done * 100 / total).toInt()
                 }
             }
-        }
-        if (sha256 != null) {
             val actual = digest.digest().joinToString("") { "%02x".format(it) }
             if (!actual.equals(sha256, ignoreCase = true)) {
                 dest.delete()
@@ -97,6 +126,58 @@ class Installer(private val context: Context, private val proot: Proot) {
             }
         }
     }
+
+    /** Size of the file, or -1 if the server doesn't support range requests. */
+    private fun contentLength(url: String): Long {
+        val conn = open(url, "bytes=0-0")
+        try {
+            if (conn.responseCode != 206) return -1
+            return conn.getHeaderField("Content-Range")?.substringAfterLast('/')?.toLongOrNull() ?: -1
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    /** Downloads bytes [start]..[end] (or everything if [end] < 0) into [dest], resuming on errors. */
+    private fun downloadRange(url: String, dest: File, start: Long, end: Long, done: AtomicLong, report: () -> Unit) {
+        var pos = start
+        var attempts = 0
+        while (end < 0 || pos <= end) {
+            try {
+                val conn = open(url, if (end < 0) null else "bytes=$pos-$end")
+                if (conn.responseCode !in 200..299) throw IOException("Download failed: HTTP ${conn.responseCode}")
+                RandomAccessFile(dest, "rw").use { out ->
+                    out.seek(pos)
+                    conn.inputStream.use { input ->
+                        val buf = ByteArray(1 shl 16)
+                        while (true) {
+                            val n = input.read(buf)
+                            if (n < 0) break
+                            out.write(buf, 0, n)
+                            pos += n
+                            done.addAndGet(n.toLong())
+                            report()
+                        }
+                    }
+                }
+                if (end < 0) return
+                if (pos <= end) throw IOException("Connection ended early")
+            } catch (e: IOException) {
+                if (++attempts > 5 || end < 0) throw e
+                Boddy.log("Download hiccup (${e.message}), resuming…")
+                Thread.sleep(2000L * attempts)
+            }
+        }
+    }
+
+    private fun open(url: String, range: String?): HttpURLConnection =
+        (URL(url).openConnection() as HttpURLConnection).apply {
+            instanceFollowRedirects = true
+            connectTimeout = 30_000
+            readTimeout = 60_000
+            if (range != null) setRequestProperty("Range", range)
+            connect()
+        }
 
     private fun unpack(tarball: File) {
         Boddy.status.value = "Step 2 of 4: Unpacking (a few minutes)"
@@ -107,7 +188,7 @@ class Installer(private val context: Context, private val proot: Proot) {
         staging.mkdirs()
 
         val dirModes = mutableListOf<Pair<File, Int>>()
-        TarArchiveInputStream(XZCompressorInputStream(BufferedInputStream(tarball.inputStream(), 1 shl 16))).use { tar ->
+        TarArchiveInputStream(BufferedInputStream(XZCompressorInputStream(BufferedInputStream(tarball.inputStream(), 1 shl 20)), 1 shl 20)).use { tar ->
             while (true) {
                 val entry = tar.nextEntry ?: break
                 val out = File(staging, entry.name)
@@ -132,7 +213,7 @@ class Installer(private val context: Context, private val proot: Proot) {
                         }
                     }
                     entry.isFile -> {
-                        out.outputStream().use { tar.copyTo(it) }
+                        out.outputStream().use { tar.copyTo(it, 1 shl 16) }
                         Os.chmod(out.path, (entry.mode and 0x1ff) or 0x180) // keep u+rw
                     }
                 }
@@ -191,8 +272,10 @@ class Installer(private val context: Context, private val proot: Proot) {
 
     companion object {
         /** Bump when setup.sh or the theme changes so existing installs offer an update. */
-        const val SETUP_VERSION = 4
-        private const val ROOTFS_URL =
+        const val SETUP_VERSION = 5
+        /** Used when the APK was built without CI (plain Debian; setup.sh installs the rest). */
+        private const val FALLBACK_ROOTFS_URL =
             "https://github.com/pijsosk-sys/Jjzk/releases/download/rootfs-debian-trixie-1/debian-arm64.tar.xz"
+        private const val PARTS = 4
     }
 }

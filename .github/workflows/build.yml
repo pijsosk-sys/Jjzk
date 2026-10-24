@@ -6,37 +6,55 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Publishes the Debian base system the app downloads on first run, once per ROOTFS_TAG.
-  # It's the official debian:trixie arm64 image, exported (no emulation needed).
+  # Publishes the prebuilt Boddy system (Debian arm64 with the desktop, apps and AI tools already
+  # installed) that the app downloads on first run. Rebuilt only when its inputs change, since
+  # the tag is a hash of them.
   rootfs:
-    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     env:
       GH_TOKEN: ${{ github.token }}
-      ROOTFS_TAG: rootfs-debian-trixie-1
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute tag
+        id: tag
+        run: |
+          hash=$(cat scripts/build-rootfs.sh app/src/main/assets/boddy/packages.txt \
+            app/src/main/assets/boddy/apt-boddy.conf app/src/main/assets/boddy/dpkg-boddy.cfg \
+            | sha256sum | cut -c1-10)
+          echo "tag=rootfs-full-$hash" >> "$GITHUB_OUTPUT"
+
       - name: Check for existing release
         id: check
         run: |
-          if gh release view "$ROOTFS_TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          if gh release view "${{ steps.tag.outputs.tag }}" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - uses: docker/setup-qemu-action@v3
+        if: steps.check.outputs.exists != 'true' && github.event_name != 'pull_request'
+        with:
+          platforms: arm64
+
       - name: Build and publish rootfs
-        if: steps.check.outputs.exists != 'true'
+        if: steps.check.outputs.exists != 'true' && github.event_name != 'pull_request'
         run: |
-          docker pull --platform linux/arm64 debian:trixie
-          cid=$(docker create --platform linux/arm64 debian:trixie)
-          docker export "$cid" | xz -T0 -6 > debian-arm64.tar.xz
+          docker run --platform linux/arm64 --name boddyfs -v "$PWD:/src:ro" debian:trixie \
+            bash /src/scripts/build-rootfs.sh
+          docker export boddyfs | xz -T0 -8 > debian-arm64.tar.xz
           sha256sum debian-arm64.tar.xz | cut -d' ' -f1 > debian-arm64.tar.xz.sha256
-          gh release create "$ROOTFS_TAG" debian-arm64.tar.xz debian-arm64.tar.xz.sha256 \
+          ls -lh debian-arm64.tar.xz
+          gh release create "${{ steps.tag.outputs.tag }}" debian-arm64.tar.xz debian-arm64.tar.xz.sha256 \
             -R "$GITHUB_REPOSITORY" --latest=false \
-            --title "Boddy base system (Debian trixie arm64)" \
-            --notes "Downloaded by the Boddy app on first run. Not an app download."
+            --title "Boddy system image (${{ steps.tag.outputs.tag }})" \
+            --notes "Prebuilt Boddy system downloaded by the app on first run. Not an app download."
 
   build:
+    needs: rootfs
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -50,6 +68,12 @@ jobs:
 
       - name: Install patchelf
         run: sudo apt-get update && sudo apt-get install -y patchelf
+
+      - name: Point the app at the system image
+        run: |
+          echo "https://github.com/${{ github.repository }}/releases/download/${{ needs.rootfs.outputs.tag }}/debian-arm64.tar.xz" \
+            > app/src/main/assets/rootfs.txt
+          cat app/src/main/assets/rootfs.txt
 
       - name: Fetch proot binaries
         run: ./scripts/fetch-proot.sh

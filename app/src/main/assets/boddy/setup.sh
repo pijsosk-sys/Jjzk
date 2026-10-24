@@ -5,23 +5,23 @@ set -e
 export DEBIAN_FRONTEND=noninteractive
 APT="apt-get -y -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
 
-echo ">>> Step 3 of 4: Getting the app list"
+install -m644 /opt/boddy/apt-boddy.conf /etc/apt/apt.conf.d/99boddy
+mkdir -p /etc/dpkg/dpkg.cfg.d && install -m644 /opt/boddy/dpkg-boddy.cfg /etc/dpkg/dpkg.cfg.d/99boddy
 dpkg --configure -a || true   # recover from an interrupted earlier attempt
-apt-get update
 
-echo ">>> Step 3 of 4: Installing the desktop and Firefox (the long part)"
-$APT install --no-install-recommends \
-    xfce4-session xfwm4 xfce4-panel xfdesktop4 xfce4-settings xfconf \
-    xfce4-terminal thunar mousepad xfce4-appfinder \
-    tigervnc-standalone-server dbus-x11 at-spi2-core \
-    firefox-esr synaptic \
-    adwaita-icon-theme gnome-themes-extra librsvg2-common \
-    fonts-dejavu-core fonts-noto-color-emoji \
-    ca-certificates curl wget xz-utils unzip zip sudo procps less nano git \
-    xdotool scrot x11-utils python3
-
-echo ">>> Step 3 of 4: Installing Java and Node (for Minecraft mods and Codex)"
-$APT install --no-install-recommends openjdk-21-jdk-headless nodejs npm
+# The prebuilt Boddy image already has everything; only install what's missing.
+missing=""
+for p in $(grep -v '^\s*#' /opt/boddy/packages.txt); do
+    dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q "ok installed" || missing="$missing $p"
+done
+if [ -n "$missing" ]; then
+    echo ">>> Step 3 of 4: Getting the app list"
+    apt-get update
+    echo ">>> Step 3 of 4: Installing apps (the long part)"
+    $APT install --no-install-recommends $missing
+else
+    echo ">>> Step 3 of 4: Apps already installed"
+fi
 
 # Firefox's content sandbox relies on kernel features proot can't provide.
 mkdir -p /etc/firefox-esr
@@ -30,6 +30,11 @@ pref("security.sandbox.content.level", 0);
 pref("browser.startup.homepage", "https://claude.ai");
 pref("browser.aboutwelcome.enabled", false);
 pref("layout.css.devPixelsPerPx", "1.25");
+// Fewer background processes: less memory and faster on a phone.
+pref("dom.ipc.processCount", 2);
+pref("browser.tabs.unloadOnLowMemory", true);
+pref("toolkit.telemetry.enabled", false);
+pref("datareporting.healthreport.uploadEnabled", false);
 PREFS
 
 echo ">>> Step 4 of 4: Installing Claude Code"

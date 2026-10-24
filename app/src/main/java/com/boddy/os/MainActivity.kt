@@ -206,7 +206,7 @@ class MainActivity : AppCompatActivity() {
                 "control the desktop and send files to your phone. Updating keeps your files and sign-ins."
         } else {
             "Firefox, Claude, DeepSeek and Antigravity on a real desktop. No root needed.\n\n" +
-                "Stay on Wi-Fi: the first install downloads about 1 GB and takes 10–20 minutes."
+                "Stay on Wi-Fi: the first install downloads Boddy (under 1 GB) and takes a few minutes."
         }
         Boddy.Phase.READY -> "Ready. Open the desktop, or jump straight into an app."
         Boddy.Phase.RUNNING -> "Boddy is running."
