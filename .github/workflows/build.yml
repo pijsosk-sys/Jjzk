@@ -6,6 +6,36 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Publishes the Debian base system the app downloads on first run, once per ROOTFS_TAG.
+  # It's the official debian:trixie arm64 image, exported (no emulation needed).
+  rootfs:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ROOTFS_TAG: rootfs-debian-trixie-1
+    steps:
+      - name: Check for existing release
+        id: check
+        run: |
+          if gh release view "$ROOTFS_TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and publish rootfs
+        if: steps.check.outputs.exists != 'true'
+        run: |
+          docker pull --platform linux/arm64 debian:trixie
+          cid=$(docker create --platform linux/arm64 debian:trixie)
+          docker export "$cid" | xz -T0 -6 > debian-arm64.tar.xz
+          sha256sum debian-arm64.tar.xz | cut -d' ' -f1 > debian-arm64.tar.xz.sha256
+          gh release create "$ROOTFS_TAG" debian-arm64.tar.xz debian-arm64.tar.xz.sha256 \
+            -R "$GITHUB_REPOSITORY" --latest=false \
+            --title "Boddy base system (Debian trixie arm64)" \
+            --notes "Downloaded by the Boddy app on first run. Not an app download."
+
   build:
     runs-on: ubuntu-latest
     permissions:

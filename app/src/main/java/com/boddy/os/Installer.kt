@@ -43,17 +43,15 @@ class Installer(private val context: Context, private val proot: Proot) {
         deleteTree(rootfs)
     }
 
-    /**
-     * Uses the same Debian image proot-distro (Termux) installs, reading the current
-     * URL and checksum from its plugin file so we never point at a stale release.
-     */
+    /** The base system is published as a release of this repo by the CI "rootfs" job. */
     private fun resolveRootfs(): Pair<String, String?> {
-        Boddy.status.value = "Finding the latest Debian image…"
-        val plugin = URL(DISTRO_PLUGIN).readText()
-        val url = Regex("""TARBALL_URL\['aarch64'\]="([^"]+)"""").find(plugin)?.groupValues?.get(1)
-            ?: throw IOException("Couldn't find the Debian download link")
-        val sha = Regex("""TARBALL_SHA256\['aarch64'\]="([0-9a-fA-F]{64})"""").find(plugin)?.groupValues?.get(1)
-        return url to sha
+        Boddy.status.value = "Getting ready to download…"
+        val sha = try {
+            URL("$ROOTFS_URL.sha256").readText().trim().takeIf { it.length == 64 }
+        } catch (_: IOException) {
+            null
+        }
+        return ROOTFS_URL to sha
     }
 
     private fun download(url: String, dest: File, sha256: String?) {
@@ -175,7 +173,7 @@ class Installer(private val context: Context, private val proot: Proot) {
     }
 
     companion object {
-        private const val DISTRO_PLUGIN =
-            "https://raw.githubusercontent.com/termux/proot-distro/master/distro-plugins/debian.sh"
+        private const val ROOTFS_URL =
+            "https://github.com/pijsosk-sys/Jjzk/releases/download/rootfs-debian-trixie-1/debian-arm64.tar.xz"
     }
 }

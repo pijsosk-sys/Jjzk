@@ -54,8 +54,14 @@ class BoddyService : Service() {
                 Boddy.status.value = "Boddy is installed."
                 Boddy.phase.value = Boddy.Phase.READY
             } catch (t: Throwable) {
-                Boddy.log("ERROR: ${t.message ?: t}")
-                Boddy.status.value = t.message ?: "Installation failed"
+                val reason = when (t) {
+                    is java.io.FileNotFoundException -> "Download not found: ${t.message}"
+                    is java.net.UnknownHostException -> "No internet connection"
+                    else -> t.message ?: t.toString()
+                }
+                Boddy.log("ERROR: $reason")
+                Boddy.log(android.util.Log.getStackTraceString(t))
+                Boddy.status.value = "$reason. Tap Retry install."
                 Boddy.phase.value = Boddy.Phase.ERROR
             } finally {
                 Boddy.progress.value = -1
