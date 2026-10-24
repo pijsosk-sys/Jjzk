@@ -34,7 +34,7 @@ class Installer(private val context: Context, private val proot: Proot) {
         Boddy.status.value = "Installing the desktop, Firefox and Claude Code…"
         Boddy.progress.value = -1
         val code = proot.run("/bin/bash", "/opt/boddy/setup.sh") { Boddy.log(it) }
-        if (code != 0) throw IOException("Setup failed (exit code $code). Check the log, then tap Install to retry.")
+        if (code != 0) throw IOException("Setup failed (exit code $code)")
     }
 
     /** Removes the Linux system so it can be installed again from scratch. */
