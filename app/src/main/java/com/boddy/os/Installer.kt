@@ -18,7 +18,13 @@ class Installer(private val context: Context, private val proot: Proot) {
     private val rootfs = proot.rootfs
     private val unpackedMarker = File(context.filesDir, ".rootfs-ok")
 
-    fun isInstalled() = File(rootfs, "opt/boddy/.setup-done").exists()
+    private val setupDone = File(rootfs, "opt/boddy/.setup-done")
+
+    /** True when setup finished with the current version of Boddy's scripts. */
+    fun isInstalled() = setupDone.exists() && setupDone.readText().trim() == SETUP_VERSION.toString()
+
+    /** True when Linux is already unpacked, so (re)installing only needs to run setup. */
+    fun hasSystem() = unpackedMarker.exists()
 
     fun install() {
         if (!unpackedMarker.exists()) {
@@ -31,10 +37,14 @@ class Installer(private val context: Context, private val proot: Proot) {
         }
         configure()
 
-        Boddy.status.value = "Installing the desktop, Firefox and Claude Code…"
+        Boddy.status.value = "Step 3 of 4: Starting Linux…"
         Boddy.progress.value = -1
-        val code = proot.run("/bin/bash", "/opt/boddy/setup.sh") { Boddy.log(it) }
+        val code = proot.run("/bin/bash", "/opt/boddy/setup.sh") { line ->
+            Boddy.log(line)
+            if (line.startsWith(">>> ")) Boddy.status.value = line.removePrefix(">>> ")
+        }
         if (code != 0) throw IOException("Setup failed (exit code $code)")
+        setupDone.writeText(SETUP_VERSION.toString())
     }
 
     /** Removes the Linux system so it can be installed again from scratch. */
@@ -45,7 +55,7 @@ class Installer(private val context: Context, private val proot: Proot) {
 
     /** The base system is published as a release of this repo by the CI "rootfs" job. */
     private fun resolveRootfs(): Pair<String, String?> {
-        Boddy.status.value = "Getting ready to download…"
+        Boddy.status.value = "Step 1 of 4: Getting ready…"
         val sha = try {
             URL("$ROOTFS_URL.sha256").readText().trim().takeIf { it.length == 64 }
         } catch (_: IOException) {
@@ -55,7 +65,7 @@ class Installer(private val context: Context, private val proot: Proot) {
     }
 
     private fun download(url: String, dest: File, sha256: String?) {
-        Boddy.status.value = "Downloading Debian…"
+        Boddy.status.value = "Step 1 of 4: Downloading Linux"
         Boddy.log("Downloading $url")
         val conn = URL(url).openConnection() as HttpURLConnection
         conn.instanceFollowRedirects = true
@@ -87,7 +97,7 @@ class Installer(private val context: Context, private val proot: Proot) {
     }
 
     private fun unpack(tarball: File) {
-        Boddy.status.value = "Unpacking Debian…"
+        Boddy.status.value = "Step 2 of 4: Unpacking (a few minutes)"
         Boddy.progress.value = -1
         val staging = File(context.filesDir, "rootfs-staging")
         deleteTree(staging)
@@ -173,6 +183,8 @@ class Installer(private val context: Context, private val proot: Proot) {
     }
 
     companion object {
+        /** Bump when setup.sh or the theme changes so existing installs offer an update. */
+        const val SETUP_VERSION = 2
         private const val ROOTFS_URL =
             "https://github.com/pijsosk-sys/Jjzk/releases/download/rootfs-debian-trixie-1/debian-arm64.tar.xz"
     }

@@ -25,6 +25,7 @@
 
         <activity
             android:name=".DesktopActivity"
+            android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|screenLayout|keyboard|keyboardHidden|smallestScreenSize|density|uiMode"
             android:screenOrientation="sensorLandscape"
             android:theme="@style/Theme.Boddy.Fullscreen"

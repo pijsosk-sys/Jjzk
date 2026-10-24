@@ -1,18 +1,25 @@
 package com.boddy.os
 
 import android.app.AlertDialog
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.graphics.Color
 import android.os.Bundle
 import android.view.View
 import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.boddy.os.vnc.KeySyms
 import com.boddy.os.vnc.RfbClient
 import com.boddy.os.vnc.VncView
@@ -47,6 +54,19 @@ class DesktopActivity : AppCompatActivity() {
         }
         buildKeyBar(findViewById(R.id.keys))
 
+        // Linux asked to open a link (e.g. Claude sign-in): use the phone's own browser.
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                Boddy.openOnPhone.collect { url ->
+                    try {
+                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE))
+                    } catch (_: ActivityNotFoundException) {
+                        Toast.makeText(this@DesktopActivity, "No browser found", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() = confirmExit()
         })
@@ -75,6 +95,7 @@ class DesktopActivity : AppCompatActivity() {
                         vnc.client = c
                         overlay.visibility = View.GONE
                         vnc.requestFocus()
+                        runRequestedApp()
                     }
                     c.run()
                     return@launch
@@ -85,6 +106,19 @@ class DesktopActivity : AppCompatActivity() {
             }
             launch(Dispatchers.Main) { overlay.text = "Couldn't start the desktop. Check the log on the main screen." }
         }
+    }
+
+    /** Opens the app MainActivity asked for (e.g. "Sign in to Claude"), once. */
+    private fun runRequestedApp() {
+        val app = intent.getStringExtra(EXTRA_RUN) ?: return
+        intent.removeExtra(EXTRA_RUN)
+        BoddyService.send(this, BoddyService.ACTION_RUN) { putExtra(BoddyService.EXTRA_APP, app) }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (vnc.client != null) runRequestedApp()
     }
 
     private fun buildKeyBar(bar: LinearLayout) {
@@ -112,6 +146,9 @@ class DesktopActivity : AppCompatActivity() {
         key("Mouse: touchpad") {
             vnc.touchpadMode = !vnc.touchpadMode
             it.text = if (vnc.touchpadMode) "Mouse: touchpad" else "Mouse: direct touch"
+        }
+        key("Paste") {
+            if (!vnc.pasteFromPhone()) Toast.makeText(this, "Phone clipboard is empty", Toast.LENGTH_SHORT).show()
         }
         sendKey("Esc", KeySyms.ESCAPE)
         sendKey("Tab", KeySyms.TAB)
@@ -157,5 +194,12 @@ class DesktopActivity : AppCompatActivity() {
     companion object {
         /** Linux screen width in pixels; the height follows the phone's aspect ratio. */
         private const val DESKTOP_WIDTH = 1600
+        private const val EXTRA_RUN = "run"
+
+        fun open(context: Context, runApp: String? = null) {
+            context.startActivity(Intent(context, DesktopActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .apply { if (runApp != null) putExtra(EXTRA_RUN, runApp) })
+        }
     }
 }

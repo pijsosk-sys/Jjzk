@@ -29,8 +29,9 @@ import kotlin.math.min
  * Shows the remote desktop and turns touches into mouse input.
  *
  * Touchpad mode (default): drag one finger to move the pointer, tap to click,
- * tap with two fingers to right-click, drag two fingers to scroll, and
- * press-and-hold then drag to drag things around.
+ * tap with two fingers to right-click, drag two fingers to scroll, pinch to zoom,
+ * and press-and-hold then drag to drag things around. When zoomed in, the view
+ * follows the pointer.
  * Touch mode: the pointer jumps to where you touch.
  */
 class VncView(context: Context, attrs: AttributeSet?) : View(context, attrs), RfbClient.Listener {
@@ -48,6 +49,10 @@ class VncView(context: Context, attrs: AttributeSet?) : View(context, attrs), Rf
     private val dest = RectF()
     private val bitmapPaint = Paint(Paint.FILTER_BITMAP_FLAG)
     private var scale = 1f
+    /** 1 = whole desktop fits the screen; up to [MAX_ZOOM]. */
+    private var zoom = 1f
+    private var viewLeft = 0f
+    private var viewTop = 0f
 
     private var cursorX = 0f
     private var cursorY = 0f
@@ -66,6 +71,9 @@ class VncView(context: Context, attrs: AttributeSet?) : View(context, attrs), Rf
     private var maxPointers = 0
     private var dragging = false
     private var scrollAccum = 0f
+    private var twoFingerMode = TwoFinger.UNDECIDED
+    private var startSpan = 0f
+    private var startZoom = 1f
     private val longPress = Runnable {
         if (travel < tapSlop && maxPointers == 1) {
             dragging = true
@@ -75,6 +83,7 @@ class VncView(context: Context, attrs: AttributeSet?) : View(context, attrs), Rf
     }
     private val tapSlop = 12 * resources.displayMetrics.density
     private val scrollStep = 30 * resources.displayMetrics.density
+    private val pinchSlop = 40 * resources.displayMetrics.density
 
     // Text composed by the soft keyboard but not yet committed (already typed remotely).
     private var composing = ""
@@ -127,13 +136,32 @@ class VncView(context: Context, attrs: AttributeSet?) : View(context, attrs), Rf
                 }
             }
         }
-        scale = min(width.toFloat() / bmp.width, height.toFloat() / bmp.height)
+        scale = min(width.toFloat() / bmp.width, height.toFloat() / bmp.height) * zoom
         val dw = bmp.width * scale
         val dh = bmp.height * scale
-        dest.set((width - dw) / 2, (height - dh) / 2, (width + dw) / 2, (height + dh) / 2)
+        viewLeft = follow(viewLeft, dw, width.toFloat(), cursorX * scale)
+        viewTop = follow(viewTop, dh, height.toFloat(), cursorY * scale)
+        dest.set(viewLeft, viewTop, viewLeft + dw, viewTop + dh)
         canvas.drawBitmap(bmp, null, dest, bitmapPaint)
         drawCursor(canvas)
     }
+
+    /**
+     * Where the desktop's edge goes on one axis: centred if it fits, otherwise scrolled
+     * just enough to keep the pointer away from the screen edge.
+     */
+    private fun follow(current: Float, content: Float, viewport: Float, pointer: Float): Float {
+        if (content <= viewport) return (viewport - content) / 2
+        val margin = viewport * 0.2f
+        var offset = current
+        val onScreen = offset + pointer
+        if (onScreen < margin) offset += margin - onScreen
+        if (onScreen > viewport - margin) offset -= onScreen - (viewport - margin)
+        return offset.coerceIn(viewport - content, 0f)
+    }
+
+    private fun span(e: MotionEvent): Float =
+        if (e.pointerCount < 2) 0f else hypot(e.getX(0) - e.getX(1), e.getY(0) - e.getY(1))
 
     private fun drawCursor(canvas: Canvas) {
         val px = dest.left + cursorX * scale
@@ -208,6 +236,11 @@ class VncView(context: Context, attrs: AttributeSet?) : View(context, attrs), Rf
             MotionEvent.ACTION_POINTER_DOWN -> {
                 maxPointers = maxOf(maxPointers, e.pointerCount)
                 removeCallbacks(longPress)
+                if (e.pointerCount == 2) {
+                    twoFingerMode = TwoFinger.UNDECIDED
+                    startSpan = span(e)
+                    startZoom = zoom
+                }
                 if (!touchpadMode && buttons and RfbClient.BUTTON_LEFT != 0) {
                     setButtons(buttons and RfbClient.BUTTON_LEFT.inv())
                 }
@@ -226,8 +259,20 @@ class VncView(context: Context, attrs: AttributeSet?) : View(context, attrs), Rf
                 if (travel > tapSlop) removeCallbacks(longPress)
 
                 if (e.pointerCount >= 2) {
-                    scrollAccum += dy
-                    while (abs(scrollAccum) >= scrollStep) {
+                    // Decide once per gesture whether two fingers are pinching or scrolling.
+                    val spanChange = span(e) - startSpan
+                    if (twoFingerMode == TwoFinger.UNDECIDED) {
+                        scrollAccum += dy
+                        if (abs(spanChange) > pinchSlop) twoFingerMode = TwoFinger.PINCH
+                        else if (abs(scrollAccum) > tapSlop) twoFingerMode = TwoFinger.SCROLL
+                    } else if (twoFingerMode == TwoFinger.SCROLL) {
+                        scrollAccum += dy
+                    }
+                    if (twoFingerMode == TwoFinger.PINCH) {
+                        zoom = (startZoom * span(e) / startSpan.coerceAtLeast(1f)).coerceIn(1f, MAX_ZOOM)
+                        invalidate()
+                    }
+                    while (twoFingerMode == TwoFinger.SCROLL && abs(scrollAccum) >= scrollStep) {
                         // Natural scrolling: fingers up moves content up.
                         click(if (scrollAccum < 0) RfbClient.WHEEL_DOWN else RfbClient.WHEEL_UP)
                         scrollAccum -= scrollStep * Math.signum(scrollAccum)
@@ -245,7 +290,7 @@ class VncView(context: Context, attrs: AttributeSet?) : View(context, attrs), Rf
                 val isTap = e.actionMasked == MotionEvent.ACTION_UP && travel < tapSlop &&
                     SystemClock.uptimeMillis() - downTime < 300
                 when {
-                    maxPointers >= 2 -> if (isTap) click(RfbClient.BUTTON_RIGHT)
+                    maxPointers >= 2 -> if (isTap && twoFingerMode == TwoFinger.UNDECIDED) click(RfbClient.BUTTON_RIGHT)
                     touchpadMode && dragging -> setButtons(buttons and RfbClient.BUTTON_LEFT.inv())
                     touchpadMode && isTap -> click(RfbClient.BUTTON_LEFT)
                     !touchpadMode -> setButtons(buttons and RfbClient.BUTTON_LEFT.inv())
@@ -297,6 +342,15 @@ class VncView(context: Context, attrs: AttributeSet?) : View(context, attrs), Rf
             stickyModifiers.clear()
             onStickyConsumed?.invoke()
         }
+    }
+
+    /** Types the phone's clipboard into Linux (works with any characters, unlike VNC clipboard). */
+    fun pasteFromPhone(): Boolean {
+        val cm = context.getSystemService(ClipboardManager::class.java)
+        val text = cm.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context) ?: return false
+        if (text.isEmpty()) return false
+        typeText(text)
+        return true
     }
 
     private fun typeText(text: CharSequence) {
@@ -374,5 +428,11 @@ class VncView(context: Context, attrs: AttributeSet?) : View(context, attrs), Rf
             return true
         }
         return false
+    }
+
+    private enum class TwoFinger { UNDECIDED, SCROLL, PINCH }
+
+    companion object {
+        private const val MAX_ZOOM = 4f
     }
 }

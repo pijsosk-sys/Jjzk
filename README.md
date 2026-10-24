@@ -7,9 +7,15 @@ What you get:
 
 - A Debian Linux desktop (XFCE) running full-screen, with no PC accessories needed
 - **Firefox**
-- **Claude**: claude.ai in Firefox, plus **Claude Code** in the terminal
+- **Claude**: claude.ai in Firefox, plus **Claude Code** in the terminal. Sign in once with
+  "Sign in to Claude": the link opens in your phone's own browser, where you're probably
+  already logged in.
+- **DeepSeek**: DeepSeek chat, plus **DeepSeek Code**, which is Claude Code running on DeepSeek's
+  models through [DeepSeek's Anthropic-compatible API](https://api-docs.deepseek.com/guides/agent_integrations/claude_code).
+  It asks for your DeepSeek API key once and keeps its settings separate from your Claude sign-in.
 - **Antigravity**: one-tap helper that installs Google's Linux ARM64 build
 - **Install Apps** (Synaptic) to download anything a normal Linux PC can run
+- The Boddy look: dark theme, our wallpaper, and a dock with your apps
 
 ## Using it with just your fingers
 
@@ -19,9 +25,11 @@ What you get:
 | Tap | Left click |
 | Tap with two fingers | Right click |
 | Drag two fingers | Scroll |
+| Pinch | Zoom in (the view follows the pointer) |
 | Press and hold, then drag | Click-and-drag (select text, move windows) |
 | ⌨ button | Phone keyboard: type straight into Linux |
 | "Mouse" button | Switch between touchpad and direct-touch modes |
+| Paste button | Types whatever is on your phone's clipboard |
 
 The bottom bar also has Esc, Tab, Ctrl, Alt, Shift, arrows and F-keys.
 Tap Ctrl or Alt, then a key, for shortcuts like Ctrl+C.
@@ -46,6 +54,13 @@ First launch downloads about 1 GB and takes 10–20 minutes. Stay on Wi-Fi.
   unpacks it, and runs `app/src/main/assets/boddy/setup.sh` to install the desktop.
 - The desktop runs in a VNC server (TigerVNC) inside Linux. The app's own viewer
   (`vnc/VncView.kt`) shows it and turns touches into mouse and keyboard input.
+- `PhoneBridge.kt` lets Linux open links in the phone's browser (used for sign-in). It
+  only listens on 127.0.0.1 and needs a per-session token stored in the app's private storage.
+- When `setup.sh` or the theme changes, bump `Installer.SETUP_VERSION`; installed phones then
+  show "Update Boddy", which re-runs setup without downloading Linux again.
+
+If the desktop closes by itself on Android 12+, turn on **Settings → Developer options →
+Disable child process restrictions**.
 
 ## Building locally
 

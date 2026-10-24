@@ -1,5 +1,7 @@
 package com.boddy.os
 
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -12,6 +14,9 @@ object Boddy {
     val status = MutableStateFlow("")
     /** 0-100, or -1 when there's no meaningful percentage. */
     val progress = MutableStateFlow(-1)
+
+    /** Links Linux asked to open in the phone's browser (see [PhoneBridge]). */
+    val openOnPhone = MutableSharedFlow<String>(extraBufferCapacity = 4, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
     private val _log = MutableStateFlow("")
     val log: StateFlow<String> = _log

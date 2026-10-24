@@ -1,36 +1,56 @@
 #!/bin/bash
-# Creates the desktop icons and the panel launchers.
+# Creates the app icons used on the desktop, in the dock and in the menu.
+APPS=/usr/share/applications
 DESK=/root/Desktop
-mkdir -p "$DESK" /usr/share/applications
+mkdir -p "$DESK" "$APPS" /opt/boddy/phone-bin
 
-launcher() { # file name exec icon terminal
-    cat > "/usr/share/applications/$1.desktop" <<DESKTOP
+# Programs started with phone-bin first in PATH open links in the phone's browser.
+ln -sf /opt/boddy/open-on-phone /opt/boddy/phone-bin/xdg-open
+ln -sf /opt/boddy/open-on-phone /opt/boddy/phone-bin/sensible-browser
+
+launcher() { # id name exec icon
+    cat > "$APPS/boddy-$1.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
 Name=$2
 Exec=$3
 Icon=$4
-Terminal=$5
+Terminal=false
 Categories=Boddy;
 DESKTOP
-    cp "/usr/share/applications/$1.desktop" "$DESK/$1.desktop"
-    chmod +x "$DESK/$1.desktop"
 }
 
-launcher boddy-firefox "Firefox" "firefox-esr %u" firefox-esr false
-launcher boddy-claude "Claude" "firefox-esr https://claude.ai" firefox-esr false
-launcher boddy-claude-code "Claude Code" "xfce4-terminal --title='Claude Code' -x bash -lc 'command -v claude >/dev/null || curl -fsSL https://claude.ai/install.sh | bash; claude; exec bash'" utilities-terminal false
-launcher boddy-apps "Install Apps" "synaptic" system-software-install false
-launcher boddy-files "Files" "thunar" system-file-manager false
-launcher boddy-terminal "Terminal" "xfce4-terminal" utilities-terminal false
+launcher firefox "Firefox" "firefox-esr %u" firefox-esr
+launcher claude "Claude" "firefox-esr https://claude.ai" firefox-esr
+launcher claude-code "Claude Code" "xfce4-terminal --disable-server --title='Claude Code' -x /opt/boddy/claude-code.sh" utilities-terminal
+launcher claude-signin "Sign in to Claude" "xfce4-terminal --disable-server --title='Sign in to Claude' -x /opt/boddy/claude-code.sh --signin" dialog-password
+launcher deepseek "DeepSeek" "firefox-esr https://chat.deepseek.com" firefox-esr
+launcher deepseek-code "DeepSeek Code" "xfce4-terminal --disable-server --title='DeepSeek Code' -x /opt/boddy/deepseek-code.sh" utilities-terminal
+launcher apps "Install Apps" "synaptic" system-software-install
+launcher files "Files" "thunar" system-file-manager
+launcher terminal "Terminal" "xfce4-terminal" utilities-terminal
 
 if [ -x /opt/antigravity/antigravity ]; then
-    launcher boddy-antigravity "Antigravity" "/opt/antigravity/antigravity --no-sandbox --disable-gpu %F" /opt/antigravity/resources/app/resources/linux/code.png false
+    launcher antigravity "Antigravity" "/opt/antigravity/antigravity --no-sandbox --disable-gpu %F" \
+        "$(find /opt/antigravity -name '*.png' -path '*linux*' | head -1)"
 else
-    launcher boddy-antigravity "Get Antigravity" "xfce4-terminal --title='Install Antigravity' -x /opt/boddy/install-antigravity.sh" system-software-install false
+    launcher antigravity "Get Antigravity" "xfce4-terminal --disable-server --title='Install Antigravity' -x /opt/boddy/install-antigravity.sh" system-software-install
 fi
 
-# Desktop icons are "trusted" only once XFCE has seen their checksum; mark them.
-for f in "$DESK"/*.desktop; do
-    gio set "$f" metadata::xfce-exe-checksum "$(sha256sum "$f" | cut -d' ' -f1)" 2>/dev/null || true
+# Desktop: the main apps, marked trusted so XFCE doesn't ask before launching them.
+rm -f "$DESK"/boddy-*.desktop
+for id in claude-code claude deepseek-code deepseek antigravity firefox apps files; do
+    cp "$APPS/boddy-$id.desktop" "$DESK/"
+    chmod +x "$DESK/boddy-$id.desktop"
+    gio set "$DESK/boddy-$id.desktop" metadata::xfce-exe-checksum \
+        "$(sha256sum "$DESK/boddy-$id.desktop" | cut -d' ' -f1)" 2>/dev/null || true
+done
+
+# Dock launchers (see apply-theme.sh for the panel layout).
+n=2
+for id in firefox claude-code deepseek-code antigravity files terminal apps; do
+    d=/root/.config/xfce4/panel/launcher-$n
+    rm -rf "$d" && mkdir -p "$d"
+    cp "$APPS/boddy-$id.desktop" "$d/boddy-$id.desktop"
+    n=$((n + 1))
 done

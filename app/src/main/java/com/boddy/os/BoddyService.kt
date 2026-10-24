@@ -16,6 +16,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import java.io.File
 
 /** Keeps Linux running in the background: installation and the desktop session. */
 class BoddyService : Service() {
@@ -23,6 +24,7 @@ class BoddyService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private lateinit var proot: Proot
     private lateinit var installer: Installer
+    private lateinit var bridge: PhoneBridge
     private var desktop: Process? = null
     private var wakeLock: PowerManager.WakeLock? = null
 
@@ -32,6 +34,7 @@ class BoddyService : Service() {
         super.onCreate()
         proot = Proot(this)
         installer = Installer(this, proot)
+        bridge = PhoneBridge(File(proot.rootfs, "opt/boddy/.bridge-token"))
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -39,6 +42,7 @@ class BoddyService : Service() {
         when (intent?.action) {
             ACTION_INSTALL -> install()
             ACTION_START -> startDesktop(intent.getIntExtra(EXTRA_WIDTH, 1600), intent.getIntExtra(EXTRA_HEIGHT, 740))
+            ACTION_RUN -> intent.getStringExtra(EXTRA_APP)?.let { runInDesktop(it) }
             ACTION_STOP -> stopAll()
         }
         return START_NOT_STICKY
@@ -48,6 +52,7 @@ class BoddyService : Service() {
         if (Boddy.phase.value == Boddy.Phase.INSTALLING) return
         Boddy.phase.value = Boddy.Phase.INSTALLING
         Boddy.clearLog()
+        acquireWakeLock()
         scope.launch {
             try {
                 installer.install()
@@ -65,7 +70,10 @@ class BoddyService : Service() {
                 Boddy.phase.value = Boddy.Phase.ERROR
             } finally {
                 Boddy.progress.value = -1
-                if (desktop == null) stopSelf()
+                if (desktop == null) {
+                    releaseWakeLock()
+                    stopSelf()
+                }
             }
         }
     }
@@ -74,6 +82,7 @@ class BoddyService : Service() {
         if (desktop?.isAlive == true) return
         Boddy.phase.value = Boddy.Phase.RUNNING
         acquireWakeLock()
+        bridge.start()
         scope.launch {
             val p = proot.process("/bin/bash", "/opt/boddy/start-desktop.sh", width.toString(), height.toString()).start()
             desktop = p
@@ -81,6 +90,7 @@ class BoddyService : Service() {
             p.waitFor()
             if (desktop === p) {
                 desktop = null
+                bridge.stop()
                 Boddy.phase.value = Boddy.Phase.READY
                 releaseWakeLock()
                 stopSelf()
@@ -88,9 +98,18 @@ class BoddyService : Service() {
         }
     }
 
+    /** Opens one of the Boddy apps (by launcher id) in the running desktop. */
+    private fun runInDesktop(app: String) {
+        if (!app.matches(Regex("[a-z-]+"))) return
+        scope.launch {
+            proot.run("/bin/bash", "/opt/boddy/run-in-desktop.sh", app) { Boddy.log(it) }
+        }
+    }
+
     private fun stopAll() {
         desktop?.destroy()
         desktop = null
+        bridge.stop()
         if (Boddy.phase.value == Boddy.Phase.RUNNING) Boddy.phase.value = Boddy.Phase.READY
         releaseWakeLock()
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -99,6 +118,7 @@ class BoddyService : Service() {
 
     override fun onDestroy() {
         desktop?.destroy()
+        bridge.stop()
         releaseWakeLock()
         scope.cancel()
         super.onDestroy()
@@ -107,7 +127,7 @@ class BoddyService : Service() {
     private fun acquireWakeLock() {
         if (wakeLock != null) return
         wakeLock = getSystemService(PowerManager::class.java)
-            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Boddy::desktop")
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Boddy::running")
             .apply { acquire() }
     }
 
@@ -119,7 +139,7 @@ class BoddyService : Service() {
     private fun goForeground() {
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(NotificationChannel(CHANNEL, "Boddy", NotificationManager.IMPORTANCE_LOW))
-        val open = PendingIntent.getActivity(this, 0, Intent(this, DesktopActivity::class.java),
+        val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE)
         val stop = PendingIntent.getService(this, 1, Intent(this, BoddyService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_IMMUTABLE)
@@ -141,9 +161,11 @@ class BoddyService : Service() {
         private const val CHANNEL = "boddy"
         const val ACTION_INSTALL = "com.boddy.os.INSTALL"
         const val ACTION_START = "com.boddy.os.START"
+        const val ACTION_RUN = "com.boddy.os.RUN"
         const val ACTION_STOP = "com.boddy.os.STOP"
         const val EXTRA_WIDTH = "width"
         const val EXTRA_HEIGHT = "height"
+        const val EXTRA_APP = "app"
 
         fun send(context: Context, action: String, configure: Intent.() -> Unit = {}) {
             val intent = Intent(context, BoddyService::class.java).setAction(action).apply(configure)

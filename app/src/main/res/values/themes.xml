@@ -1,7 +1,10 @@
 <resources>
-    <style name="Theme.Boddy" parent="Theme.AppCompat.DayNight.NoActionBar">
+    <style name="Theme.Boddy" parent="Theme.AppCompat.NoActionBar">
         <item name="colorPrimary">#6C5CE7</item>
         <item name="colorAccent">#6C5CE7</item>
+        <item name="android:windowBackground">@color/boddy_bg</item>
+        <item name="android:statusBarColor">@color/boddy_bg</item>
+        <item name="android:navigationBarColor">@color/boddy_bg</item>
     </style>
     <style name="Theme.Boddy.Fullscreen">
         <item name="android:windowFullscreen">true</item>

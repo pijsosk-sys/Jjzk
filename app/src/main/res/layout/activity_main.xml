@@ -2,6 +2,8 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="@color/boddy_bg"
+    android:fitsSystemWindows="true"
     android:orientation="vertical"
     android:padding="20dp">
 
@@ -9,14 +11,23 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="Boddy"
-        android:textSize="34sp"
+        android:textColor="@color/boddy_text"
+        android:textSize="40sp"
         android:textStyle="bold" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Your computer, in your pocket"
+        android:textColor="@color/boddy_accent_light"
+        android:textSize="15sp" />
 
     <TextView
         android:id="@+id/status"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
+        android:layout_marginTop="20dp"
+        android:textColor="@color/boddy_text_dim"
         android:textSize="16sp" />
 
     <ProgressBar
@@ -24,22 +35,79 @@
         style="?android:attr/progressBarStyleHorizontal"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
+        android:layout_marginTop="10dp"
+        android:indeterminateTint="@color/boddy_accent_light"
         android:max="100"
+        android:progressTint="@color/boddy_accent_light"
         android:visibility="gone" />
 
     <Button
         android:id="@+id/action"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="12dp" />
+        android:layout_height="60dp"
+        android:layout_marginTop="16dp"
+        android:background="@drawable/button_primary"
+        android:textAllCaps="false"
+        android:textColor="@color/boddy_text"
+        android:textSize="18sp"
+        android:textStyle="bold" />
 
-    <Button
-        android:id="@+id/reset"
-        style="?android:attr/borderlessButtonStyle"
+    <LinearLayout
+        android:id="@+id/shortcuts"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <Button
+            android:id="@+id/signin"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:background="@drawable/button_card"
+            android:gravity="start|center_vertical"
+            android:paddingStart="20dp"
+            android:text="Sign in to Claude"
+            android:textAllCaps="false"
+            android:textColor="@color/boddy_text"
+            android:textSize="16sp" />
+
+        <Button
+            android:id="@+id/claudeCode"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/button_card"
+            android:gravity="start|center_vertical"
+            android:paddingStart="20dp"
+            android:text="Claude Code"
+            android:textAllCaps="false"
+            android:textColor="@color/boddy_text"
+            android:textSize="16sp" />
+
+        <Button
+            android:id="@+id/deepseek"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/button_card"
+            android:gravity="start|center_vertical"
+            android:paddingStart="20dp"
+            android:text="DeepSeek Code"
+            android:textAllCaps="false"
+            android:textColor="@color/boddy_text"
+            android:textSize="16sp" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/logToggle"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Reinstall Linux" />
+        android:layout_marginTop="16dp"
+        android:padding="4dp"
+        android:text="Show details"
+        android:textColor="@color/boddy_accent_light"
+        android:textSize="14sp" />
 
     <ScrollView
         android:id="@+id/logScroll"
@@ -47,8 +115,9 @@
         android:layout_height="0dp"
         android:layout_marginTop="8dp"
         android:layout_weight="1"
-        android:background="#111111"
-        android:padding="8dp">
+        android:background="@drawable/log_bg"
+        android:padding="10dp"
+        android:visibility="invisible">
 
         <TextView
             android:id="@+id/log"
@@ -59,4 +128,15 @@
             android:textIsSelectable="true"
             android:textSize="11sp" />
     </ScrollView>
+
+    <TextView
+        android:id="@+id/reset"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="8dp"
+        android:padding="8dp"
+        android:text="Reinstall Linux"
+        android:textColor="@color/boddy_text_dim"
+        android:textSize="13sp" />
 </LinearLayout>
