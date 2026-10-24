@@ -34,7 +34,7 @@ class BoddyService : Service() {
         super.onCreate()
         proot = Proot(this)
         installer = Installer(this, proot)
-        bridge = PhoneBridge(File(proot.rootfs, "opt/boddy/.bridge-token"))
+        bridge = PhoneBridge(File(proot.rootfs, "opt/boddy/.bridge-token"), PhoneActions(this))
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -42,6 +42,10 @@ class BoddyService : Service() {
         when (intent?.action) {
             ACTION_INSTALL -> install()
             ACTION_START -> startDesktop(intent.getIntExtra(EXTRA_WIDTH, 1600), intent.getIntExtra(EXTRA_HEIGHT, 740))
+            ACTION_RESTART -> {
+                stopDesktop()
+                startDesktop(intent.getIntExtra(EXTRA_WIDTH, 1300), intent.getIntExtra(EXTRA_HEIGHT, 600))
+            }
             ACTION_RUN -> intent.getStringExtra(EXTRA_APP)?.let { runInDesktop(it) }
             ACTION_STOP -> stopAll()
         }
@@ -84,6 +88,12 @@ class BoddyService : Service() {
         acquireWakeLock()
         bridge.start()
         scope.launch {
+            try {
+                PhoneApps.writeForLinux(this@BoddyService, proot.rootfs)
+                Settings(this@BoddyService).agentMode?.let { AgentConfig.apply(proot.rootfs, it) }
+            } catch (e: Exception) {
+                Boddy.log("Couldn't write phone info: ${e.message}")
+            }
             val p = proot.process("/bin/bash", "/opt/boddy/start-desktop.sh", width.toString(), height.toString()).start()
             desktop = p
             p.inputStream.bufferedReader().forEachLine { Boddy.log(it) }
@@ -106,9 +116,17 @@ class BoddyService : Service() {
         }
     }
 
+    /** Stops the desktop without stopping the service (e.g. to restart at a new size). */
+    private fun stopDesktop() {
+        desktop?.let {
+            desktop = null
+            it.destroy()
+            it.waitFor()
+        }
+    }
+
     private fun stopAll() {
-        desktop?.destroy()
-        desktop = null
+        stopDesktop()
         bridge.stop()
         if (Boddy.phase.value == Boddy.Phase.RUNNING) Boddy.phase.value = Boddy.Phase.READY
         releaseWakeLock()
@@ -162,6 +180,7 @@ class BoddyService : Service() {
         const val ACTION_INSTALL = "com.boddy.os.INSTALL"
         const val ACTION_START = "com.boddy.os.START"
         const val ACTION_RUN = "com.boddy.os.RUN"
+        const val ACTION_RESTART = "com.boddy.os.RESTART"
         const val ACTION_STOP = "com.boddy.os.STOP"
         const val EXTRA_WIDTH = "width"
         const val EXTRA_HEIGHT = "height"

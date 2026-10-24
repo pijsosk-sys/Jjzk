@@ -184,7 +184,7 @@ class Installer(private val context: Context, private val proot: Proot) {
 
     companion object {
         /** Bump when setup.sh or the theme changes so existing installs offer an update. */
-        const val SETUP_VERSION = 2
+        const val SETUP_VERSION = 3
         private const val ROOTFS_URL =
             "https://github.com/pijsosk-sys/Jjzk/releases/download/rootfs-debian-trixie-1/debian-arm64.tar.xz"
     }

@@ -43,13 +43,15 @@ class MainActivity : AppCompatActivity() {
         action.setOnClickListener {
             when (Boddy.phase.value) {
                 Boddy.Phase.NEEDS_INSTALL, Boddy.Phase.ERROR -> BoddyService.send(this, BoddyService.ACTION_INSTALL)
-                Boddy.Phase.READY, Boddy.Phase.RUNNING -> DesktopActivity.open(this)
+                Boddy.Phase.READY, Boddy.Phase.RUNNING -> openDesktop(null)
                 Boddy.Phase.INSTALLING -> Unit
             }
         }
-        findViewById<Button>(R.id.signin).setOnClickListener { DesktopActivity.open(this, "claude-signin") }
-        findViewById<Button>(R.id.claudeCode).setOnClickListener { DesktopActivity.open(this, "claude-code") }
-        findViewById<Button>(R.id.deepseek).setOnClickListener { DesktopActivity.open(this, "deepseek-code") }
+        findViewById<Button>(R.id.signin).setOnClickListener { openDesktop("claude-signin") }
+        findViewById<Button>(R.id.claudeCode).setOnClickListener { openDesktop("claude-code") }
+        findViewById<Button>(R.id.codex).setOnClickListener { openDesktop("codex") }
+        findViewById<Button>(R.id.deepseek).setOnClickListener { openDesktop("deepseek-code") }
+        findViewById<TextView>(R.id.agentMode).setOnClickListener { chooseAgentMode(then = null) }
 
         logToggle.setOnClickListener { setLogVisible(logScroll.visibility != View.VISIBLE, logScroll, logToggle) }
 
@@ -115,6 +117,80 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        showAgentMode()
+        showPhoneApps()
+    }
+
+    /** Asks how the AI should work the first time, then opens the desktop (and an app). */
+    private fun openDesktop(app: String?) {
+        if (Settings(this).agentMode == null) {
+            chooseAgentMode { DesktopActivity.open(this, app) }
+        } else {
+            DesktopActivity.open(this, app)
+        }
+    }
+
+    private fun chooseAgentMode(then: (() -> Unit)?) {
+        val settings = Settings(this)
+        val modes = Settings.AgentMode.entries
+        val labels = modes.map { "${it.label}\n${it.description}" }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("How should Claude, Codex and DeepSeek work?")
+            .setSingleChoiceItems(labels, modes.indexOf(settings.agentMode ?: Settings.AgentMode.ASK)) { dialog, which ->
+                settings.agentMode = modes[which]
+                lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        AgentConfig.apply(Proot(this@MainActivity).rootfs, modes[which])
+                    } catch (e: Exception) {
+                        Boddy.log("Couldn't save AI settings: ${e.message}")
+                    }
+                }
+                dialog.dismiss()
+                showAgentMode()
+                then?.invoke()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun showAgentMode() {
+        val mode = Settings(this).agentMode
+        findViewById<TextView>(R.id.agentMode).text =
+            "AI mode: ${mode?.label ?: "not chosen yet"}  ·  change"
+    }
+
+    /** Open buttons for the phone apps Boddy works with; Play Store links for missing ones. */
+    private fun showPhoneApps() {
+        val row = findViewById<android.widget.LinearLayout>(R.id.phoneApps)
+        row.removeAllViews()
+        val installed = PhoneApps.installed(this)
+        for (known in PhoneApps.KNOWN) {
+            val app = installed[known]
+            if (app == null && known.playStore == null) continue
+            val button = Button(this).apply {
+                text = if (app != null) known.title else "Get ${known.title}"
+                isAllCaps = false
+                setTextColor(getColor(R.color.boddy_text))
+                setBackgroundResource(R.drawable.button_card)
+                setPadding(40, 0, 40, 0)
+                setOnClickListener {
+                    val intent = if (app != null) {
+                        packageManager.getLaunchIntentForPackage(app.packageName)
+                    } else {
+                        PhoneApps.playStoreIntent(known.playStore!!)
+                    }
+                    intent?.let { startActivity(it) }
+                }
+            }
+            row.addView(button, android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+            ).apply { marginEnd = 16 })
+        }
+    }
+
     private fun hasSystem() = Installer(this, Proot(this)).hasSystem()
 
     private fun setLogVisible(visible: Boolean, logScroll: View, toggle: TextView) {
@@ -124,8 +200,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun defaultStatus(phase: Boddy.Phase) = when (phase) {
         Boddy.Phase.NEEDS_INSTALL -> if (hasSystem()) {
-            "A new version of Boddy is ready: new look, pinch-to-zoom, easy Claude sign-in and DeepSeek. " +
-                "Updating keeps your files and takes a few minutes."
+            "A new version of Boddy is ready: Codex, Java for Minecraft mods, and Claude can now see and " +
+                "control the desktop and send files to your phone. Updating keeps your files and sign-ins."
         } else {
             "Firefox, Claude, DeepSeek and Antigravity on a real desktop. No root needed.\n\n" +
                 "Stay on Wi-Fi: the first install downloads about 1 GB and takes 10–20 minutes."

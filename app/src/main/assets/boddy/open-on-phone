@@ -1,10 +1,3 @@
 #!/bin/bash
 # Opens a link in the phone's own browser (via the Boddy app), falling back to Firefox.
-url="$1"
-token=$(cat /opt/boddy/.bridge-token 2>/dev/null)
-if [ -n "$token" ] && exec 3<>/dev/tcp/127.0.0.1/7311 2>/dev/null; then
-    printf '%s open %s\n' "$token" "$url" >&3
-    exec 3>&-
-else
-    firefox-esr "$url" >/dev/null 2>&1 &
-fi
+/opt/boddy/boddy-ctl phone-open "$1" >/dev/null 2>&1 || firefox-esr "$1" >/dev/null 2>&1 &

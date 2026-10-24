@@ -13,6 +13,13 @@ What you get:
 - **DeepSeek**: DeepSeek chat, plus **DeepSeek Code**, which is Claude Code running on DeepSeek's
   models through [DeepSeek's Anthropic-compatible API](https://api-docs.deepseek.com/guides/agent_integrations/claude_code).
   It asks for your DeepSeek API key once and keeps its settings separate from your Claude sign-in.
+- **Codex**: OpenAI's coding agent; sign in with your ChatGPT account (opens in your phone's browser)
+- **Claude can drive Boddy**: Claude Code, DeepSeek Code and Codex know Boddy's tools
+  (`boddy-screen`, `boddy-click`, `boddy-type`, `phone-save`, `phone-open`, `phone-app`), so they can
+  see and use the desktop, send files to your phone and open phone apps. The first time, Boddy asks
+  whether they should **ask every time** or **just do it**; change it under "AI mode" on the home screen.
+- **Games**: Open buttons for Minecraft, DroidBridge (Minecraft Java), Roblox and Winlator. JDK 21 is
+  installed for Fabric mods; Bedrock add-ons (`.mcaddon`) open straight into Minecraft.
 - **Antigravity**: one-tap helper that installs Google's Linux ARM64 build
 - **Install Apps** (Synaptic) to download anything a normal Linux PC can run
 - The Boddy look: dark theme, our wallpaper, and a dock with your apps
@@ -30,6 +37,7 @@ What you get:
 | ⌨ button | Phone keyboard: type straight into Linux |
 | "Mouse" button | Switch between touchpad and direct-touch modes |
 | Paste button | Types whatever is on your phone's clipboard |
+| Size button | Big, Medium (default) or Small desktop |
 
 The bottom bar also has Esc, Tab, Ctrl, Alt, Shift, arrows and F-keys.
 Tap Ctrl or Alt, then a key, for shortcuts like Ctrl+C.

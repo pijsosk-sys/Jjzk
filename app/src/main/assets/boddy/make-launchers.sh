@@ -8,6 +8,12 @@ mkdir -p "$DESK" "$APPS" /opt/boddy/phone-bin
 ln -sf /opt/boddy/open-on-phone /opt/boddy/phone-bin/xdg-open
 ln -sf /opt/boddy/open-on-phone /opt/boddy/phone-bin/sensible-browser
 
+# Commands AI agents (and you) use to drive the desktop and the phone. See ai-setup.sh.
+for c in boddy-screen boddy-click boddy-type boddy-key boddy-scroll boddy-run \
+         phone-save phone-open phone-app phone-apps; do
+    ln -sf /opt/boddy/boddy-ctl "/usr/local/bin/$c"
+done
+
 launcher() { # id name exec icon
     cat > "$APPS/boddy-$1.desktop" <<DESKTOP
 [Desktop Entry]
@@ -24,6 +30,7 @@ launcher firefox "Firefox" "firefox-esr %u" firefox-esr
 launcher claude "Claude" "firefox-esr https://claude.ai" firefox-esr
 launcher claude-code "Claude Code" "xfce4-terminal --disable-server --title='Claude Code' -x /opt/boddy/claude-code.sh" utilities-terminal
 launcher claude-signin "Sign in to Claude" "xfce4-terminal --disable-server --title='Sign in to Claude' -x /opt/boddy/claude-code.sh --signin" dialog-password
+launcher codex "Codex" "xfce4-terminal --disable-server --title='Codex' -x /opt/boddy/codex.sh" utilities-terminal
 launcher deepseek "DeepSeek" "firefox-esr https://chat.deepseek.com" firefox-esr
 launcher deepseek-code "DeepSeek Code" "xfce4-terminal --disable-server --title='DeepSeek Code' -x /opt/boddy/deepseek-code.sh" utilities-terminal
 launcher apps "Install Apps" "synaptic" system-software-install
@@ -39,7 +46,7 @@ fi
 
 # Desktop: the main apps, marked trusted so XFCE doesn't ask before launching them.
 rm -f "$DESK"/boddy-*.desktop
-for id in claude-code claude deepseek-code deepseek antigravity firefox apps files; do
+for id in claude-code codex deepseek-code claude deepseek antigravity firefox files; do
     cp "$APPS/boddy-$id.desktop" "$DESK/"
     chmod +x "$DESK/boddy-$id.desktop"
     gio set "$DESK/boddy-$id.desktop" metadata::xfce-exe-checksum \
@@ -48,7 +55,7 @@ done
 
 # Dock launchers (see apply-theme.sh for the panel layout).
 n=2
-for id in firefox claude-code deepseek-code antigravity files terminal apps; do
+for id in firefox claude-code codex deepseek-code antigravity files terminal; do
     d=/root/.config/xfce4/panel/launcher-$n
     rm -rf "$d" && mkdir -p "$d"
     cp "$APPS/boddy-$id.desktop" "$d/boddy-$id.desktop"

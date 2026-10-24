@@ -15,8 +15,8 @@ object Boddy {
     /** 0-100, or -1 when there's no meaningful percentage. */
     val progress = MutableStateFlow(-1)
 
-    /** Links Linux asked to open in the phone's browser (see [PhoneBridge]). */
-    val openOnPhone = MutableSharedFlow<String>(extraBufferCapacity = 4, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    /** Things Linux asked the phone to do (see [PhoneBridge]); handled by the desktop screen. */
+    val phoneRequests = MutableSharedFlow<PhoneRequest>(extraBufferCapacity = 8, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
     private val _log = MutableStateFlow("")
     val log: StateFlow<String> = _log

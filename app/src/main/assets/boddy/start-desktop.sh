@@ -16,4 +16,7 @@ Xvnc :1 -geometry "${W}x${H}" -depth 24 -SecurityTypes None -localhost -nolisten
      -rfbport 5901 -AlwaysShared -AcceptSetDesktopSize=0 &
 for _ in $(seq 50); do [ -e /tmp/.X11-unix/X1 ] && break; sleep 0.2; done
 
+# Desktop tools (boddy-screen etc.) need these even from separate terminals.
+printf 'export DISPLAY=:1\n' > /etc/profile.d/boddy-display.sh
+
 exec dbus-launch --exit-with-session startxfce4

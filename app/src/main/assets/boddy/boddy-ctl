@@ -1,0 +1,68 @@
+#!/bin/bash
+# Controls the Boddy desktop and talks to the phone. Run as one of its symlinked names:
+#   boddy-screen [file]        screenshot of the desktop (default /tmp/boddy-screen.png)
+#   boddy-click X Y [right|double|middle]
+#   boddy-type TEXT            type text
+#   boddy-key KEYS...          e.g. ctrl+s, Return, alt+F4
+#   boddy-scroll up|down [N]
+#   boddy-run COMMAND...       start a desktop program in the background
+#   phone-save FILE            copy a file to the phone's Downloads/Boddy folder
+#   phone-open FILE|URL        open a file or link on the phone (.mcaddon/.mcpack go to Minecraft)
+#   phone-app NAME             open a phone app, e.g. "Minecraft", "Roblox", "DroidBridge"
+#   phone-apps                 list the phone apps Boddy knows about
+export DISPLAY=${DISPLAY:-:1}
+cmd=$(basename "$0")
+if [ "$cmd" = boddy-ctl ]; then cmd=$1; shift; fi
+
+bridge() {
+    local token reply
+    token=$(cat /opt/boddy/.bridge-token 2>/dev/null)
+    if [ -z "$token" ] || ! exec 3<>/dev/tcp/127.0.0.1/7311 2>/dev/null; then
+        echo "error: the Boddy app isn't reachable (is the desktop open?)" >&2
+        return 1
+    fi
+    printf '%s %s\n' "$token" "$*" >&3
+    read -r -t 15 reply <&3
+    exec 3>&-
+    echo "$reply"
+    [[ "$reply" == ok* ]]
+}
+
+abspath() { readlink -f -- "$1"; }
+
+case "$cmd" in
+    boddy-screen)
+        out=${1:-/tmp/boddy-screen.png}
+        scrot -o -p "$out" || exit 1
+        echo "Saved $out. Screen size: $(xdotool getdisplaygeometry | tr ' ' x). Click coordinates use these pixels."
+        ;;
+    boddy-click)
+        [ $# -ge 2 ] || { echo "usage: boddy-click X Y [right|double|middle]" >&2; exit 2; }
+        xdotool mousemove "$1" "$2"
+        case "${3:-left}" in
+            right) xdotool click 3 ;;
+            middle) xdotool click 2 ;;
+            double) xdotool click --repeat 2 --delay 80 1 ;;
+            *) xdotool click 1 ;;
+        esac
+        ;;
+    boddy-type) xdotool type --delay 15 -- "$*" ;;
+    boddy-key) xdotool key --delay 40 -- "$@" ;;
+    boddy-scroll)
+        btn=5; [ "$1" = up ] && btn=4
+        xdotool click --repeat "${2:-3}" --delay 30 "$btn"
+        ;;
+    boddy-run) setsid "$@" >/dev/null 2>&1 & ;;
+    phone-save)
+        f=$(abspath "$1"); [ -f "$f" ] || { echo "no such file: $1" >&2; exit 1; }
+        bridge save "$f"
+        ;;
+    phone-open)
+        if [[ "$1" == http://* || "$1" == https://* ]]; then bridge open "$1"; exit; fi
+        f=$(abspath "$1"); [ -f "$f" ] || { echo "no such file: $1" >&2; exit 1; }
+        bridge openfile "$f"
+        ;;
+    phone-app) bridge launch "$*" ;;
+    phone-apps) cat /opt/boddy/phone-apps.txt 2>/dev/null || echo "unknown (open the Boddy desktop first)" ;;
+    *) sed -n '2,13p' "$0"; exit 2 ;;
+esac

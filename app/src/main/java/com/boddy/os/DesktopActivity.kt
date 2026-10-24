@@ -1,10 +1,8 @@
 package com.boddy.os
 
 import android.app.AlertDialog
-import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.graphics.Color
 import android.os.Bundle
 import android.view.View
@@ -35,6 +33,8 @@ class DesktopActivity : AppCompatActivity() {
     private lateinit var overlay: TextView
     private var client: RfbClient? = null
     private val modifierButtons = mutableMapOf<Int, TextView>()
+    /** True while restarting at a new size, so the old connection closing isn't shown as an error. */
+    private var resizing = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -49,19 +49,22 @@ class DesktopActivity : AppCompatActivity() {
         overlay = findViewById(R.id.overlay)
         vnc.onStickyConsumed = { refreshModifiers() }
         vnc.onDisconnected = { error ->
-            overlay.visibility = View.VISIBLE
-            overlay.text = "Desktop closed" + (error?.message?.let { "\n$it" } ?: "")
+            if (!resizing) {
+                overlay.visibility = View.VISIBLE
+                overlay.text = "Desktop closed" + (error?.message?.let { "\n$it" } ?: "")
+            }
         }
         buildKeyBar(findViewById(R.id.keys))
 
-        // Linux asked to open a link (e.g. Claude sign-in): use the phone's own browser.
+        // Linux asked the phone to do something (open a sign-in link, a Minecraft add-on, an app...).
+        val phone = PhoneActions(this)
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                Boddy.openOnPhone.collect { url ->
-                    try {
-                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE))
-                    } catch (_: ActivityNotFoundException) {
-                        Toast.makeText(this@DesktopActivity, "No browser found", Toast.LENGTH_SHORT).show()
+                Boddy.phoneRequests.collect { request ->
+                    when (request) {
+                        is PhoneRequest.OpenLink -> phone.openLink(this@DesktopActivity, request.url)
+                        is PhoneRequest.OpenFile -> phone.openFile(this@DesktopActivity, request.path)
+                        is PhoneRequest.LaunchApp -> phone.launchApp(this@DesktopActivity, request.name)
                     }
                 }
             }
@@ -71,20 +74,48 @@ class DesktopActivity : AppCompatActivity() {
             override fun handleOnBackPressed() = confirmExit()
         })
 
-        // Size the Linux screen to match the phone's shape once we know the view size.
-        vnc.post {
-            val desktopWidth = minOf(DESKTOP_WIDTH, vnc.width)
-            val desktopHeight = (vnc.height.toFloat() * desktopWidth / vnc.width).roundToInt() and 1.inv()
-            BoddyService.send(this, BoddyService.ACTION_START) {
-                putExtra(BoddyService.EXTRA_WIDTH, desktopWidth)
-                putExtra(BoddyService.EXTRA_HEIGHT, desktopHeight)
-            }
-            connect()
-        }
+        vnc.post { startDesktop(BoddyService.ACTION_START) }
     }
 
-    private fun connect() {
+    /** Starts (or restarts) Linux at the chosen size, shaped like the phone's screen, then connects. */
+    private fun startDesktop(action: String) {
+        val desktopWidth = minOf(Settings(this).size.desktopWidth, vnc.width)
+        val desktopHeight = (vnc.height.toFloat() * desktopWidth / vnc.width).roundToInt() and 1.inv()
+        BoddyService.send(this, action) {
+            putExtra(BoddyService.EXTRA_WIDTH, desktopWidth)
+            putExtra(BoddyService.EXTRA_HEIGHT, desktopHeight)
+        }
+        connect(initialDelayMs = if (action == BoddyService.ACTION_RESTART) 1500 else 0)
+    }
+
+    private fun chooseSize() {
+        val settings = Settings(this)
+        val sizes = Settings.Size.entries
+        AlertDialog.Builder(this)
+            .setTitle("Desktop size")
+            .setSingleChoiceItems(sizes.map { it.label }.toTypedArray(), sizes.indexOf(settings.size)) { dialog, which ->
+                dialog.dismiss()
+                if (sizes[which] == settings.size) return@setSingleChoiceItems
+                AlertDialog.Builder(this)
+                    .setMessage("Changing the size restarts the desktop. Save your work first.")
+                    .setPositiveButton("Restart") { _, _ ->
+                        settings.size = sizes[which]
+                        client?.close()
+                        vnc.client = null
+                        overlay.visibility = View.VISIBLE
+                        overlay.text = "Resizing…"
+                        resizing = true
+                        startDesktop(BoddyService.ACTION_RESTART)
+                    }
+                    .setNegativeButton("Cancel", null)
+                    .show()
+            }
+            .show()
+    }
+
+    private fun connect(initialDelayMs: Long = 0) {
         lifecycleScope.launch(Dispatchers.IO) {
+            delay(initialDelayMs)
             // The desktop takes a few seconds to come up the first time.
             repeat(120) {
                 val c = RfbClient(vnc)
@@ -93,6 +124,7 @@ class DesktopActivity : AppCompatActivity() {
                     client = c
                     launch(Dispatchers.Main) {
                         vnc.client = c
+                        resizing = false
                         overlay.visibility = View.GONE
                         vnc.requestFocus()
                         runRequestedApp()
@@ -147,6 +179,7 @@ class DesktopActivity : AppCompatActivity() {
             vnc.touchpadMode = !vnc.touchpadMode
             it.text = if (vnc.touchpadMode) "Mouse: touchpad" else "Mouse: direct touch"
         }
+        key("Size") { chooseSize() }
         key("Paste") {
             if (!vnc.pasteFromPhone()) Toast.makeText(this, "Phone clipboard is empty", Toast.LENGTH_SHORT).show()
         }
@@ -192,8 +225,6 @@ class DesktopActivity : AppCompatActivity() {
     }
 
     companion object {
-        /** Linux screen width in pixels; the height follows the phone's aspect ratio. */
-        private const val DESKTOP_WIDTH = 1600
         private const val EXTRA_RUN = "run"
 
         fun open(context: Context, runApp: String? = null) {
