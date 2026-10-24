@@ -33,6 +33,7 @@ launcher claude-signin "Sign in to Claude" "xfce4-terminal --disable-server --ti
 launcher codex "Codex" "xfce4-terminal --disable-server --title='Codex' -x /opt/boddy/codex.sh" utilities-terminal
 launcher gemini "Gemini CLI" "xfce4-terminal --disable-server --title='Gemini CLI' -x /opt/boddy/free-ai.sh gemini" utilities-terminal
 launcher qwen "Qwen Code" "xfce4-terminal --disable-server --title='Qwen Code' -x /opt/boddy/free-ai.sh qwen" utilities-terminal
+launcher opencode "OpenCode" "xfce4-terminal --disable-server --title='OpenCode' -x /opt/boddy/free-ai.sh opencode" utilities-terminal
 launcher deepseek "DeepSeek" "firefox-esr https://chat.deepseek.com" firefox-esr
 launcher deepseek-code "DeepSeek Code" "xfce4-terminal --disable-server --title='DeepSeek Code' -x /opt/boddy/deepseek-code.sh" utilities-terminal
 launcher apps "Install Apps" "synaptic" system-software-install
@@ -48,7 +49,7 @@ fi
 
 # Desktop: the main apps, marked trusted so XFCE doesn't ask before launching them.
 rm -f "$DESK"/boddy-*.desktop
-for id in claude-code codex gemini qwen deepseek-code claude deepseek antigravity firefox files; do
+for id in claude-code codex gemini qwen opencode deepseek-code claude deepseek antigravity firefox files; do
     cp "$APPS/boddy-$id.desktop" "$DESK/"
     chmod +x "$DESK/boddy-$id.desktop"
     gio set "$DESK/boddy-$id.desktop" metadata::xfce-exe-checksum \

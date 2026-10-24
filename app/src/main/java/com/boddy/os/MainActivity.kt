@@ -54,6 +54,7 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.deepseek).setOnClickListener { openDesktop("deepseek-code") }
         findViewById<Button>(R.id.gemini).setOnClickListener { openDesktop("gemini") }
         findViewById<Button>(R.id.qwen).setOnClickListener { openDesktop("qwen") }
+        findViewById<Button>(R.id.opencode).setOnClickListener { openDesktop("opencode") }
         findViewById<TextView>(R.id.agentMode).setOnClickListener { chooseAgentMode(then = null) }
 
         logToggle.setOnClickListener { setLogVisible(logScroll.visibility != View.VISIBLE, logScroll, logToggle) }
@@ -198,7 +199,7 @@ class MainActivity : AppCompatActivity() {
     private fun hasSystem() = Installer(this, Proot(this)).hasSystem()
 
     private fun setLogVisible(visible: Boolean, logScroll: View, toggle: TextView) {
-        logScroll.visibility = if (visible) View.VISIBLE else View.INVISIBLE
+        logScroll.visibility = if (visible) View.VISIBLE else View.GONE
         toggle.text = if (visible) "Hide details" else "Show details"
     }
 

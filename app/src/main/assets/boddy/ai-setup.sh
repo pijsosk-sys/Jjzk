@@ -32,8 +32,8 @@ systemd, no kernel modules and no GPU acceleration. Projects live in /root/Proje
   Roblox Studio. Roblox Studio itself can't run here.
 MD
 
-mkdir -p /root/.claude /root/.claude-deepseek /root/.codex /root/.gemini /root/.qwen
+mkdir -p /root/.claude /root/.claude-deepseek /root/.codex /root/.gemini /root/.qwen /root/.config/opencode
 for f in /root/.claude/CLAUDE.md /root/.claude-deepseek/CLAUDE.md /root/.codex/AGENTS.md \
-         /root/.gemini/GEMINI.md /root/.qwen/QWEN.md; do
+         /root/.gemini/GEMINI.md /root/.qwen/QWEN.md /root/.config/opencode/AGENTS.md; do
     printf '%s\n' "$GUIDE" > "$f"
 done

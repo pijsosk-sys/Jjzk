@@ -1,9 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/boddy_bg"
-    android:fitsSystemWindows="true"
+    android:fillViewport="true"
+    android:fitsSystemWindows="true">
+
+<LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
     android:orientation="vertical"
     android:padding="20dp">
 
@@ -125,6 +130,19 @@
             android:textSize="16sp" />
 
         <Button
+            android:id="@+id/opencode"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/button_card"
+            android:gravity="start|center_vertical"
+            android:paddingStart="20dp"
+            android:text="OpenCode  ·  free"
+            android:textAllCaps="false"
+            android:textColor="@color/boddy_text"
+            android:textSize="16sp" />
+
+        <Button
             android:id="@+id/deepseek"
             android:layout_width="match_parent"
             android:layout_height="56dp"
@@ -181,12 +199,12 @@
     <ScrollView
         android:id="@+id/logScroll"
         android:layout_width="match_parent"
-        android:layout_height="0dp"
+        android:layout_height="320dp"
         android:layout_marginTop="8dp"
-        android:layout_weight="1"
         android:background="@drawable/log_bg"
+        android:nestedScrollingEnabled="true"
         android:padding="10dp"
-        android:visibility="invisible">
+        android:visibility="gone">
 
         <TextView
             android:id="@+id/log"
@@ -209,3 +227,4 @@
         android:textColor="@color/boddy_text_dim"
         android:textSize="13sp" />
 </LinearLayout>
+</ScrollView>

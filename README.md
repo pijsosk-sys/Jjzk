@@ -13,6 +13,8 @@ What you get:
 - **DeepSeek**: DeepSeek chat, plus **DeepSeek Code**, which is Claude Code running on DeepSeek's
   models through [DeepSeek's Anthropic-compatible API](https://api-docs.deepseek.com/guides/agent_integrations/claude_code).
   It asks for your DeepSeek API key once and keeps its settings separate from your Claude sign-in.
+- **Gemini CLI, Qwen Code, OpenCode**: free, open-source coding agents, downloaded the first time
+  you tap them; they get the same Boddy tools and AI mode as Claude Code
 - **Codex**: OpenAI's coding agent; sign in with your ChatGPT account (opens in your phone's browser)
 - **Claude can drive Boddy**: Claude Code, DeepSeek Code and Codex know Boddy's tools
   (`boddy-screen`, `boddy-click`, `boddy-type`, `phone-save`, `phone-open`, `phone-app`), so they can
