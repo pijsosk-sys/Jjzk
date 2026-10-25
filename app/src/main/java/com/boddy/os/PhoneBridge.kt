@@ -57,6 +57,7 @@ class PhoneBridge(private val tokenFile: File, private val phone: PhoneActions) 
         val request = when (verb) {
             "open" -> if (isWebLink(arg)) PhoneRequest.OpenLink(arg) else return "error: not a web link"
             "save" -> return phone.saveToDownloads(arg)
+            "apps" -> return "ok: " + phone.listApps().joinToString("|")
             "openfile" -> PhoneRequest.OpenFile(arg)
             "launch" -> PhoneRequest.LaunchApp(arg)
             else -> return "error: unknown command $verb"

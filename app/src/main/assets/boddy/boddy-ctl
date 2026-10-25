@@ -9,7 +9,7 @@
 #   phone-save FILE            copy a file to the phone's Downloads/Boddy folder
 #   phone-open FILE|URL        open a file or link on the phone (.mcaddon/.mcpack go to Minecraft)
 #   phone-app NAME             open a phone app, e.g. "Minecraft", "Roblox", "DroidBridge"
-#   phone-apps                 list the phone apps Boddy knows about
+#   phone-apps                 list every app on the phone (names to use with phone-app)
 export DISPLAY=${DISPLAY:-:1}
 cmd=$(basename "$0")
 if [ "$cmd" = boddy-ctl ]; then cmd=$1; shift; fi
@@ -63,6 +63,12 @@ case "$cmd" in
         bridge openfile "$f"
         ;;
     phone-app) bridge launch "$*" ;;
-    phone-apps) cat /opt/boddy/phone-apps.txt 2>/dev/null || echo "unknown (open the Boddy desktop first)" ;;
+    phone-apps)
+        if reply=$(bridge apps all 2>/dev/null); then
+            echo "${reply#ok: }" | tr '|' '\n'
+        else
+            cat /opt/boddy/phone-apps.txt 2>/dev/null || echo "unknown (open the Boddy desktop first)"
+        fi
+        ;;
     *) sed -n '2,13p' "$0"; exit 2 ;;
 esac

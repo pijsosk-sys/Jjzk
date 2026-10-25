@@ -29,6 +29,13 @@ object PhoneApps {
         }
     }
 
+    /** Every app name on the phone's home screen, without duplicates or Boddy itself. */
+    fun allLabels(context: Context): List<String> = launchable(context)
+        .filter { (_, pkg) -> pkg != context.packageName }
+        .map { (label, _) -> label.replace("|", "/").trim() }
+        .distinct()
+        .sortedBy { it.lowercase() }
+
     /** Which of the [KNOWN] apps are installed. */
     fun installed(context: Context): Map<Known, Installed> {
         val apps = launchable(context)

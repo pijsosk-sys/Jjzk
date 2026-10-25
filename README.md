@@ -22,6 +22,8 @@ What you get:
   whether they should **ask every time** or **just do it**; change it under "AI mode" on the home screen.
 - **Games**: Open buttons for Minecraft, DroidBridge (Minecraft Java), Roblox and Winlator. JDK 21 is
   installed for Fabric mods; Bedrock add-ons (`.mcaddon`) open straight into Minecraft.
+- **Phone Apps**: open any app on your phone (Minecraft, Roblox, TikTok…) from the Boddy desktop;
+  the games Boddy knows about also get their own desktop icons.
 - **Roblox Tools**: open a `.rbxl`/`.rbxlx`/`.rbxm` file to unpack all its scripts (plus a
   `tree.txt` map of the game), edit them, and put them back, with no Roblox Studio needed. Uses
   [Lune](https://github.com/lune-org/lune), downloaded on first use. AIs get the same

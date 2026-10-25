@@ -70,6 +70,9 @@ class PhoneActions(private val context: Context) {
     fun openLink(activity: Activity, url: String) =
         start(activity, Intent(Intent.ACTION_VIEW, Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE))
 
+    /** Names of every app on the phone that has a launcher icon, sorted. */
+    fun listApps(): List<String> = PhoneApps.allLabels(context)
+
     /** Opens a phone app by name, e.g. "Minecraft" or "DroidBridge". */
     fun launchApp(activity: Activity, name: String) {
         val app = PhoneApps.find(context, name) ?: return toast(activity, "Couldn't find \"$name\" on this phone")

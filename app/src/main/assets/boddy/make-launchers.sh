@@ -37,6 +37,7 @@ launcher codex "Codex" "xfce4-terminal --disable-server --title='Codex' -x /opt/
 launcher gemini "Gemini CLI" "xfce4-terminal --disable-server --title='Gemini CLI' -x /opt/boddy/free-ai.sh gemini" utilities-terminal
 launcher qwen "Qwen Code" "xfce4-terminal --disable-server --title='Qwen Code' -x /opt/boddy/free-ai.sh qwen" utilities-terminal
 launcher opencode "OpenCode" "xfce4-terminal --disable-server --title='OpenCode' -x /opt/boddy/free-ai.sh opencode" utilities-terminal
+launcher phone-apps "Phone Apps" "/opt/boddy/phone-apps-app.sh" phone
 launcher roblox-tools "Roblox Tools" "/opt/boddy/roblox-tools-app.sh" applications-games
 launcher deepseek "DeepSeek" "firefox-esr https://chat.deepseek.com" firefox-esr
 launcher deepseek-code "DeepSeek Code" "xfce4-terminal --disable-server --title='DeepSeek Code' -x /opt/boddy/deepseek-code.sh" utilities-terminal
@@ -53,7 +54,20 @@ fi
 
 # Desktop: the main apps, marked trusted so XFCE doesn't ask before launching them.
 rm -f "$DESK"/boddy-*.desktop
-for id in claude-code codex gemini qwen opencode deepseek-code roblox-tools claude deepseek antigravity firefox files; do
+# Shortcuts to the game apps found on the phone (from phone-apps.txt, written by the app).
+rm -f "$APPS"/boddy-phone-*.desktop
+phone_ids=""
+while IFS=: read -r title state; do
+    case "$state" in
+        *installed\ \(*)
+            id="phone-$(echo "$title" | tr 'A-Z ' 'a-z-')"
+            launcher "$id" "$title" "/opt/boddy/boddy-ctl phone-app $title" applications-games
+            phone_ids="$phone_ids $id"
+            ;;
+    esac
+done < /opt/boddy/phone-apps.txt 2>/dev/null
+
+for id in claude-code codex gemini qwen opencode deepseek-code roblox-tools phone-apps $phone_ids claude deepseek antigravity firefox files; do
     cp "$APPS/boddy-$id.desktop" "$DESK/"
     chmod +x "$DESK/boddy-$id.desktop"
     gio set "$DESK/boddy-$id.desktop" metadata::xfce-exe-checksum \

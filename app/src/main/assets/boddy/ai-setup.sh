@@ -14,8 +14,9 @@ systemd, no kernel modules and no GPU acceleration. Projects live in /root/Proje
   `boddy-scroll down 3`, `boddy-run firefox-esr https://example.com`
 
 ## The phone
-- `phone-apps` lists the phone apps Boddy found (Minecraft, Roblox, DroidBridge, Winlator...).
-- `phone-app Minecraft` opens a phone app (the user must have the Boddy desktop open).
+- `phone-apps` lists every app on the phone; `phone-app NAME` opens one (e.g. `phone-app Minecraft`).
+  Opening apps needs the Boddy desktop on screen. Opening an app sends Boddy to the background;
+  the user comes back by switching to Boddy.
 - `phone-save FILE` copies a file to the phone's Downloads/Boddy folder.
 - `phone-open FILE` opens a file on the phone; `.mcaddon`, `.mcpack` and `.mcworld` files go
   straight into Minecraft Bedrock, which imports them.
