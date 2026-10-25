@@ -10,7 +10,8 @@ ln -sf /opt/boddy/open-on-phone /opt/boddy/phone-bin/sensible-browser
 
 # Commands AI agents (and you) use to drive the desktop and the phone. See ai-setup.sh.
 for c in boddy-screen boddy-click boddy-type boddy-key boddy-scroll boddy-run \
-         phone-save phone-open phone-app phone-apps; do
+         phone-save phone-open phone-app phone-apps phone-status phone-screen phone-ui \
+         phone-tap phone-hold phone-swipe phone-do phone-key phone-type phone-split phone-spot phone-spots; do
     ln -sf /opt/boddy/boddy-ctl "/usr/local/bin/$c"
 done
 for c in roblox-extract roblox-apply roblox-setup; do

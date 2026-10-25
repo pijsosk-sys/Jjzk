@@ -26,6 +26,13 @@ class PhoneActions(private val context: Context) {
         return file.takeIf { it.path.startsWith(root.path + "/") && it.isFile }
     }
 
+    /** Where to write a new file at a Linux path, or null if the path escapes the Linux system. */
+    fun linuxOutput(path: String): File? {
+        val root = rootfs.canonicalFile
+        val file = File(root, path.removePrefix("/")).canonicalFile
+        return file.takeIf { it.path.startsWith(root.path + "/") && !it.isDirectory }
+    }
+
     /** Copies a Linux file to Downloads/Boddy. Returns the bridge reply. */
     fun saveToDownloads(path: String): String {
         val file = linuxFile(path) ?: return "error: no such file in Boddy: $path"
@@ -73,10 +80,20 @@ class PhoneActions(private val context: Context) {
     /** Names of every app on the phone that has a launcher icon, sorted. */
     fun listApps(): List<String> = PhoneApps.allLabels(context)
 
-    /** Opens a phone app by name, e.g. "Minecraft" or "DroidBridge". */
-    fun launchApp(activity: Activity, name: String) {
+    /**
+     * Opens a phone app by name, e.g. "Minecraft" or "DroidBridge". With [split], it opens next
+     * to Boddy in split screen, so the AI can play it while the desktop stays visible.
+     */
+    fun launchApp(activity: Activity, name: String, split: Boolean = false) {
         val app = PhoneApps.find(context, name) ?: return toast(activity, "Couldn't find \"$name\" on this phone")
-        context.packageManager.getLaunchIntentForPackage(app.packageName)?.let { start(activity, it) }
+        val intent = context.packageManager.getLaunchIntentForPackage(app.packageName) ?: return
+        if (!split) return start(activity, intent)
+        intent.addFlags(Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT or Intent.FLAG_ACTIVITY_NEW_TASK)
+        val hands = PhoneControl.instance
+        if (activity.isInMultiWindowMode || hands == null) return start(activity, intent)
+        // Put Boddy into split screen first; the app then fills the other half.
+        hands.globalAction("split")
+        activity.window.decorView.postDelayed({ start(activity, intent) }, 900)
     }
 
     private fun start(activity: Activity, intent: Intent) {

@@ -65,12 +65,19 @@ object AgentConfig {
             permissions.put("allow", JSONArray(listOf("Bash", "Read", "Edit", "Write", "Glob", "Grep", "WebFetch", "WebSearch")))
         } else {
             permissions.put("defaultMode", "default")
-            permissions.put("allow", JSONArray())
+            // Asking before every tap would make playing a game impossible; the user turned
+            // phone control on themselves and can stop it with the bubble.
+            permissions.put("allow", JSONArray(PHONE_CONTROL.map { "Bash($it:*)" } + "Read(//tmp/phone-screen.jpg)"))
         }
         json.put("permissions", permissions)
         file.parentFile?.mkdirs()
         file.writeText(json.toString(2))
     }
+
+    private val PHONE_CONTROL = listOf(
+        "phone-status", "phone-screen", "phone-ui", "phone-tap", "phone-hold", "phone-swipe",
+        "phone-do", "phone-key", "phone-type", "phone-spot", "phone-spots",
+    )
 
     /**
      * Codex's own sandbox needs kernel features proot doesn't have, and Boddy is already

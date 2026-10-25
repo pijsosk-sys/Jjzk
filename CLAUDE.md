@@ -37,6 +37,7 @@ AI coding agents that can see and drive it, sound, and bridges to the phone's ow
 | `Installer.kt` | Downloads (4 parallel ranges) and unpacks the system image, runs `setup.sh`; `SETUP_VERSION` |
 | `Proot.kt` | Builds the proot command (binds, fake /proc files, phone storage at /root/Phone) |
 | `PhoneBridge.kt`, `PhoneActions.kt`, `PhoneApps.kt` | Token-protected localhost:7311 bridge: open links/files/apps, save to Downloads, list apps |
+| `PhoneControl.kt` | Optional accessibility helper: phone screenshots, taps/holds/swipes/multi-finger bursts, typing, Stop bubble; driven via the bridge (`screen`, `ui`, `do`, `key`, `type`, `status`, `split`) |
 | `AudioStream.kt` | Plays PulseAudio's raw stream from 127.0.0.1:4713 |
 | `Settings.kt` | Size, AI mode (`AgentConfig` writes Claude/Codex/OpenCode permissions), last desktop size |
 | `KeepAlive.kt`, `CrashLog.kt` | Battery/child-process checks, crash reports shown on next launch |
@@ -45,7 +46,7 @@ AI coding agents that can see and drive it, sound, and bridges to the phone's ow
 | `start-desktop.sh` | PulseAudio, Xvnc on :1 / port 5901, XFCE |
 | `make-launchers.sh`, `apply-theme.sh`, `session-init.sh` | Desktop icons, dock, theme, wallpaper |
 | `ai-setup.sh` | The guide every AI agent gets (CLAUDE.md, AGENTS.md, GEMINI.md, QWEN.md inside Linux) |
-| `boddy-ctl` | `boddy-screen/click/type/key/scroll`, `phone-save/open/app/apps` |
+| `boddy-ctl` | `boddy-screen/click/type/key/scroll`, `phone-save/open/app/apps`, phone control (`phone-screen/ui/tap/hold/swipe/do/key/type/split/status`, saved button spots `phone-spot(s)` in `/root/.boddy/spots`) |
 | `claude-code.sh`, `codex.sh`, `deepseek-code.sh`, `free-ai.sh` | AI agent launchers (Gemini, Qwen, OpenCode via free-ai.sh) |
 | `roblox-tool`, `roblox.luau`, `roblox-tools-app.sh` | Roblox file extract/apply via Lune |
 | `studio`, `studio-app.sh` | Experimental Roblox Studio under Hangover Wine |
@@ -96,6 +97,7 @@ Locally you can still check scripts with `bash -n`, JS with `node --check`, and 
 Confirmed working by the owner: install, the desktop, touch controls, and Claude Code with
 sign-in. Built and compiled but not reported tested: Codex after the `--no-daemon` fix, sound,
 Roblox Tools, Phone Apps, the Minecraft bot, the experimental Studio launcher, the keep-alive
-card and watchdog, Gemini/Qwen/OpenCode, and the parallel download. The owner reported a crash
+card and watchdog, Gemini/Qwen/OpenCode, the parallel download, and phone control (accessibility
+helper, Minecraft playing, `phone-split`). The owner reported a crash
 after about 30 minutes of use; the cause wasn't confirmed (likely Android killing background
 processes), so ask for the saved crash report if it happens again.

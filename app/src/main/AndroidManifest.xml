@@ -69,5 +69,19 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Runs the Boddy Linux environment while the desktop is open" />
         </service>
+
+        <!-- Optional helper the user turns on in Accessibility settings (PhoneControl.kt). -->
+        <service
+            android:name=".PhoneControl"
+            android:exported="true"
+            android:label="@string/phone_control_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/phone_control" />
+        </service>
     </application>
 </manifest>

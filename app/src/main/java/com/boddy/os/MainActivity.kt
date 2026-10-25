@@ -127,6 +127,7 @@ class MainActivity : AppCompatActivity() {
         showAgentMode()
         showPhoneApps()
         showKeepAlive()
+        showPhoneControl()
         findViewById<Button>(R.id.phoneFiles).apply {
             visibility = if (KeepAlive.phoneFilesAllowed()) View.GONE else View.VISIBLE
             setOnClickListener { KeepAlive.allowPhoneFiles(this@MainActivity) }
@@ -183,6 +184,27 @@ class MainActivity : AppCompatActivity() {
                     .setNegativeButton("Cancel", null)
                     .show()
             }
+        }
+    }
+
+    /** The switch that lets the AI see and tap other apps (see [PhoneControl]). */
+    private fun showPhoneControl() {
+        val button = findViewById<Button>(R.id.phoneControl)
+        val on = PhoneControl.isEnabled(this)
+        button.text = if (on) "AI can control phone apps ✓  ·  settings" else "Let AI control phone apps (play Minecraft…)"
+        button.setOnClickListener {
+            if (on) return@setOnClickListener PhoneControl.openSettings(this)
+            AlertDialog.Builder(this)
+                .setTitle("Let AI control phone apps")
+                .setMessage("Claude in Boddy will be able to see your screen and tap, swipe and type in your " +
+                    "apps, like Minecraft. A bubble at the top shows when it's in control: tap it to stop.\n\n" +
+                    "1. Tap Open settings.\n" +
+                    "2. Tap Installed apps (or Downloaded apps), then Boddy phone control, and turn it on.\n\n" +
+                    "Greyed out or \"Restricted setting\"? Go to Settings → Apps → Boddy, tap ⋮ at the top " +
+                    "right, choose \"Allow restricted settings\", then try again.")
+                .setPositiveButton("Open settings") { _, _ -> PhoneControl.openSettings(this) }
+                .setNegativeButton("Cancel", null)
+                .show()
         }
     }
 
@@ -263,8 +285,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun defaultStatus(phase: Boddy.Phase) = when (phase) {
         Boddy.Phase.NEEDS_INSTALL -> if (hasSystem()) {
-            "A new version of Boddy is ready: Codex, Java for Minecraft mods, and Claude can now see and " +
-                "control the desktop and send files to your phone. Updating keeps your files and sign-ins."
+            "A new version of Boddy is ready: Claude can now see your phone screen and tap in your apps, " +
+                "like playing Minecraft for you. Updating keeps your files and sign-ins."
         } else {
             "Firefox, Claude, DeepSeek and Antigravity on a real desktop. No root needed.\n\n" +
                 "Stay on Wi-Fi: the first install downloads Boddy (under 1 GB) and takes a few minutes."

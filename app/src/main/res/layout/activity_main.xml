@@ -187,6 +187,16 @@
         </HorizontalScrollView>
 
         <Button
+            android:id="@+id/phoneControl"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/button_card"
+            android:textAllCaps="false"
+            android:textColor="@color/boddy_accent_light"
+            android:textSize="14sp" />
+
+        <Button
             android:id="@+id/phoneFiles"
             android:layout_width="match_parent"
             android:layout_height="48dp"

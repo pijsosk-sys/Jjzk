@@ -69,7 +69,7 @@ class DesktopActivity : AppCompatActivity() {
                         when (request) {
                             is PhoneRequest.OpenLink -> phone.openLink(this@DesktopActivity, request.url)
                             is PhoneRequest.OpenFile -> phone.openFile(this@DesktopActivity, request.path)
-                            is PhoneRequest.LaunchApp -> phone.launchApp(this@DesktopActivity, request.name)
+                            is PhoneRequest.LaunchApp -> phone.launchApp(this@DesktopActivity, request.name, request.split)
                         }
                     } catch (e: Exception) {
                         CrashLog.record(this@DesktopActivity, e, fatal = false)
