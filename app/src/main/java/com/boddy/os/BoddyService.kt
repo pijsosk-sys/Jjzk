@@ -26,6 +26,7 @@ class BoddyService : Service() {
     private lateinit var installer: Installer
     private lateinit var bridge: PhoneBridge
     private var desktop: Process? = null
+    private val audio = AudioStream()
     private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -87,6 +88,7 @@ class BoddyService : Service() {
         Boddy.phase.value = Boddy.Phase.RUNNING
         acquireWakeLock()
         bridge.start()
+        audio.start()
         scope.launch {
             try {
                 installer.copyScripts()
@@ -102,6 +104,7 @@ class BoddyService : Service() {
             if (desktop === p) {
                 desktop = null
                 bridge.stop()
+                audio.stop()
                 Boddy.phase.value = Boddy.Phase.READY
                 releaseWakeLock()
                 stopSelf()
@@ -129,6 +132,7 @@ class BoddyService : Service() {
     private fun stopAll() {
         stopDesktop()
         bridge.stop()
+        audio.stop()
         if (Boddy.phase.value == Boddy.Phase.RUNNING) Boddy.phase.value = Boddy.Phase.READY
         releaseWakeLock()
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -138,6 +142,7 @@ class BoddyService : Service() {
     override fun onDestroy() {
         desktop?.destroy()
         bridge.stop()
+        audio.stop()
         releaseWakeLock()
         scope.cancel()
         super.onDestroy()

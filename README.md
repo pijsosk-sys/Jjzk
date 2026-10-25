@@ -25,6 +25,8 @@ What you get:
 - **Antigravity**: one-tap helper that installs Google's Linux ARM64 build
 - **Install Apps** (Synaptic) to download anything a normal Linux PC can run
 - The Boddy look: dark theme, our wallpaper, and a dock with your apps
+- Sound: Linux audio (YouTube in Firefox, games) plays through the phone speaker; PulseAudio
+  sends it to `AudioStream.kt` on 127.0.0.1:4713
 
 ## Using it with just your fingers
 

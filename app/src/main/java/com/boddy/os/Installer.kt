@@ -180,15 +180,17 @@ class Installer(private val context: Context, private val proot: Proot) {
         }
 
     private fun unpack(tarball: File) {
-        Boddy.status.value = "Step 2 of 4: Unpacking (a few minutes)"
-        Boddy.progress.value = -1
+        Boddy.status.value = "Step 2 of 4: Unpacking"
+        Boddy.progress.value = 0
         val staging = File(context.filesDir, "rootfs-staging")
         deleteTree(staging)
         deleteTree(rootfs)
         staging.mkdirs()
 
         val dirModes = mutableListOf<Pair<File, Int>>()
-        TarArchiveInputStream(BufferedInputStream(XZCompressorInputStream(BufferedInputStream(tarball.inputStream(), 1 shl 20)), 1 shl 20)).use { tar ->
+        // Progress = how much of the compressed file has been read.
+        val compressed = ProgressInputStream(tarball.inputStream(), tarball.length())
+        TarArchiveInputStream(BufferedInputStream(XZCompressorInputStream(BufferedInputStream(compressed, 1 shl 20)), 1 shl 20)).use { tar ->
             while (true) {
                 val entry = tar.nextEntry ?: break
                 val out = File(staging, entry.name)
@@ -227,6 +229,21 @@ class Installer(private val context: Context, private val proot: Proot) {
         val top = if (children.size == 1 && children[0].isDirectory && !File(staging, "usr").exists()) children[0] else staging
         if (!top.renameTo(rootfs)) throw IOException("Couldn't move the unpacked system into place")
         deleteTree(staging)
+    }
+
+    /** Reports [Boddy.progress] as the underlying file is read. */
+    private class ProgressInputStream(input: java.io.InputStream, private val total: Long) :
+        java.io.FilterInputStream(input) {
+        private var read = 0L
+
+        override fun read(): Int = super.read().also { if (it >= 0) advance(1) }
+
+        override fun read(b: ByteArray, off: Int, len: Int): Int = super.read(b, off, len).also { if (it > 0) advance(it.toLong()) }
+
+        private fun advance(n: Long) {
+            read += n
+            if (total > 0) Boddy.progress.value = (read * 100 / total).toInt()
+        }
     }
 
     /** Files Boddy controls inside the rootfs; rewritten on every install so updates apply. */
@@ -272,7 +289,7 @@ class Installer(private val context: Context, private val proot: Proot) {
 
     companion object {
         /** Bump when setup.sh or the theme changes so existing installs offer an update. */
-        const val SETUP_VERSION = 7
+        const val SETUP_VERSION = 8
         /** Used when the APK was built without CI (plain Debian; setup.sh installs the rest). */
         private const val FALLBACK_ROOTFS_URL =
             "https://github.com/pijsosk-sys/Jjzk/releases/download/rootfs-debian-trixie-1/debian-arm64.tar.xz"
