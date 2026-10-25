@@ -1,0 +1,170 @@
+#!/bin/bash
+# Lite Roblox Studio launcher for Boddy. Runs Windows x64 Studio on arm64 Debian
+# using box64 + Hangover (wine built for arm64 hosts). Keeps the prefix minimal
+# (no mono, no gecko, no Explorer) so Studio starts fast on a phone.
+#
+# usage:
+#   studio                     launch Studio
+#   studio FILE.rbxl           open a place file
+#   studio roblox-studio:URL   handle a studio:// deep link
+#   studio --install           install/repair box64, wine, Studio (done automatically)
+#   studio --reset             nuke the wine prefix and reinstall Studio
+#   studio --uninstall         remove everything this launcher installed
+set -e
+
+PREFIX=/root/.local/share/roblox-studio/prefix
+STUDIO_DIR=/root/.local/share/roblox-studio/Studio
+CACHE=/root/.cache/roblox-studio
+BIN=/root/.local/bin
+LOG=$CACHE/launcher.log
+
+export WINEPREFIX=$PREFIX
+export WINEARCH=win64
+export WINEDEBUG=-all
+export WINEDLLOVERRIDES="mscoree,mshtml="
+export WINEESYNC=1
+export WINEFSYNC=1
+export DXVK_LOG_LEVEL=none
+export WINE_LARGE_ADDRESS_AWARE=1
+export MESA_GL_VERSION_OVERRIDE=4.5
+export MESA_GLSL_VERSION_OVERRIDE=450
+export LIBGL_ALWAYS_SOFTWARE=0
+export __GL_THREADED_OPTIMIZATIONS=1
+export BOX64_DYNAREC=1
+export BOX64_DYNAREC_BIGBLOCK=2
+export BOX64_DYNAREC_STRONGMEM=0
+export BOX64_DYNAREC_FASTNAN=1
+export BOX64_LOG=0
+
+mkdir -p "$CACHE" "$BIN" "$(dirname "$PREFIX")"
+
+say() { echo ">>> $*"; echo "[$(date +%T)] $*" >>"$LOG"; }
+die() { echo "!!! $*" >&2; echo "[$(date +%T)] FAIL: $*" >>"$LOG"; exit 1; }
+
+need() { command -v "$1" >/dev/null; }
+
+install_box64() {
+    need box64 && return 0
+    say "Installing box64 (x86_64 translator)"
+    if curl -fsSL https://ryanfortner.github.io/box64-debs/box64.list \
+        -o /etc/apt/sources.list.d/box64.list 2>/dev/null; then
+        curl -fsSL https://ryanfortner.github.io/box64-debs/KEY.gpg |
+            gpg --dearmor -o /etc/apt/trusted.gpg.d/box64-archive-keyring.gpg
+        apt-get -y -o Dpkg::Use-Pty=0 update
+        apt-get -y -o Dpkg::Use-Pty=0 install box64-android || \
+        apt-get -y -o Dpkg::Use-Pty=0 install box64-arm64
+    fi
+    need box64 || die "box64 install failed; check $LOG"
+}
+
+install_wine() {
+    # Hangover is wine built for arm64 Linux hosts; it drives box64 for the PE guest.
+    [ -x "$BIN/wine" ] && return 0
+    say "Fetching Hangover wine (arm64)"
+    url=$(curl -fsSL https://api.github.com/repos/AndreRH/hangover/releases/latest |
+        grep -oE '"browser_download_url":[^"]*"[^"]*arm64[^"]*debian[^"]*\.deb"' |
+        head -1 | cut -d'"' -f4)
+    [ -n "$url" ] || die "no Hangover arm64 deb in latest release"
+    tmp=$(mktemp -d)
+    curl -fL "$url" -o "$tmp/hangover.deb" || die "download failed"
+    dpkg -i "$tmp/hangover.deb" 2>>"$LOG" || apt-get -y -f install
+    rm -rf "$tmp"
+    # Expose wine on PATH no matter where Hangover installed it.
+    for w in /opt/hangover/bin/wine /opt/wine-hangover/bin/wine /usr/local/bin/wine; do
+        [ -x "$w" ] && ln -sf "$w" "$BIN/wine" && break
+    done
+    [ -x "$BIN/wine" ] || die "wine not found after Hangover install"
+}
+
+init_prefix() {
+    [ -f "$PREFIX/.initialized" ] && return 0
+    say "Creating a lite wine prefix (no mono, no gecko)"
+    mkdir -p "$PREFIX"
+    WINEDLLOVERRIDES="mscoree,mshtml=" box64 "$BIN/wine" wineboot --init >>"$LOG" 2>&1 || true
+    # Kill Explorer; Studio doesn't need a desktop shell inside the prefix.
+    box64 "$BIN/wine" reg add 'HKCU\Software\Wine' /v Desktop /d explorer.exe /f >>"$LOG" 2>&1 || true
+    box64 "$BIN/wine" reg add 'HKCU\Software\Wine\Explorer' /v Desktop /d "" /f >>"$LOG" 2>&1 || true
+    # Dark Studio reads these before deciding how to render.
+    box64 "$BIN/wine" reg add 'HKCU\Software\Wine\Direct3D' /v renderer /d gl /f >>"$LOG" 2>&1 || true
+    box64 "$BIN/wine" reg add 'HKCU\Software\Wine\Direct3D' /v DirectDrawRenderer /d opengl /f >>"$LOG" 2>&1 || true
+    # Give the guest more virtual memory headroom; Studio chews it fast.
+    box64 "$BIN/wine" reg add 'HKLM\System\CurrentControlSet\Control\Session Manager\Memory Management' \
+        /v IoPageLockLimit /t REG_DWORD /d 983040 /f >>"$LOG" 2>&1 || true
+    touch "$PREFIX/.initialized"
+}
+
+latest_studio_version() {
+    curl -fsSL https://clientsettingscdn.roblox.com/v2/client-version/WindowsStudio64 |
+        python3 -c 'import sys,json; print(json.load(sys.stdin)["clientVersionUpload"])'
+}
+
+install_studio() {
+    [ -x "$STUDIO_DIR/RobloxStudioBeta.exe" ] && return 0
+    say "Fetching Roblox Studio build info"
+    version=$(latest_studio_version) || die "could not reach clientsettings"
+    say "Downloading Studio $version"
+    url="https://setup.rbxcdn.com/${version}-RobloxStudio.zip"
+    zip=$CACHE/$version.zip
+    [ -s "$zip" ] || curl -fL --progress-bar "$url" -o "$zip" || die "Studio download failed"
+    mkdir -p "$STUDIO_DIR"
+    unzip -oq "$zip" -d "$STUDIO_DIR" || die "unzip Studio failed"
+    # Trim fat: Studio ships Qt helpers, crash tooling and an updater we never use on phone.
+    for junk in RobloxStudioLauncherBeta.exe RobloxCrashHandler.exe BugSplat.dll \
+                QtWebEngineProcess.exe RobloxStudioInstaller.exe; do
+        rm -f "$STUDIO_DIR/$junk" 2>/dev/null || true
+    done
+    echo "$version" >"$STUDIO_DIR/.version"
+}
+
+update_studio_if_stale() {
+    [ -f "$STUDIO_DIR/.version" ] || return 0
+    [ "$1" = "--check" ] || return 0
+    have=$(cat "$STUDIO_DIR/.version")
+    want=$(latest_studio_version 2>/dev/null) || return 0
+    [ "$have" = "$want" ] && return 0
+    say "New Studio version $want (have $have); reinstalling"
+    rm -rf "$STUDIO_DIR"
+    install_studio
+}
+
+launch() {
+    # Studio deep links come in as roblox-studio:1+launchmode:... — pass them unchanged.
+    local arg="$1"
+    if [ -z "$arg" ]; then
+        set --
+    elif [ -f "$arg" ]; then
+        # Translate the Linux path into a windows-side path the guest can read.
+        set -- "$(box64 "$BIN/wine" winepath -w "$arg" 2>/dev/null)"
+    else
+        set -- "$arg"
+    fi
+    say "Starting Studio"
+    cd "$STUDIO_DIR"
+    exec box64 "$BIN/wine" "$STUDIO_DIR/RobloxStudioBeta.exe" \
+        -singleInstance -noUpdater "$@"
+}
+
+case "${1:-}" in
+    --install)
+        install_box64; install_wine; init_prefix; install_studio
+        say "Studio ready. Run: studio"
+        ;;
+    --reset)
+        say "Resetting prefix and Studio"
+        rm -rf "$PREFIX" "$STUDIO_DIR"
+        install_box64; install_wine; init_prefix; install_studio
+        ;;
+    --uninstall)
+        rm -rf /root/.local/share/roblox-studio "$CACHE"
+        rm -f "$BIN/wine"
+        say "Removed Studio, prefix and cache. (box64 package left installed.)"
+        ;;
+    --update)
+        install_box64; install_wine; init_prefix
+        update_studio_if_stale --check
+        ;;
+    *)
+        install_box64; install_wine; init_prefix; install_studio
+        launch "$@"
+        ;;
+esac
