@@ -16,6 +16,8 @@ done
 for c in roblox-extract roblox-apply roblox-setup; do
     ln -sf /opt/boddy/roblox-tool "/usr/local/bin/$c"
 done
+ln -sf /opt/boddy/mcbot /usr/local/bin/mcbot
+ln -sf /opt/boddy/studio /usr/local/bin/roblox-studio
 
 launcher() { # id name exec icon
     cat > "$APPS/boddy-$1.desktop" <<DESKTOP
@@ -37,6 +39,8 @@ launcher codex "Codex" "xfce4-terminal --disable-server --title='Codex' -x /opt/
 launcher gemini "Gemini CLI" "xfce4-terminal --disable-server --title='Gemini CLI' -x /opt/boddy/free-ai.sh gemini" utilities-terminal
 launcher qwen "Qwen Code" "xfce4-terminal --disable-server --title='Qwen Code' -x /opt/boddy/free-ai.sh qwen" utilities-terminal
 launcher opencode "OpenCode" "xfce4-terminal --disable-server --title='OpenCode' -x /opt/boddy/free-ai.sh opencode" utilities-terminal
+launcher mcbot "Minecraft Bot" "/opt/boddy/mcbot-app.sh" applications-games
+launcher studio "Roblox Studio (experimental)" "/opt/boddy/studio-app.sh" applications-development
 launcher phone-apps "Phone Apps" "/opt/boddy/phone-apps-app.sh" phone
 launcher roblox-tools "Roblox Tools" "/opt/boddy/roblox-tools-app.sh" applications-games
 launcher deepseek "DeepSeek" "firefox-esr https://chat.deepseek.com" firefox-esr
@@ -67,7 +71,7 @@ while IFS=: read -r title state; do
     esac
 done < /opt/boddy/phone-apps.txt 2>/dev/null
 
-for id in claude-code codex gemini qwen opencode deepseek-code roblox-tools phone-apps $phone_ids claude deepseek antigravity firefox files; do
+for id in claude-code codex gemini qwen opencode deepseek-code roblox-tools studio mcbot phone-apps $phone_ids claude deepseek antigravity firefox files; do
     cp "$APPS/boddy-$id.desktop" "$DESK/"
     chmod +x "$DESK/boddy-$id.desktop"
     gio set "$DESK/boddy-$id.desktop" metadata::xfce-exe-checksum \

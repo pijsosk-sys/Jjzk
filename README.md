@@ -24,6 +24,11 @@ What you get:
   installed for Fabric mods; Bedrock add-ons (`.mcaddon`) open straight into Minecraft.
 - **Phone Apps**: open any app on your phone (Minecraft, Roblox, TikTok…) from the Boddy desktop;
   the games Boddy knows about also get their own desktop icons.
+- **Minecraft Bot**: a helper player (Mineflayer) for your Minecraft Java world in DroidBridge;
+  it follows you, mines, fights mobs and takes orders from the AIs (`mcbot`) or from chat
+  ("boddy follow"). Needs LAN with online mode off, or a second Microsoft account.
+- **Roblox Studio (experimental)**: tries Windows Studio under Hangover Wine. Probably too slow or
+  broken without a GPU; Roblox Tools is the reliable route.
 - **Roblox Tools**: open a `.rbxl`/`.rbxlx`/`.rbxm` file to unpack all its scripts (plus a
   `tree.txt` map of the game), edit them, and put them back, with no Roblox Studio needed. Uses
   [Lune](https://github.com/lune-org/lune), downloaded on first use. AIs get the same

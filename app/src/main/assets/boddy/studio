@@ -1,0 +1,116 @@
+#!/bin/bash
+# EXPERIMENTAL: tries to run Windows Roblox Studio inside Boddy with Hangover (Wine built for
+# arm64, which emulates x86 Windows code itself). Expect it to be very slow or not to work:
+# Boddy has no GPU acceleration, and Studio needs Direct3D 11 and a WebView2 browser to sign in.
+#   studio [FILE.rbxl]   install what's missing (~1.5 GB the first time), then start Studio
+#   studio --reset       delete the Wine setup and Studio, then reinstall
+#   studio --uninstall   remove everything this installed
+set -e
+ROOT=/root/.local/share/roblox-studio
+PREFIX=$ROOT/prefix
+STUDIO=$ROOT/Studio
+CACHE=/root/.cache/roblox-studio
+LOG=$CACHE/studio.log
+CDN=https://setup.rbxcdn.com
+export WINEPREFIX=$PREFIX WINEARCH=win64 WINEDEBUG=-all
+mkdir -p "$CACHE" "$ROOT"
+
+say() { echo ">>> $*"; echo "[$(date +%T)] $*" >>"$LOG"; }
+die() { echo "!!! $*" >&2; echo "[$(date +%T)] FAILED: $*" >>"$LOG"; exit 1; }
+
+install_wine() {
+    command -v wine >/dev/null && return
+    say "Downloading Hangover (Wine for arm64)"
+    # Releases ship a tar of .debs per distro; pick the Debian 13 (trixie) arm64 one.
+    url=$(curl -fsSL https://api.github.com/repos/AndreRH/hangover/releases/latest |
+        grep -o '"browser_download_url": *"[^"]*"' | cut -d'"' -f4 |
+        grep -i arm64 | grep -iE 'debian13|trixie' | head -1)
+    [ -n "$url" ] || die "No Hangover download for Debian 13 arm64 in its latest release"
+    tmp=$(mktemp -d)
+    curl -fL --progress-bar "$url" -o "$tmp/hangover.tar" || die "Hangover download failed"
+    tar -xf "$tmp/hangover.tar" -C "$tmp"
+    apt-get update >>"$LOG" 2>&1 || true
+    # shellcheck disable=SC2046
+    apt-get install -y $(find "$tmp" -name '*.deb') >>"$LOG" 2>&1 ||
+        die "Installing Hangover failed (see $LOG)"
+    rm -rf "$tmp"
+    command -v wine >/dev/null || die "wine missing after installing Hangover"
+}
+
+init_prefix() {
+    [ -f "$PREFIX/.ready" ] && return
+    say "Setting up Wine (first time only)"
+    WINEDLLOVERRIDES="mscoree,mshtml=" wineboot --init >>"$LOG" 2>&1 || die "wineboot failed (see $LOG)"
+    touch "$PREFIX/.ready"
+}
+
+# Where each Studio package unzips to (Studio ships as many zips listed in rbxPkgManifest.txt).
+package_dir() {
+    case "$1" in
+        ApplicationConfig.zip) echo ApplicationConfig ;;
+        BuiltInPlugins.zip) echo BuiltInPlugins ;;
+        BuiltInStandalonePlugins.zip) echo BuiltInStandalonePlugins ;;
+        Plugins.zip) echo Plugins ;;
+        Qml.zip) echo Qml ;;
+        StudioFonts.zip) echo StudioFonts ;;
+        RibbonConfig.zip) echo RibbonConfig ;;
+        shaders.zip) echo shaders ;;
+        ssl.zip) echo ssl ;;
+        WebView2RuntimeInstaller.zip) echo WebView2RuntimeInstaller ;;
+        content-avatar.zip) echo content/avatar ;;
+        content-configs.zip) echo content/configs ;;
+        content-fonts.zip) echo content/fonts ;;
+        content-sky.zip) echo content/sky ;;
+        content-sounds.zip) echo content/sounds ;;
+        content-textures2.zip) echo content/textures ;;
+        content-models.zip) echo content/models ;;
+        content-studio_svg_textures.zip) echo content/studio_svg_textures ;;
+        content-qt_translations.zip) echo content/qt_translations ;;
+        content-api-docs.zip) echo content/api_docs ;;
+        content-textures3.zip) echo PlatformContent/pc/textures ;;
+        content-terrain.zip) echo PlatformContent/pc/terrain ;;
+        content-platform-fonts.zip) echo PlatformContent/pc/fonts ;;
+        content-platform-dictionaries.zip) echo PlatformContent/pc/shared_compression_dictionaries ;;
+        extracontent-luapackages.zip) echo ExtraContent/LuaPackages ;;
+        extracontent-translations.zip) echo ExtraContent/translations ;;
+        extracontent-models.zip) echo ExtraContent/models ;;
+        extracontent-textures.zip) echo ExtraContent/textures ;;
+        extracontent-scripts.zip) echo ExtraContent/scripts ;;
+        *) echo . ;;  # RobloxStudio.zip, Libraries.zip, redist.zip, WebView2.zip, ...
+    esac
+}
+
+install_studio() {
+    version=$(curl -fsSL https://clientsettingscdn.roblox.com/v2/client-version/WindowsStudio64 |
+        python3 -c 'import sys, json; print(json.load(sys.stdin)["clientVersionUpload"])') ||
+        die "Couldn't ask Roblox for the latest Studio version"
+    [ "$(cat "$STUDIO/.version" 2>/dev/null)" = "$version" ] && return
+    say "Downloading Roblox Studio $version (about 1 GB)"
+    rm -rf "$STUDIO" && mkdir -p "$STUDIO"
+    curl -fsSL "$CDN/$version-rbxPkgManifest.txt" -o "$CACHE/manifest.txt" || die "Couldn't get the Studio file list"
+    grep -E '\.zip$' "$CACHE/manifest.txt" | tr -d '\r' | while read -r pkg; do
+        say "  $pkg"
+        curl -fsSL "$CDN/$version-$pkg" -o "$CACHE/pkg.zip" || die "Download of $pkg failed"
+        mkdir -p "$STUDIO/$(package_dir "$pkg")"
+        unzip -oq "$CACHE/pkg.zip" -d "$STUDIO/$(package_dir "$pkg")" || die "Unpacking $pkg failed"
+    done
+    rm -f "$CACHE/pkg.zip"
+    printf '<?xml version="1.0" encoding="UTF-8"?><Settings><ContentFolder>content</ContentFolder><BaseUrl>http://www.roblox.com</BaseUrl></Settings>' \
+        >"$STUDIO/AppSettings.xml"
+    echo "$version" >"$STUDIO/.version"
+}
+
+case "${1:-}" in
+    --uninstall) rm -rf "$ROOT" "$CACHE"; echo "Removed Studio and its Wine setup." ;;
+    --reset) rm -rf "$ROOT"; exec "$0" ;;
+    *)
+        install_wine
+        init_prefix
+        install_studio
+        args=()
+        [ -f "${1:-}" ] && args+=("$(wine winepath -w "$1" 2>/dev/null)")
+        say "Starting Studio (this can take minutes, if it works at all)"
+        cd "$STUDIO"
+        exec wine RobloxStudioBeta.exe "${args[@]}"
+        ;;
+esac

@@ -29,7 +29,13 @@ systemd, no kernel modules and no GPU acceleration. Projects live in /root/Proje
 - Minecraft Java via the DroidBridge Launcher app (owns Java Edition): make Fabric mods
   (Fabric Loom + Gradle; JDK 21 is installed, use Gradle toolchains if a newer one is needed).
   Build the jar, `phone-save` it, and tell the user to add it to the mods folder in DroidBridge.
-- Roblox: Roblox Studio itself can't run here (Windows/Mac only), but Roblox files can be
+- Minecraft Java bot (`mcbot`, Mineflayer): `mcbot start PORT [microsoft]` joins the user's
+  DroidBridge world opened to LAN (the port shows in chat), then `mcbot follow|come|goto X Y Z|
+  mine BLOCK N|attack|say TEXT|status|stop|quit`. It needs online mode off (offline name
+  BoddyBot) or a second Microsoft account. Only use it in the user's own worlds.
+- Roblox: `roblox-studio` is an EXPERIMENTAL attempt to run Windows Studio under Hangover
+  Wine; it probably won't work well (no GPU). Don't rely on it. Never automate playing Roblox:
+  bots break Roblox's rules. Roblox files can be
   read and edited without it:
   - `roblox-extract game.rbxl` unpacks every script (Script = .server.luau, LocalScript =
     .client.luau, ModuleScript = .luau) into `game-scripts/`, plus `tree.txt` with the layout.
