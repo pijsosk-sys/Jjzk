@@ -38,7 +38,11 @@ export ANTHROPIC_DEFAULT_OPUS_MODEL=deepseek-v4-pro
 export ANTHROPIC_DEFAULT_SONNET_MODEL=deepseek-v4-pro
 export ANTHROPIC_DEFAULT_HAIKU_MODEL=deepseek-v4-flash
 export CLAUDE_CODE_SUBAGENT_MODEL=deepseek-v4-flash
-claude
+if ls /root/.claude-deepseek/projects/-root-Projects/*.jsonl >/dev/null 2>&1; then
+    claude --continue
+else
+    claude
+fi
 echo
 echo "To use a different DeepSeek key: /opt/boddy/deepseek-code.sh --reset"
 read -rp "DeepSeek Code closed. Press Enter to close this window."

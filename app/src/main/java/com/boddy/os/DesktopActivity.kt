@@ -49,14 +49,12 @@ class DesktopActivity : AppCompatActivity() {
         overlay = findViewById(R.id.overlay)
         vnc.onStickyConsumed = { refreshModifiers() }
         vnc.onDisconnected = { error ->
-            if (!resizing) {
+            if (!resizing && !isFinishing) {
+                // Boddy's watchdog restarts a desktop that died, so just reconnect.
                 overlay.visibility = View.VISIBLE
-                overlay.text = "Desktop closed" + (error?.message?.let { "\n$it" } ?: "") + "\n\nTap to start it again"
-                overlay.setOnClickListener {
-                    overlay.setOnClickListener(null)
-                    overlay.text = "Starting Boddy…"
-                    startDesktop(BoddyService.ACTION_START)
-                }
+                overlay.text = "Reconnecting to the desktop…" + (error?.message?.let { "\n($it)" } ?: "")
+                vnc.client = null
+                connect(initialDelayMs = 2000)
             }
         }
         buildKeyBar(findViewById(R.id.keys))
@@ -147,7 +145,14 @@ class DesktopActivity : AppCompatActivity() {
                     delay(500)
                 }
             }
-            launch(Dispatchers.Main) { overlay.text = "Couldn't start the desktop. Check the log on the main screen." }
+            launch(Dispatchers.Main) {
+                overlay.text = "The desktop isn't running.\n\nTap to start it again"
+                overlay.setOnClickListener {
+                    overlay.setOnClickListener(null)
+                    overlay.text = "Starting Boddy…"
+                    startDesktop(BoddyService.ACTION_START)
+                }
+            }
         }
     }
 

@@ -1,0 +1,49 @@
+#!/bin/bash
+# Roblox file tools, run as one of its symlinked names:
+#   roblox-extract FILE [DIR]   unpack every script in a .rbxl/.rbxlx/.rbxm/.rbxmx into DIR
+#                               (default: next to FILE), plus tree.txt with the game's layout
+#   roblox-apply FILE DIR [OUT] put edited scripts from DIR back into the file (default: FILE-edited.rbxl)
+#   roblox-setup                download Lune and Rojo (done automatically on first use)
+set -e
+BIN=/root/.local/bin
+export PATH="$BIN:$PATH"
+cmd=$(basename "$0")
+if [ "$cmd" = roblox-tool ]; then cmd=$1; shift; fi
+
+# Downloads the newest linux-aarch64 build of a GitHub project's tool into $BIN.
+fetch_tool() { # repo binary
+    command -v "$2" >/dev/null && return
+    echo "Downloading $2 (first time only)..."
+    local url tmp
+    url=$(curl -fsSL "https://api.github.com/repos/$1/releases/latest" |
+        grep -o '"browser_download_url": *"[^"]*linux-aarch64[^"]*\.zip"' | head -1 | cut -d'"' -f4)
+    [ -n "$url" ] || { echo "Couldn't find an arm64 download of $2." >&2; return 1; }
+    tmp=$(mktemp -d)
+    curl -fsSL "$url" -o "$tmp/t.zip" && unzip -oq "$tmp/t.zip" -d "$tmp"
+    mkdir -p "$BIN" && install -m755 "$(find "$tmp" -type f -name "$2" | head -1)" "$BIN/$2"
+    rm -rf "$tmp"
+}
+
+setup() {
+    fetch_tool lune-org/lune lune
+    fetch_tool rojo-rbx/rojo rojo || echo "(Rojo is optional; Lune is enough to open files.)"
+}
+
+case "$cmd" in
+    roblox-setup) setup ;;
+    roblox-extract)
+        [ -f "$1" ] || { echo "usage: roblox-extract FILE [DIR]" >&2; exit 2; }
+        fetch_tool lune-org/lune lune
+        file=$(readlink -f "$1")
+        dir=${2:-"${file%.*}-scripts"}
+        lune run /opt/boddy/roblox.luau extract "$file" "$dir"
+        ;;
+    roblox-apply)
+        [ -f "$1" ] && [ -d "$2" ] || { echo "usage: roblox-apply FILE DIR [OUT]" >&2; exit 2; }
+        fetch_tool lune-org/lune lune
+        file=$(readlink -f "$1")
+        ext=${file##*.}
+        lune run /opt/boddy/roblox.luau apply "$file" "$(readlink -f "$2")" "${3:-${file%.*}-edited.$ext}"
+        ;;
+    *) sed -n '2,7p' "$0"; exit 2 ;;
+esac

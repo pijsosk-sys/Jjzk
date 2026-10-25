@@ -49,6 +49,15 @@ object KeepAlive {
             || open(activity, Intent(AndroidSettings.ACTION_DEVICE_INFO_SETTINGS))
     }
 
+    /** Whether Linux can see the phone's files (Android 11+ "All files access"). */
+    fun phoneFilesAllowed(): Boolean = Build.VERSION.SDK_INT < 30 || android.os.Environment.isExternalStorageManager()
+
+    fun allowPhoneFiles(activity: Activity) {
+        if (Build.VERSION.SDK_INT < 30) return
+        open(activity, Intent(AndroidSettings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:${activity.packageName}")))
+            || open(activity, Intent(AndroidSettings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+    }
+
     private fun open(activity: Activity, intent: Intent) = try {
         activity.startActivity(intent)
         true

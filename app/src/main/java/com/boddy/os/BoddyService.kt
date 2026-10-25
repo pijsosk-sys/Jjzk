@@ -33,6 +33,9 @@ class BoddyService : Service() {
     private lateinit var bridge: PhoneBridge
     private var desktop: Process? = null
     private val audio = AudioStream()
+    @Volatile private var starting = false
+    /** When the watchdog last restarted a desktop that died on its own. */
+    private val recentRestarts = mutableListOf<Long>()
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
 
@@ -102,7 +105,9 @@ class BoddyService : Service() {
     }
 
     private fun startDesktop(width: Int, height: Int) {
-        if (desktop?.isAlive == true) return
+        // `desktop` is only set once the process starts, so also guard the moment before.
+        if (starting || desktop?.isAlive == true) return
+        starting = true
         Boddy.phase.value = Boddy.Phase.RUNNING
         Settings(this).lastDesktop = width to height
         acquireWakeLock()
@@ -116,18 +121,34 @@ class BoddyService : Service() {
             } catch (e: Exception) {
                 Boddy.log("Couldn't write phone info: ${e.message}")
             }
-            val p = proot.process("/bin/bash", "/opt/boddy/start-desktop.sh", width.toString(), height.toString()).start()
+            val p = try {
+                proot.process("/bin/bash", "/opt/boddy/start-desktop.sh", width.toString(), height.toString()).start()
+            } finally {
+                starting = false
+            }
             desktop = p
             p.inputStream.bufferedReader().forEachLine { Boddy.log(it) }
-            p.waitFor()
-            if (desktop === p) {
+            val code = p.waitFor()
+            if (desktop !== p) return@launch // stopped or restarted on purpose
+
+            // The desktop died on its own (Android killed part of it, or it crashed): bring it back.
+            val now = System.currentTimeMillis()
+            recentRestarts.removeAll { now - it > 10 * 60_000 }
+            if (recentRestarts.size < 3) {
+                recentRestarts += now
+                Boddy.log("The desktop stopped unexpectedly (exit $code); restarting it…")
                 desktop = null
-                bridge.stop()
-                audio.stop()
-                Boddy.phase.value = Boddy.Phase.READY
-                releaseWakeLock()
-                stopSelf()
+                startDesktop(width, height)
+                return@launch
             }
+            Boddy.log("The desktop keeps stopping; giving up. Check \"Keep Boddy running\" on the home screen.")
+            desktop = null
+            bridge.stop()
+            audio.stop()
+            Settings(this@BoddyService).lastDesktop = null
+            Boddy.phase.value = Boddy.Phase.READY
+            releaseWakeLock()
+            stopSelf()
         }
     }
 

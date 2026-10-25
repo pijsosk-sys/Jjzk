@@ -28,8 +28,16 @@ systemd, no kernel modules and no GPU acceleration. Projects live in /root/Proje
 - Minecraft Java via the DroidBridge Launcher app (owns Java Edition): make Fabric mods
   (Fabric Loom + Gradle; JDK 21 is installed, use Gradle toolchains if a newer one is needed).
   Build the jar, `phone-save` it, and tell the user to add it to the mods folder in DroidBridge.
-- Roblox: write Luau scripts and save them with `phone-save`; the user pastes them into
-  Roblox Studio. Roblox Studio itself can't run here.
+- Roblox: Roblox Studio itself can't run here (Windows/Mac only), but Roblox files can be
+  read and edited without it:
+  - `roblox-extract game.rbxl` unpacks every script (Script = .server.luau, LocalScript =
+    .client.luau, ModuleScript = .luau) into `game-scripts/`, plus `tree.txt` with the layout.
+  - Edit the .luau files, then `roblox-apply game.rbxl game-scripts` writes game-edited.rbxl.
+  - The phone's storage is at /root/Phone when the user allowed file access in the Boddy app
+    (downloads are in /root/Phone/Download). If it's missing, ask them to tap "Allow phone files".
+  - For new games: Rojo (`roblox-setup` installs it) builds a place from files
+    (`rojo build -o game.rbxl`), and Roblox Open Cloud can publish it without Studio.
+  - Save results to the phone with `phone-save`.
 MD
 
 mkdir -p /root/.claude /root/.claude-deepseek /root/.codex /root/.gemini /root/.qwen /root/.config/opencode

@@ -1,6 +1,8 @@
 package com.boddy.os
 
 import android.content.Context
+import android.os.Build
+import android.os.Environment
 import java.io.File
 
 /** Runs commands inside the Debian rootfs with proot (no root access needed). */
@@ -26,6 +28,10 @@ class Proot(private val context: Context) {
             "--bind=/dev/urandom:/dev/random",
             "--bind=${rootfs.absolutePath}/tmp:/dev/shm",
         )
+        // The phone's storage, when the user allowed "All files access" in the Boddy app.
+        if (Build.VERSION.SDK_INT >= 30 && Environment.isExternalStorageManager()) {
+            args += "--bind=${Environment.getExternalStorageDirectory().absolutePath}:/root/Phone"
+        }
         // Android hides some /proc files from apps; substitute harmless fakes.
         for (name in FAKE_PROC.keys) {
             if (!File("/proc/$name").canRead()) args += "--bind=${File(fakeProc, name).absolutePath}:/proc/$name"

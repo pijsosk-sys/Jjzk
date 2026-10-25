@@ -33,6 +33,9 @@ pref("layout.css.devPixelsPerPx", "1.25");
 // Fewer background processes: less memory and faster on a phone.
 pref("dom.ipc.processCount", 2);
 pref("browser.tabs.unloadOnLowMemory", true);
+pref("browser.sessionhistory.max_total_viewers", 0);
+pref("browser.cache.memory.capacity", 65536);
+pref("browser.sessionstore.interval", 60000);
 pref("toolkit.telemetry.enabled", false);
 pref("datareporting.healthreport.uploadEnabled", false);
 PREFS

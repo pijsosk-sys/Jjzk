@@ -186,6 +186,18 @@
                 android:orientation="horizontal" />
         </HorizontalScrollView>
 
+        <Button
+            android:id="@+id/phoneFiles"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/button_card"
+            android:text="Allow phone files (for Roblox files, downloads…)"
+            android:textAllCaps="false"
+            android:textColor="@color/boddy_accent_light"
+            android:textSize="14sp"
+            android:visibility="gone" />
+
         <TextView
             android:id="@+id/agentMode"
             android:layout_width="wrap_content"

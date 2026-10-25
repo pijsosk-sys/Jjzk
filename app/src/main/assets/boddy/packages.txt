@@ -8,5 +8,5 @@ adwaita-icon-theme gnome-themes-extra librsvg2-common
 fonts-dejavu-core fonts-noto-color-emoji
 ca-certificates curl wget xz-utils unzip zip sudo procps less nano git
 xdotool scrot x11-utils python3
-pulseaudio pulseaudio-utils
+pulseaudio pulseaudio-utils zenity
 openjdk-21-jdk-headless nodejs npm

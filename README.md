@@ -22,6 +22,11 @@ What you get:
   whether they should **ask every time** or **just do it**; change it under "AI mode" on the home screen.
 - **Games**: Open buttons for Minecraft, DroidBridge (Minecraft Java), Roblox and Winlator. JDK 21 is
   installed for Fabric mods; Bedrock add-ons (`.mcaddon`) open straight into Minecraft.
+- **Roblox Tools**: open a `.rbxl`/`.rbxlx`/`.rbxm` file to unpack all its scripts (plus a
+  `tree.txt` map of the game), edit them, and put them back, with no Roblox Studio needed. Uses
+  [Lune](https://github.com/lune-org/lune), downloaded on first use. AIs get the same
+  `roblox-extract` / `roblox-apply` commands. "Allow phone files" lets Boddy see your downloads at
+  `/root/Phone`.
 - **Antigravity**: one-tap helper that installs Google's Linux ARM64 build
 - **Install Apps** (Synaptic) to download anything a normal Linux PC can run
 - The Boddy look: dark theme, our wallpaper, and a dock with your apps

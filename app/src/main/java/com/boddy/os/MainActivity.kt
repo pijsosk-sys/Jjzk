@@ -112,8 +112,8 @@ class MainActivity : AppCompatActivity() {
                         }
                 }
                 launch {
-                    Boddy.log.collect { // StateFlow skips values while we wait below
-                        log.text = it
+                    Boddy.logVersion.collect { // StateFlow skips values while we wait below
+                        log.text = Boddy.logText()
                         logScroll.post { logScroll.fullScroll(View.FOCUS_DOWN) }
                         delay(200)
                     }
@@ -127,6 +127,10 @@ class MainActivity : AppCompatActivity() {
         showAgentMode()
         showPhoneApps()
         showKeepAlive()
+        findViewById<Button>(R.id.phoneFiles).apply {
+            visibility = if (KeepAlive.phoneFilesAllowed()) View.GONE else View.VISIBLE
+            setOnClickListener { KeepAlive.allowPhoneFiles(this@MainActivity) }
+        }
         CrashLog.take(this)?.let { report ->
             Boddy.log(report)
             AlertDialog.Builder(this)

@@ -13,6 +13,9 @@ for c in boddy-screen boddy-click boddy-type boddy-key boddy-scroll boddy-run \
          phone-save phone-open phone-app phone-apps; do
     ln -sf /opt/boddy/boddy-ctl "/usr/local/bin/$c"
 done
+for c in roblox-extract roblox-apply roblox-setup; do
+    ln -sf /opt/boddy/roblox-tool "/usr/local/bin/$c"
+done
 
 launcher() { # id name exec icon
     cat > "$APPS/boddy-$1.desktop" <<DESKTOP
@@ -34,6 +37,7 @@ launcher codex "Codex" "xfce4-terminal --disable-server --title='Codex' -x /opt/
 launcher gemini "Gemini CLI" "xfce4-terminal --disable-server --title='Gemini CLI' -x /opt/boddy/free-ai.sh gemini" utilities-terminal
 launcher qwen "Qwen Code" "xfce4-terminal --disable-server --title='Qwen Code' -x /opt/boddy/free-ai.sh qwen" utilities-terminal
 launcher opencode "OpenCode" "xfce4-terminal --disable-server --title='OpenCode' -x /opt/boddy/free-ai.sh opencode" utilities-terminal
+launcher roblox-tools "Roblox Tools" "/opt/boddy/roblox-tools-app.sh" applications-games
 launcher deepseek "DeepSeek" "firefox-esr https://chat.deepseek.com" firefox-esr
 launcher deepseek-code "DeepSeek Code" "xfce4-terminal --disable-server --title='DeepSeek Code' -x /opt/boddy/deepseek-code.sh" utilities-terminal
 launcher apps "Install Apps" "synaptic" system-software-install
@@ -49,7 +53,7 @@ fi
 
 # Desktop: the main apps, marked trusted so XFCE doesn't ask before launching them.
 rm -f "$DESK"/boddy-*.desktop
-for id in claude-code codex gemini qwen opencode deepseek-code claude deepseek antigravity firefox files; do
+for id in claude-code codex gemini qwen opencode deepseek-code roblox-tools claude deepseek antigravity firefox files; do
     cp "$APPS/boddy-$id.desktop" "$DESK/"
     chmod +x "$DESK/boddy-$id.desktop"
     gio set "$DESK/boddy-$id.desktop" metadata::xfce-exe-checksum \

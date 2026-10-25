@@ -27,6 +27,11 @@ if [ "$1" = "--signin" ]; then
 
 MSG
 fi
-claude
+# Continue the last conversation if there is one, so a restart doesn't lose your work.
+if [ "$1" != "--signin" ] && ls /root/.claude/projects/-root-Projects/*.jsonl >/dev/null 2>&1; then
+    claude --continue
+else
+    claude
+fi
 echo
 read -rp "Claude Code closed. Press Enter to close this window."
