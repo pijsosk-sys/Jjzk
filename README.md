@@ -73,8 +73,11 @@ First launch downloads the prebuilt Boddy system (under 1 GB, in 4 parallel part
 - When `setup.sh` or the theme changes, bump `Installer.SETUP_VERSION`; installed phones then
   show "Update Boddy", which re-runs setup without downloading Linux again.
 
-If the desktop closes by itself on Android 12+, turn on **Settings → Developer options →
-Disable child process restrictions**.
+Staying alive in the background: the home screen shows a "Keep Boddy running" card until
+battery optimisation is off for Boddy and (Android 12+) **Developer options → Disable child
+process restrictions** is on; both are what make Android kill Boddy when you switch apps. The
+service holds wake and Wi-Fi locks, is sticky, and restores the desktop if Android restarts it.
+Crashes and recovered errors are saved and shown on the next launch.
 
 ## Building locally
 

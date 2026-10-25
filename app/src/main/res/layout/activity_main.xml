@@ -58,6 +58,16 @@
         android:textStyle="bold" />
 
     <LinearLayout
+        android:id="@+id/keepAlive"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:background="@drawable/button_card"
+        android:orientation="vertical"
+        android:padding="16dp"
+        android:visibility="gone" />
+
+    <LinearLayout
         android:id="@+id/shortcuts"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"

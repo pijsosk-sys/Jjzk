@@ -126,6 +126,60 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         showAgentMode()
         showPhoneApps()
+        showKeepAlive()
+        CrashLog.take(this)?.let { report ->
+            Boddy.log(report)
+            AlertDialog.Builder(this)
+                .setTitle("Boddy hit a problem last time")
+                .setMessage("It's saved under \"Show details\". Screenshot it and send it to get it fixed.\n\n" +
+                    report.lines().take(6).joinToString("\n"))
+                .setPositiveButton("OK", null)
+                .show()
+        }
+    }
+
+    /** Settings Android uses to kill Boddy in the background, with one-tap fixes. Hidden when all good. */
+    private fun showKeepAlive() {
+        val card = findViewById<android.widget.LinearLayout>(R.id.keepAlive)
+        card.removeAllViews()
+        if (KeepAlive.allGood(this)) {
+            card.visibility = View.GONE
+            return
+        }
+        card.visibility = View.VISIBLE
+        fun text(value: String, size: Float, color: Int) = TextView(this).apply {
+            text = value
+            textSize = size
+            setTextColor(getColor(color))
+            card.addView(this)
+        }
+        fun fixButton(label: String, onClick: () -> Unit) = Button(this).apply {
+            text = label
+            isAllCaps = false
+            setTextColor(getColor(R.color.boddy_text))
+            setBackgroundResource(R.drawable.button_primary)
+            setOnClickListener { onClick() }
+            card.addView(this, android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT, (48 * resources.displayMetrics.density).toInt(),
+            ).apply { topMargin = 12 })
+        }
+        text("Keep Boddy running in the background", 17f, R.color.boddy_text)
+        text("Without these, Android can close Boddy (and your work) when you switch apps.", 13f, R.color.boddy_text_dim)
+        if (!KeepAlive.batteryUnrestricted(this)) {
+            fixButton("1. Let Boddy run in the background") { KeepAlive.fixBattery(this) }
+        }
+        if (KeepAlive.childProcessLimitOff(this) == false) {
+            fixButton("2. Turn off the background process limit") {
+                AlertDialog.Builder(this)
+                    .setTitle("Turn off the process limit")
+                    .setMessage("In Developer options, turn ON \"Disable child process restrictions\".\n\n" +
+                        "No Developer options? Go to Settings → About phone → Software information and tap " +
+                        "Build number 7 times, then come back here.")
+                    .setPositiveButton("Open settings") { _, _ -> KeepAlive.openDeveloperOptions(this) }
+                    .setNegativeButton("Cancel", null)
+                    .show()
+            }
+        }
     }
 
     /** Asks how the AI should work the first time, then opens the desktop (and an app). */

@@ -131,8 +131,12 @@ class VncView(context: Context, attrs: AttributeSet?) : View(context, attrs), Rf
                 synchronized(dirty) {
                     dirty.intersect(0, 0, bmp.width, bmp.height)
                     if (!dirty.isEmpty) {
-                        bmp.setPixels(c.pixels, dirty.top * c.width + dirty.left, c.width,
-                            dirty.left, dirty.top, dirty.width(), dirty.height())
+                        try {
+                            bmp.setPixels(c.pixels, dirty.top * c.width + dirty.left, c.width,
+                                dirty.left, dirty.top, dirty.width(), dirty.height())
+                        } catch (_: RuntimeException) {
+                            // The desktop was resized mid-frame; the next update redraws it.
+                        }
                     }
                     dirty.setEmpty()
                 }

@@ -27,6 +27,11 @@ class Settings(context: Context) {
         get() = Size.entries.firstOrNull { it.name == prefs.getString("size", null) } ?: Size.MEDIUM
         set(value) = prefs.edit().putString("size", value.name).apply()
 
+    /** The desktop's size while it's running (null when shut down), to restore it if Android kills Boddy. */
+    var lastDesktop: Pair<Int, Int>?
+        get() = prefs.getString("lastDesktop", null)?.split("x")?.let { (w, h) -> w.toInt() to h.toInt() }
+        set(value) = prefs.edit().putString("lastDesktop", value?.let { "${it.first}x${it.second}" }).apply()
+
     /** Null until the user has picked one. */
     var agentMode: AgentMode?
         get() = AgentMode.entries.firstOrNull { it.name == prefs.getString("agentMode", null) }

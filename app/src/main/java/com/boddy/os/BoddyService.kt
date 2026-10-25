@@ -10,7 +10,9 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.net.wifi.WifiManager
 import android.os.PowerManager
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -21,13 +23,18 @@ import java.io.File
 /** Keeps Linux running in the background: installation and the desktop session. */
 class BoddyService : Service() {
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    /** Errors in background jobs are logged instead of crashing the whole app. */
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, t ->
+        Boddy.log("Background error: ${t.message ?: t}")
+        CrashLog.record(this@BoddyService, t, fatal = false)
+    })
     private lateinit var proot: Proot
     private lateinit var installer: Installer
     private lateinit var bridge: PhoneBridge
     private var desktop: Process? = null
     private val audio = AudioStream()
     private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -39,6 +46,12 @@ class BoddyService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // "Shut down" from the notification arrives as a plain service start; going foreground
+        // just to stop would be refused from the background on newer Android.
+        if (intent?.action == ACTION_STOP) {
+            stopAll()
+            return START_NOT_STICKY
+        }
         goForeground()
         when (intent?.action) {
             ACTION_INSTALL -> install()
@@ -48,9 +61,14 @@ class BoddyService : Service() {
                 startDesktop(intent.getIntExtra(EXTRA_WIDTH, 1300), intent.getIntExtra(EXTRA_HEIGHT, 600))
             }
             ACTION_RUN -> intent.getStringExtra(EXTRA_APP)?.let { runInDesktop(it) }
-            ACTION_STOP -> stopAll()
+            // Android killed us and is restarting the service: bring the desktop back if it was on.
+            null -> Settings(this).lastDesktop?.let { (w, h) ->
+                Boddy.log("Boddy was stopped by Android; restarting the desktop")
+                startDesktop(w, h)
+            } ?: stopSelf()
         }
-        return START_NOT_STICKY
+        // Ask Android to restart the service if it has to kill it.
+        return START_STICKY
     }
 
     private fun install() {
@@ -86,6 +104,7 @@ class BoddyService : Service() {
     private fun startDesktop(width: Int, height: Int) {
         if (desktop?.isAlive == true) return
         Boddy.phase.value = Boddy.Phase.RUNNING
+        Settings(this).lastDesktop = width to height
         acquireWakeLock()
         bridge.start()
         audio.start()
@@ -130,6 +149,7 @@ class BoddyService : Service() {
     }
 
     private fun stopAll() {
+        Settings(this).lastDesktop = null
         stopDesktop()
         bridge.stop()
         audio.stop()
@@ -148,16 +168,26 @@ class BoddyService : Service() {
         super.onDestroy()
     }
 
+    /** Keeps the CPU and Wi-Fi at full speed while Boddy works, even with the screen off. */
     private fun acquireWakeLock() {
-        if (wakeLock != null) return
-        wakeLock = getSystemService(PowerManager::class.java)
-            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Boddy::running")
-            .apply { acquire() }
+        if (wakeLock == null) {
+            wakeLock = getSystemService(PowerManager::class.java)
+                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Boddy::running")
+                .apply { acquire() }
+        }
+        if (wifiLock == null) {
+            @Suppress("DEPRECATION")
+            wifiLock = getSystemService(WifiManager::class.java)
+                ?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "Boddy::running")
+                ?.apply { setReferenceCounted(false); acquire() }
+        }
     }
 
     private fun releaseWakeLock() {
-        wakeLock?.release()
+        wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
+        wifiLock?.let { if (it.isHeld) it.release() }
+        wifiLock = null
     }
 
     private fun goForeground() {

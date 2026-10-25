@@ -66,10 +66,16 @@ class DesktopActivity : AppCompatActivity() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 Boddy.phoneRequests.collect { request ->
-                    when (request) {
-                        is PhoneRequest.OpenLink -> phone.openLink(this@DesktopActivity, request.url)
-                        is PhoneRequest.OpenFile -> phone.openFile(this@DesktopActivity, request.path)
-                        is PhoneRequest.LaunchApp -> phone.launchApp(this@DesktopActivity, request.name)
+                    // A bad request (missing file, odd link) must never take the desktop down.
+                    try {
+                        when (request) {
+                            is PhoneRequest.OpenLink -> phone.openLink(this@DesktopActivity, request.url)
+                            is PhoneRequest.OpenFile -> phone.openFile(this@DesktopActivity, request.path)
+                            is PhoneRequest.LaunchApp -> phone.launchApp(this@DesktopActivity, request.name)
+                        }
+                    } catch (e: Exception) {
+                        CrashLog.record(this@DesktopActivity, e, fatal = false)
+                        Toast.makeText(this@DesktopActivity, "Couldn't do that: ${e.message}", Toast.LENGTH_LONG).show()
                     }
                 }
             }
