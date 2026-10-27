@@ -291,6 +291,34 @@ def open_in_browser(url):
  else:why='it exited with code %d'%code
  notify('Firefox closed unexpectedly: %s.\n\nClose other apps and try "Login via Browser" again. Firefox log: %s'%(why,where))
  raise RuntimeError('Firefox ended: '+why)
+STUDIO_MIN_HEIGHT=int(os.getenv('BODDY_STUDIO_HEIGHT') or 768)
+def xrandr(*args):
+ return subprocess.run(['xrandr',*args],capture_output=True,text=True,timeout=30)
+def fit_display():
+ # Boddy sizes its desktop to the phone's shape from a 1100-1600 px width, so it is often only 500-720 px
+ # tall and Studio's windows and login dialog get cut off. While Studio runs, enlarge the desktop to at
+ # least STUDIO_MIN_HEIGHT with the same shape, so the phone still shows all of it, just smaller.
+ # Returns a function that puts the previous size back.
+ keep=lambda:None
+ if not shutil.which('xrandr'):
+  say('Installing xrandr so Studio fits on the desktop')
+  subprocess.run(['apt-get','install','-y','--no-install-recommends','x11-xserver-utils'],env=dict(os.environ,DEBIAN_FRONTEND='noninteractive'))
+  if not shutil.which('xrandr'):say('xrandr is not available; Studio windows may not fit the desktop');return keep
+ out=xrandr().stdout
+ screen=re.search(r'^(\S+) connected (?:primary )?(\d+)x(\d+)\+0\+0',out,re.M);mode=re.search(r'^\s+(\S+)\s+[0-9.]+\*',out,re.M)
+ if not screen or not mode:say('Could not read the desktop size; leaving it unchanged');return keep
+ output,w,h=screen.group(1),int(screen.group(2)),int(screen.group(3))
+ if h>=STUDIO_MIN_HEIGHT:return keep
+ nh=STUDIO_MIN_HEIGHT;nw=round(w*nh/h/2)*2;name='boddy-%dx%d'%(nw,nh)
+ xrandr('--newmode',name,'0',*[str(nw)]*4,*[str(nh)]*4)  # fails harmlessly if it already exists
+ xrandr('--addmode',output,name)
+ r=xrandr('--output',output,'--mode',name)
+ if r.returncode:say('Could not enlarge the desktop: '+r.stderr.strip());return keep
+ say('Desktop enlarged from %dx%d to %dx%d while Studio runs, so its windows fit'%(w,h,nw,nh))
+ def restore():
+  r=xrandr('--output',output,'--mode',mode.group(1))
+  say('Desktop size restored to %dx%d'%(w,h) if not r.returncode else 'Could not restore the desktop size: '+r.stderr.strip())
+ return restore
 def pass_auth(link):
  # Called by the browser through the desktop handler; Studio is already running, so no install lock.
  if len(link)>16384 or not re.fullmatch(r'roblox-studio-auth:[\x21-\x7e]+',link):raise ValueError('Invalid Studio sign-in link')
@@ -330,7 +358,9 @@ def main():
  say('Launching real Roblox Studio. A process start alone does not prove the editor works.')
  say('Studio\'s built-in login does not work here: choose "Login via Browser", sign in in the Firefox window that opens,')
  say('then allow Firefox to open the Roblox Studio sign-in link.')
- result=subprocess.run(args,cwd=studio,env=env)
+ restore_display=fit_display()
+ try:result=subprocess.run(args,cwd=studio,env=env)
+ finally:restore_display()
  say('Studio process exited with code '+str(result.returncode));sys.exit(result.returncode)
 if __name__=='__main__':
  try:main()

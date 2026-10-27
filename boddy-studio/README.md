@@ -45,6 +45,17 @@ Sign in from Firefox in the Boddy desktop, not the phone's browser: Android cann
 If Firefox closes unexpectedly, a dialog says why (crash, or killed for memory) and its log is saved to
 `Downloads/Boddy-Studio-firefox.log`.
 
+## Screen size and typing
+
+- **Cut-off windows:** Boddy's desktop is 1100-1600 px wide with the phone's shape, so it is often only 500-720 px tall,
+  less than Studio's windows need. While Studio runs, the launcher enlarges the desktop with `xrandr` to at least
+  768 px tall (same shape, so the phone still shows all of it) and restores it when Studio exits.
+  `BODDY_STUDIO_HEIGHT` changes the target.
+- **Desktop shrinking while typing:** the desktop view is resized when the keyboard opens, and the viewer scaled the
+  desktop to fit both width and height, so it shrank to a small picture. `rebuild_apk.py` changes that one
+  `Math.min` in `VncView.onDraw` to `Math.max`: the desktop keeps its size and the view follows the mouse cursor
+  above the keyboard. Without the keyboard nothing changes.
+
 ## Storage and offline use
 
 After a successful install the downloaded package archives are deleted, and only the newest previous Studio is kept as a backup.

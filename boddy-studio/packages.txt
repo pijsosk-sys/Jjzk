@@ -1,0 +1,15 @@
+# Debian packages that make up Boddy. Used by scripts/build-rootfs.sh (prebuilt image)
+# and by setup.sh on the phone (installs only what's missing).
+xfce4-session xfwm4 xfce4-panel xfdesktop4 xfce4-settings xfconf
+xfce4-terminal thunar mousepad xfce4-appfinder
+tigervnc-standalone-server dbus-x11 at-spi2-core
+firefox-esr synaptic
+adwaita-icon-theme gnome-themes-extra librsvg2-common
+fonts-dejavu-core fonts-noto-color-emoji
+ca-certificates curl wget xz-utils unzip zip sudo procps less nano git
+xdotool scrot x11-utils x11-xserver-utils python3
+pulseaudio pulseaudio-utils zenity
+openjdk-21-jdk-headless nodejs npm
+
+# Software OpenGL fallback and diagnostics for the VNC desktop
+mesa-utils libgl1-mesa-dri libglx-mesa0
