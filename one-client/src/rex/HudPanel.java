@@ -9,7 +9,7 @@ import net.minecraft.class_332;
  * projection and clip exactly as it found them.
  */
 public final class HudPanel {
-   public static final int PAD = 5;
+   public static final int PAD = 4;
 
    private HudPanel() {
    }

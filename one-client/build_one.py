@@ -4,7 +4,7 @@ import hashlib,json,re,zipfile
 ROOT=Path(__file__).resolve().parent
 INPUT=ROOT/'input.jar'
 OUTPUT=ROOT.parent/'output'/'REX-One-1.21.11.jar'
-VERSION='1.0.0-one.12'
+VERSION='1.0.0-one.13'
 NAME='REX One'
 ENTRY='rex.OneClient'
 NOTES='''REX One — Minecraft 1.21.11, Java 21, version """+VERSION+"""
@@ -110,7 +110,11 @@ Duper (Misc)
   account risk, and LOGOUT ends the session by design.
 
 Aim Tune (Combat)
-  On by default. Shapes every stepped rotation this client sends — KillAura, Scaffold Plus and
+  On by default. The travel is eased, noised and snapped; the last fraction of a degree is not —
+  inside one mouse step of the target the turn covers the whole remainder, because a turn that
+  stops a third of a step short forever is a crosshair that never lands on anything. A test drives
+  the stepper for a hundred and twenty-eight ticks and asserts both: every travelling delta a whole
+  number of mouse steps, and the aim ending on the target. Shapes every stepped rotation this client sends — KillAura, Scaffold Plus and
   anything else that goes through AimStep, whose class this build replaces. Server-side checks
   reconstruct what the mouse must have done, so three things matter and all three are settings here:
     Grid Snap      rounds each delta to a whole number of mouse steps for the sensitivity in use, so
@@ -144,8 +148,9 @@ Build HUD (Render)
   percentage, the three things you are shortest of as "384x Oak Planks", and the reason line only
   when the build is paused, which is when you need it. Detail puts the rest back — reason, supports
   standing, the tempo in force, the scan state — and Material Rows decides how many materials show.
-  Both panels are cards now: a body, a two pixel accent down the left edge and one hairline under
-  it, at 176 and 168 pixels wide instead of 260 and 250. A box outlined on four sides reads as a
+  Both panels are cards: a body, a two pixel accent down the left edge and one hairline under it, at
+  150 and 142 pixels wide instead of the 260 and 250 they started at, with the title folded into the
+  top line rather than taking one of its own. A box outlined on four sides reads as a
   dialog; at this size an edge and a shadow read as a label.
   The material figures come from the builder's own scanner, driven Cells Per Tick inside
   Microseconds each tick instead of in one pass, so a large blueprint costs frames rather than a
@@ -155,8 +160,9 @@ Build HUD (Render)
   prints the same figures from the same scan rather than stalling for its own.
 
 Duper HUD (Render)
-  On by default, four lines while it runs: the pattern, where the run is, the count with the change
-  called out and whether the server stated it, and a bar. Detail adds the slot and window, every
+  On by default. The pattern and the run share the top line; under it the phase with what it has
+  sent and whether the server has spoken, the count with the change called out, the stack it is
+  working on, and a bar. Detail adds the slot and window, every
   pattern already tried and the log. It draws again after an open screen so a container cannot hide
   it, and uses the
   game's own fill and text calls rather than the client's painter: the painter sets up and tears
@@ -187,7 +193,13 @@ Build Tempo (Misc)
                      acknowledgement, after Prediction Delay ticks. Off by default: it gives up the
                      confirmation this build is built around, and leans on the revalidation pass and
                      the final whole-structure check to re-queue anything the server refused. Worth
-                     it on a high ping, where the acknowledgement wait is the whole cost.
+                     it on a high ping, where the acknowledgement wait is the whole cost. With
+                     Prediction Delay at zero it runs at the protocol floor: one tick to aim and one
+                     to place, around ten blocks a second whatever the ping, instead of two ticks
+                     plus a round trip.
+    Revalidate       blueprint positions re-checked against the world each tick, 64 instead of the
+                     256 it used to do unconditionally: still over a thousand a second, for a
+                     quarter of the per-tick work.
     Auto Resume      re-queues deferred blocks after unloaded chunks, lost routes, missing supports
                      and occupied positions, with Retry Delay between tries, backing off every
                      eight tries, and Max Retries without confirmed progress before it stops. A
@@ -216,7 +228,7 @@ def main():
         base=ROOT/folder
         for path in base.rglob('*.class'):
             name=path.relative_to(base).as_posix()
-            if name.startswith(('net/minecraft/','net/fabricmc/','org/spongepowered/')):continue
+            if name.startswith(('net/minecraft/','net/fabricmc/','org/spongepowered/','com/google/gson/')):continue
             patched[name]=path.read_bytes()
     sources={'one-client-source/'+path.relative_to(ROOT).as_posix():path.read_bytes()
              for path in list((ROOT/'src').rglob('*.java'))+list((ROOT/'patch').rglob('*.java'))
@@ -260,7 +272,7 @@ def main():
         assert out.testzip() is None
         names=out.namelist()
         assert len(names)==len(set(names)),'duplicate entries'
-        assert not any(n.startswith(('net/minecraft/','net/fabricmc/api/','org/spongepowered/')) for n in names)
+        assert not any(n.startswith(('net/minecraft/','net/fabricmc/api/','org/spongepowered/','com/google/gson/')) for n in names)
         assert 'DuperHudMixin' in json.loads(out.read('rex-fantasy.mixins.json'))['client']
         assert not any(n.startswith(('TickHostUnderTest','TempoStub','OnePatch')) for n in names)
         assert ENTRY.replace('.','/')+'.class' in names

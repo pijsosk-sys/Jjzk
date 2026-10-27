@@ -28,10 +28,10 @@ public final class DuperHud extends Module {
    public final EnumSetting<HudAnchor> anchor = new EnumSetting<>("Anchor", HudAnchor.TOP_LEFT, HudAnchor.class);
    public final NumberSetting offsetX = new NumberSetting("X", 0.0, 400.0, 4.0, 1.0);
    public final NumberSetting offsetY = new NumberSetting("Y", 0.0, 400.0, 4.0, 1.0);
-   public final NumberSetting width = new NumberSetting("Width", 110.0, 400.0, 168.0, 2.0);
+   public final NumberSetting width = new NumberSetting("Width", 90.0, 400.0, 142.0, 2.0);
    public final BooleanSetting detail = new BooleanSetting("Detail", false)
       .describe("Adds the slot and window, every pattern already tried, and the log.");
-   public final NumberSetting logLines = new NumberSetting("Log Lines", 0.0, 8.0, 3.0, 1.0)
+   public final NumberSetting logLines = new NumberSetting("Log Lines", 0.0, 8.0, 2.0, 1.0)
       .describe("Only with Detail on.");
    public final BooleanSetting showIdle = new BooleanSetting("Show When Idle", true);
    public final BooleanSetting overContainers = new BooleanSetting("Over Containers", true)
@@ -94,7 +94,7 @@ public final class DuperHud extends Module {
       int line = HudPanel.lineHeight(font);
       int step = line + 2;
       int panelWidth = this.width.getInt();
-      int height = line + 8 + rows.size() * step + (running ? 6 : 0) + (log.isEmpty() ? 0 : 3 + log.size() * step) + 4;
+      int height = line + 6 + rows.size() * step + (running ? 6 : 0) + (log.isEmpty() ? 0 : 2 + log.size() * step) + 3;
 
       int[] origin = HudPanel.origin((HudAnchor)this.anchor.get(), this.offsetX.getInt(), this.offsetY.getInt(), panelWidth, height);
       int x = origin[0];
@@ -107,10 +107,11 @@ public final class DuperHud extends Module {
 
       HudPanel.card(graphics, x, y, panelWidth, height, HudPanel.argb(this.background.m()), tint, faint);
       String head = running ? String.valueOf(duper.current()) : String.valueOf(duper.pattern.get());
-      HudPanel.string(graphics, font, "DUPER", x + HudPanel.PAD + 2, y + 4, dim);
-      HudPanel.string(graphics, font, head, x + panelWidth - HudPanel.PAD - HudPanel.width(font, head), y + 4, tint);
+      String corner = running ? duper.run() + "/" + duper.planned() : "idle";
+      HudPanel.string(graphics, font, HudPanel.clip(font, head, panelWidth - 24), x + HudPanel.PAD + 2, y + 3, tint);
+      HudPanel.string(graphics, font, corner, x + panelWidth - HudPanel.PAD - HudPanel.width(font, corner), y + 3, dim);
 
-      int row = y + line + 8;
+      int row = y + line + 6;
       for (String[] entry : rows) {
          int colour = entry.length > 2 && entry[2].equals("gain") ? HudPanel.argb(this.good.m()) : label;
          if (entry[0].isEmpty()) {
@@ -139,7 +140,7 @@ public final class DuperHud extends Module {
    private List<String[]> rows(Duper duper, boolean running) {
       List<String[]> rows = new ArrayList<>();
       if (!running) {
-         rows.add(new String[]{"", HudPanel.join("idle", duper.clicks.getInt() + "x" + duper.bursts.getInt(),
+         rows.add(new String[]{"", HudPanel.join(duper.clicks.getInt() + "x" + duper.bursts.getInt(),
             duper.target.get() == DuperTarget.HELD ? "held" : "slot " + duper.slot.getInt())});
          if (this.detail.get()) {
             rows.add(new String[]{"", ((DuperPattern)duper.pattern.get()).what});

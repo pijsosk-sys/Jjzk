@@ -28,8 +28,8 @@ public final class BuildHud extends Module {
    public final EnumSetting<HudAnchor> anchor = new EnumSetting<>("Anchor", HudAnchor.TOP_RIGHT, HudAnchor.class);
    public final NumberSetting offsetX = new NumberSetting("X", 0.0, 400.0, 6.0, 1.0);
    public final NumberSetting offsetY = new NumberSetting("Y", 0.0, 400.0, 6.0, 1.0);
-   public final NumberSetting width = new NumberSetting("Width", 110.0, 400.0, 176.0, 2.0);
-   public final NumberSetting materials = new NumberSetting("Material Rows", 1.0, 16.0, 3.0, 1.0);
+   public final NumberSetting width = new NumberSetting("Width", 90.0, 400.0, 150.0, 2.0);
+   public final NumberSetting materials = new NumberSetting("Material Rows", 1.0, 16.0, 2.0, 1.0);
    public final BooleanSetting detail = new BooleanSetting("Detail", false)
       .describe("Adds the reason line, supports standing, the tempo in force and the scan state.");
    public final NumberSetting rescan = new NumberSetting("Rescan", 1.0, 60.0, 4.0, 1.0)
@@ -50,6 +50,9 @@ public final class BuildHud extends Module {
    private Object scan;
    private Object snapshot;
    private String status = "";
+   private int rateBase = -1;
+   private long rateTick;
+   private double rate;
    private long ticks;
    private long scanned = -1000L;
    private double progress;
@@ -103,6 +106,7 @@ public final class BuildHud extends Module {
          }
          Object controller = controller();
          this.announce(controller);
+         this.measure(controller);
          Object schematic = Bridge.call(controller, "schematic");
          if (schematic == null) {
             this.scan = null;
@@ -157,6 +161,22 @@ public final class BuildHud extends Module {
       }
    }
 
+   /** Placements per second over the last five seconds, so "faster" is a number and not a feeling. */
+   private void measure(Object controller) throws Exception {
+      int confirmed = ((Number)Bridge.call(controller, "confirmedBlocks")).intValue();
+      if (this.rateBase < 0 || confirmed < this.rateBase) {
+         this.rateBase = confirmed;
+         this.rateTick = this.ticks;
+         return;
+      }
+      long elapsed = this.ticks - this.rateTick;
+      if (elapsed >= 100L) {
+         this.rate = (confirmed - this.rateBase) * 20.0 / elapsed;
+         this.rateBase = confirmed;
+         this.rateTick = this.ticks;
+      }
+   }
+
    /** One line when a build starts, naming what it is short of before it walks into it. */
    private void announce(Object controller) throws Exception {
       String now = String.valueOf(Bridge.call(controller, "status"));
@@ -187,6 +207,10 @@ public final class BuildHud extends Module {
       }
    }
 
+   private static String status(Object controller) throws Exception {
+      return String.valueOf(Bridge.call(controller, "status"));
+   }
+
    private static Object controller() throws Exception {
       return Game.invoke(Game.type("dev.donut.client.autobuild.AutoBuilderController"), "get", new String[0]);
    }
@@ -214,7 +238,7 @@ public final class BuildHud extends Module {
       int line = HudPanel.lineHeight(font);
       int step = line + 2;
       int panelWidth = this.width.getInt();
-      int height = line + 8 + rows.size() * step + (schematic == null ? 0 : 6) + (needs.isEmpty() ? 0 : 3 + needs.size() * step) + 4;
+      int height = line + 6 + rows.size() * step + (schematic == null ? 0 : 6) + (needs.isEmpty() ? 0 : 2 + needs.size() * step) + 3;
 
       int[] origin = HudPanel.origin((HudAnchor)this.anchor.get(), this.offsetX.getInt(), this.offsetY.getInt(), panelWidth, height);
       int x = origin[0];
@@ -228,10 +252,11 @@ public final class BuildHud extends Module {
 
       HudPanel.card(graphics, x, y, panelWidth, height, HudPanel.argb(this.background.m()), tint, faint);
       String status = String.valueOf(Bridge.call(controller, "status"));
-      HudPanel.string(graphics, font, "BUILD", x + HudPanel.PAD + 2, y + 4, dim);
-      HudPanel.string(graphics, font, status, x + panelWidth - HudPanel.PAD - HudPanel.width(font, status), y + 4, tint);
+      String head = schematic == null ? "AUTO BUILD" : String.valueOf(Bridge.call(schematic, "name"));
+      HudPanel.string(graphics, font, HudPanel.clip(font, head, panelWidth - HudPanel.width(font, status) - 14), x + HudPanel.PAD + 2, y + 3, tint);
+      HudPanel.string(graphics, font, status, x + panelWidth - HudPanel.PAD - HudPanel.width(font, status), y + 3, dim);
 
-      int row = y + line + 8;
+      int row = y + line + 6;
       for (String[] entry : rows) {
          int colour = entry.length > 2 && entry[2].equals("short") ? alarm : label;
          if (entry[0].isEmpty()) {
@@ -269,9 +294,12 @@ public final class BuildHud extends Module {
       int confirmed = ((Number)Bridge.call(controller, "confirmedBlocks")).intValue();
       int total = ((List<?>)Bridge.call(schematic, "blocks")).size();
       double done = ((Number)Bridge.call(controller, "progress")).doubleValue();
-      rows.add(new String[]{"", HudPanel.clip(HudPanel.font(), String.valueOf(Bridge.call(schematic, "name")), this.width.getInt() - 14)});
-      rows.add(new String[]{confirmed + " / " + total, Math.round(done * 100.0) + "%"});
-      String status = String.valueOf(Bridge.call(controller, "status"));
+      String right = Math.round(done * 100.0) + "%";
+      if (this.rate > 0.05 || status(controller).equals("RUNNING")) {
+         right = HudPanel.join(right, String.format(java.util.Locale.ROOT, "%.1f/s", this.rate));
+      }
+      rows.add(new String[]{confirmed + " / " + total, right});
+      String status = status(controller);
       if (this.detail.get() || status.equals("PAUSED")) {
          rows.add(new String[]{"", String.valueOf(Bridge.call(controller, "reason"))});
       }

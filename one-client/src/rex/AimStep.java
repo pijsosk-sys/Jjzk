@@ -35,35 +35,41 @@ public final class AimStep {
    }
 
    /**
-    * How far to turn this tick: a share of what is left rather than the whole allowance, never more
-    * than the allowance, never less than the floor while there is distance to cover, plus noise, and
-    * finally rounded onto the mouse grid.
+    * How far to turn this tick. The travel is what a reconstruction looks at, so that part is eased,
+    * noised and snapped to the mouse grid. The last fraction of a degree is not: inside one grid step
+    * of the target it moves the whole remainder, because a turn that stops a third of a step short
+    * forever is a crosshair that never lands on anything.
     */
    private static double step(double remaining, double allowance, double grid) {
       if (allowance <= 0.0 || remaining == 0.0) {
          return 0.0;
       }
       double size = Math.abs(remaining);
+      double finish = Math.max(grid, 0.2);
+      if (size <= finish) {
+         return Math.abs(remaining) > allowance ? Math.signum(remaining) * allowance : remaining;
+      }
       double ease = AimTune.ease();
       if (ease < 1.0) {
-         double share = ease + Math.random() * AimTune.spread();
-         size = Math.min(size, Math.max(size * Math.min(1.0, share), Math.min(size, AimTune.floorStep())));
+         double share = Math.min(1.0, ease + Math.random() * AimTune.spread());
+         size = Math.max(size * share, Math.min(size, AimTune.floorStep()));
       }
       double noise = AimTune.noise();
       if (noise > 0.0) {
-         size += (Math.random() * 2.0 - 1.0) * noise;
+         // Scaled by how far there is to go, so it never fights the last degree.
+         size += (Math.random() * 2.0 - 1.0) * noise * Math.min(1.0, Math.abs(remaining) / 4.0);
       }
-      size = Math.max(0.0, Math.min(size, allowance));
+      size = Math.max(0.0, Math.min(Math.min(size, allowance), Math.abs(remaining)));
       double moved = Math.signum(remaining) * size;
       if (grid > 0.0) {
-         double steps = Math.rint(moved / grid);
-         if (steps == 0.0 && Math.abs(remaining) >= grid) {
-            steps = Math.signum(moved);
-         }
-         moved = steps * grid;
-         if (Math.abs(moved) > allowance) {
-            moved = Math.signum(moved) * Math.floor(allowance / grid) * grid;
-         }
+         // A whole number of mouse steps, and never more steps than the target or the allowance has
+         // room for. Below one step there is nothing on the grid to send, so the remainder goes as
+         // it is — which is the same thing the final approach above does.
+         double direction = Math.signum(moved);
+         double steps = Math.rint(Math.abs(moved) / grid);
+         steps = Math.min(steps, Math.floor(Math.abs(remaining) / grid));
+         steps = Math.min(steps, Math.floor(allowance / grid));
+         moved = steps > 0.0 ? direction * steps * grid : remaining;
       }
       return Math.abs(moved) > Math.abs(remaining) ? remaining : moved;
    }

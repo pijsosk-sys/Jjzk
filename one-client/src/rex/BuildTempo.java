@@ -34,14 +34,19 @@ public final class BuildTempo extends Module {
    public final BooleanSetting trust = new BooleanSetting("Trust Prediction", false)
       .describe("Finish a placement on the client's own prediction instead of the server's acknowledgement. "
          + "Faster on a high ping; the revalidation pass and the final check re-queue anything the server refused.");
-   public final NumberSetting trustDelay = new NumberSetting("Prediction Delay", 1.0, 20.0, 2.0, 1.0)
-      .describe("Ticks after sending before the prediction is trusted.");
+   public final NumberSetting trustDelay = new NumberSetting("Prediction Delay", 0.0, 20.0, 0.0, 1.0)
+      .describe("Ticks after sending before the prediction is trusted. Zero finishes on the next tick, "
+         + "which is the protocol floor: one aim tick and one placement tick per block.");
+   public final NumberSetting revalidate = new NumberSetting("Revalidate", 0.0, 512.0, 64.0, 16.0)
+      .describe("Blueprint positions re-checked against the world each tick. Was 256, which is four times "
+         + "the work for the same job.");
 
    public BuildTempo() {
       super("Build Tempo", "Placement pacing and automatic retry for Auto Build.", -1, Category.MISC);
       this.addSettings(
          new Setting[]{
-            this.steps, this.arm, this.ack, this.swap, this.layers, this.candidates, this.resume, this.delay, this.retries, this.trust, this.trustDelay
+            this.steps, this.arm, this.ack, this.swap, this.layers, this.candidates, this.resume, this.delay, this.retries,
+            this.trust, this.trustDelay, this.revalidate
          }
       );
       this.enabled = true;
@@ -81,6 +86,10 @@ public final class BuildTempo extends Module {
 
    public static int candidates() {
       return on() ? instance.candidates.getInt() : 256;
+   }
+
+   public static int revalidate() {
+      return on() ? instance.revalidate.getInt() : 256;
    }
 
    public static boolean autoResume() {

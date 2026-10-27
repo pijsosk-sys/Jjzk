@@ -2,7 +2,7 @@ import rex.AimStep;
 
 /** Pure-maths checks on the rotation stepper: no Minecraft, no client, just the numbers. */
 public final class AimStepTest {
-    public static void main(String[] args) {
+    public static void main(String[] args) throws Exception {
         // Aim Tune is not instantiated here, so the stepper must behave exactly like the plain
         // clamped step it replaces: no easing, no noise, no grid.
         for (double[] probe : new double[][]{{0, 0, 1, 0, 0}, {37, 12, -4, 2, 9}, {-170, -80, 3, -7, -2}}) {
@@ -43,7 +43,55 @@ public final class AimStepTest {
             }
         }
         check("20000 random steps stay inside their allowance", true);
+        // The aim has to land, not stop short: repeated steps must converge on the target.
+        for (double[] probe : new double[][]{{0, 0, 3, -1, 7}, {140, -30, -2, 5, -9}, {-77, 61, 8, 8, 1}}) {
+            double yaw = probe[0];
+            double pitch = probe[1];
+            for (int tick = 0; tick < 64; tick++) {
+                AimStep.Rotation turn = AimStep.toward(yaw, pitch, probe[2], probe[3], probe[4], 45, 30);
+                yaw = turn.yaw();
+                pitch = turn.pitch();
+            }
+            double wantedYaw = Math.toDegrees(Math.atan2(probe[4], probe[2])) - 90.0;
+            double wantedPitch = -Math.toDegrees(Math.atan2(probe[3], Math.hypot(probe[2], probe[4])));
+            double offYaw = Math.abs(((wantedYaw - yaw) % 360.0 + 540.0) % 360.0 - 180.0);
+            double offPitch = Math.abs(wantedPitch - pitch);
+            check("converges to the target: off by " + Math.round(offYaw * 1000) / 1000.0 + " and "
+                + Math.round(offPitch * 1000) / 1000.0, offYaw < 1.0E-3 && offPitch < 1.0E-3);
+        }
+        tuned();
         System.out.println("aim: all checks passed");
+    }
+
+    /** With Aim Tune on: every travelling step on the mouse grid, and still landing on the target. */
+    static void tuned() throws Exception {
+        rex.AimTune tune = new rex.AimTune();
+        rex.AimTune.instance = tune;
+        tune.enabled = true;
+        tune.sensitivity.set(1.0);
+        double grid = 0.8 * 0.8 * 0.8 * 8.0 * 0.15;
+        for (double[] probe : new double[][]{{0, 0, 3, -1, 7}, {140, -30, -2, 5, -9}, {-77, 61, 8, 8, 1}}) {
+            double yaw = probe[0];
+            double pitch = probe[1];
+            int offGrid = 0;
+            for (int tick = 0; tick < 128; tick++) {
+                AimStep.Rotation turn = AimStep.toward(yaw, pitch, probe[2], probe[3], probe[4], 45, 30);
+                double movedYaw = ((turn.yaw() - yaw) % 360.0 + 540.0) % 360.0 - 180.0;
+                if (Math.abs(movedYaw) > grid * 1.5 && Math.abs(Math.rint(movedYaw / grid) * grid - movedYaw) > 1.0E-4) {
+                    offGrid++;
+                }
+                yaw = turn.yaw();
+                pitch = turn.pitch();
+            }
+            double wantedYaw = Math.toDegrees(Math.atan2(probe[4], probe[2])) - 90.0;
+            double wantedPitch = -Math.toDegrees(Math.atan2(probe[3], Math.hypot(probe[2], probe[4])));
+            double offYaw = Math.abs(((wantedYaw - yaw) % 360.0 + 540.0) % 360.0 - 180.0);
+            double offPitch = Math.abs(wantedPitch - pitch);
+            check("tuned travel stays on the mouse grid (" + offGrid + " strays)", offGrid == 0);
+            check("tuned aim lands: off by " + Math.round(offYaw * 1000) / 1000.0 + " and " + Math.round(offPitch * 1000) / 1000.0,
+                offYaw < 0.01 && offPitch < 0.01);
+        }
+        rex.AimTune.instance = null;
     }
 
     static double clamp(double value, double limit) {

@@ -81,6 +81,7 @@ public final class OnePatch {
         AbstractInsnNode ack = null;
         AbstractInsnNode arm = null;
         AbstractInsnNode swap = null;
+        AbstractInsnNode recheck = null;
         for (AbstractInsnNode instruction : tick.instructions.toArray()) {
             AbstractInsnNode next = instruction.getNext();
             AbstractInsnNode previous = instruction.getPrevious();
@@ -104,13 +105,20 @@ public final class OnePatch {
                 }
                 swap = instruction;
             }
+            if (instruction.getOpcode() == Opcodes.SIPUSH && ((IntInsnNode)instruction).operand == 256) {
+                if (recheck != null) {
+                    throw new IllegalStateException("Two revalidation budgets");
+                }
+                recheck = instruction;
+            }
         }
-        if (ack == null || arm == null || swap == null) {
+        if (ack == null || arm == null || swap == null || recheck == null) {
             throw new IllegalStateException("Builder cadence constants not found");
         }
         replace(tick, ack, "ack", changes, "acknowledgement window");
         replace(tick, arm, "arm", changes, "arm delay");
         replace(tick, swap, "swap", changes, "hotbar swap cooldown");
+        replace(tick, recheck, "revalidate", changes, "revalidation budget");
 
         MethodNode choose = method(node, "chooseTarget", null);
         AbstractInsnNode examined = null;
@@ -142,7 +150,7 @@ public final class OnePatch {
         node.methods.add(waited(node, tick));
         earlyFinish(tick, changes);
         System.out.println(node.name + ": " + String.join(", ", changes));
-        if (changes.size() != 8) {
+        if (changes.size() != 9) {
             throw new IllegalStateException("Builder patches: " + changes);
         }
         return node;

@@ -24,13 +24,13 @@ public final class AimTune extends Module {
       .describe("Rounds each rotation delta to a whole number of mouse steps for the current sensitivity.");
    public final NumberSetting sensitivity = new NumberSetting("Sensitivity", 0.0, 2.0, 0.0, 0.01)
       .describe("Zero reads the game's own mouse sensitivity. Set it only to pin the grid to another value.");
-   public final NumberSetting ease = new NumberSetting("Ease", 0.2, 1.0, 0.6, 0.05)
+   public final NumberSetting ease = new NumberSetting("Ease", 0.2, 1.0, 0.8, 0.05)
       .describe("Fraction of what is left to cover each tick. One is the old constant step.");
    public final NumberSetting spread = new NumberSetting("Ease Spread", 0.0, 0.5, 0.15, 0.01)
       .describe("Random share added to the ease each tick, so no two ticks move the same amount.");
    public final NumberSetting noise = new NumberSetting("Noise", 0.0, 0.5, 0.08, 0.01)
       .describe("Degrees of random offset per tick, applied before the snap.");
-   public final NumberSetting floor = new NumberSetting("Minimum Step", 0.0, 5.0, 0.6, 0.1)
+   public final NumberSetting floor = new NumberSetting("Minimum Step", 0.0, 5.0, 1.5, 0.1)
       .describe("Smallest move per tick, so easing cannot crawl to a halt far from the target.");
 
    public AimTune() {
