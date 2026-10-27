@@ -4,7 +4,7 @@ import hashlib,json,re,zipfile
 ROOT=Path(__file__).resolve().parent
 INPUT=ROOT/'input.jar'
 OUTPUT=ROOT.parent/'output'/'REX-One-1.21.11.jar'
-VERSION='1.0.0-one.7'
+VERSION='1.0.0-one.8'
 NAME='REX One'
 ENTRY='rex.OneClient'
 NOTES='''REX One — Minecraft 1.21.11, Java 21, version """+VERSION+"""
@@ -67,12 +67,22 @@ Duper (Misc)
   runs when a connection dies. It works on whatever is in your hand.
     AUTO           the default: one run per pattern, counted separately, and it names the one that
                    moved the number, or says plainly that this server leaves no seam open
+    DROP_PACKET    raw player-action drops. This is the one with real mechanical ground under it:
+                   the menu-click path carries the revision that killed the old races, and the
+                   player-action path never had one. There is nothing for the server to compare and
+                   resync, and it is taken whatever menu the server thinks you have open. Works with
+                   a container open or closed.
+    DROP_CYCLE     a held-slot switch and a drop, paired, several times in one tick, so a handler
+                   that caches the held slot for the tick charges them all to one slot. The real
+                   slot is sent again at the end of the burst.
+    DROP_DESYNC    a menu throw and a raw drop for the same stack in the same tick: the same item
+                   asked for twice, by one route that checks the revision and one that cannot.
     GUI_RACE       several left clicks on one plugin-menu slot inside a single tick
     SHIFT_SPAM     several shift-clicks on one slot inside a tick: sell slots, deposit slots, bags
     DOUBLE_PICKUP  pick up, then collect every match onto the cursor, repeatedly
     SWAP_RACE      swap the slot into a hotbar slot and throw it in the same tick
     STALE_WINDOW   keeps clicking the window id the plugin has already replaced
-    DROP_SPAM      throws from your own inventory window while another menu is open; works anywhere
+    DROP_SPAM      menu throws naming window zero while another menu is open
     COMMAND_RACE   one command several times in a tick; set it with .one dupe cmd /sell all
     LOGOUT         drops the stack, then kills the socket with no logout packet, so the drop races
                    the save; reconnect and compare, nothing can be counted for you while gone
@@ -83,8 +93,12 @@ Duper (Misc)
   Arm Timeout in seconds while it waits for the item, Stop On Gain to end the sweep on the first
   gain. Toggling it on prints what the pattern does and what to set up, then it names whatever it is
   still waiting for.
-  Counting covers your 36 inventory slots plus the open container's own slots, by item, so a copy
-  that lands anywhere you can reach is counted. The count is the verdict; there is no claim here
+  Counting covers your 36 inventory slots, the open container's own slots, and — for every pattern
+  that drops — loose items of the same kind within Ground Radius, by item. Without that last part a
+  drop run would always read as a loss and a real gain would be invisible. It also means the number
+  moves when someone else picks your drops up or they despawn, so read it right after the run.
+  Jitter moves the gap between bursts by up to that many ticks either way, so a fixed-interval rate
+  limit sees no pattern. The count is the verdict; there is no claim here
   that any of it works on a given server.
   Click and command spam of this shape is exactly what server-side logging looks for, so it is an
   account risk, and LOGOUT ends the session by design.

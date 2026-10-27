@@ -19,7 +19,7 @@ import net.fabricmc.api.ClientModInitializer;
  * features it alone had are Krypton module rows. Right Shift opens the one menu; the rest is chat.
  */
 public final class OneClient implements ClientModInitializer {
-   public static final String VERSION = "1.0.0-one.7";
+   public static final String VERSION = "1.0.0-one.8";
    private static final String[] PARTS = {
       "dev.donut.client.DonutClient",
       "dev.krypton.client.KryptonClient",

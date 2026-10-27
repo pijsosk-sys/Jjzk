@@ -47,12 +47,19 @@ public final class Duper extends Module {
       .describe("Sent by COMMAND_RACE. Also settable in chat: .one dupe cmd <text>");
    public final NumberSetting patience = new NumberSetting("Arm Timeout", 0.0, 60.0, 15.0, 5.0)
       .describe("Seconds to wait for the item to be there. Zero refuses instead of waiting.");
+   public final NumberSetting jitter = new NumberSetting("Jitter", 0.0, 10.0, 0.0, 1.0)
+      .describe("Randomises the gap between bursts by up to this many ticks, so a fixed-interval rate limit sees no pattern.");
+   public final NumberSetting radius = new NumberSetting("Ground Radius", 0.0, 32.0, 10.0, 1.0)
+      .describe("Counts dropped items of the same kind within this distance, so a drop pattern can be measured at all.");
    public final BooleanSetting stopOnGain = new BooleanSetting("Stop On Gain", true)
       .describe("Ends the remaining runs the moment a run counts more than it started with.");
    public final BooleanSetting report = new BooleanSetting("Report", true)
       .describe("Chat lines as well as the HUD.");
 
    private static final DuperPattern[] SWEEP = {
+      DuperPattern.DROP_PACKET,
+      DuperPattern.DROP_CYCLE,
+      DuperPattern.DROP_DESYNC,
       DuperPattern.GUI_RACE,
       DuperPattern.SHIFT_SPAM,
       DuperPattern.DOUBLE_PICKUP,
@@ -90,7 +97,7 @@ public final class Duper extends Module {
       this.addSettings(
          new Setting[]{
             this.pattern, this.target, this.slot, this.clicks, this.bursts, this.gap, this.runs, this.settle,
-            this.button, this.keepStack, this.command, this.patience, this.stopOnGain, this.report
+            this.button, this.keepStack, this.command, this.patience, this.jitter, this.radius, this.stopOnGain, this.report
          }
       );
       instance = this;
@@ -329,6 +336,33 @@ public final class Duper extends Module {
             count += this.sizeOf(this.filled(index));
          }
       }
+      return count + this.ground(player);
+   }
+
+   /**
+    * What is lying on the ground nearby. A drop pattern takes the stack out of the inventory on
+    * purpose, so without this every drop run would read as a loss and a real gain would be invisible.
+    */
+   private int ground(Object player) throws Exception {
+      if (!this.current().drops || this.radius.getDouble() <= 0.0) {
+         return 0;
+      }
+      Object world = Bridge.field(Bridge.client(), "field_1687");
+      if (world == null) {
+         return 0;
+      }
+      Class<?> items = Game.type("net.minecraft.class_1542");
+      double reach = this.radius.getDouble();
+      int count = 0;
+      int seen = 0;
+      for (Object entity : (Iterable<?>)Bridge.call(world, "method_18112")) {
+         if (++seen > 2048) {
+            break;
+         }
+         if (items.isInstance(entity) && EspRender.near(player, entity, reach)) {
+            count += this.sizeOf(Bridge.call(entity, "method_6983"));
+         }
+      }
       return count;
    }
 
@@ -361,12 +395,19 @@ public final class Duper extends Module {
          this.burst(client, player);
          this.remaining--;
          if (this.gap.getInt() > 0 && this.remaining > 0) {
-            this.waiting = this.gap.getInt();
+            this.waiting = this.pause();
             return;
          }
       }
       this.waiting = this.settle.getInt();
       this.phase = SETTLING;
+   }
+
+   /** The configured gap, moved by up to Jitter ticks either way but never below one. */
+   private int pause() {
+      int spread = this.jitter.getInt();
+      int base = this.gap.getInt();
+      return spread <= 0 ? base : Math.max(1, base - spread + (int)(Math.random() * (spread * 2 + 1)));
    }
 
    private void finish() throws Exception {
@@ -455,6 +496,27 @@ public final class Duper extends Module {
                this.click(client, player, 0, own, this.throwButton(), "field_7795");
             }
             break;
+         case DROP_PACKET:
+            for (int index = 0; index < count; index++) {
+               this.dropPacket(player, !this.keepStack.get());
+            }
+            break;
+         case DROP_CYCLE:
+            Object inventory = Bridge.call(player, "method_31548");
+            int held = ((Number)Bridge.call(inventory, "method_67532")).intValue();
+            for (int index = 0; index < count; index++) {
+               int hotbar = index % 9;
+               this.select(player, hotbar);
+               this.dropPacket(player, !this.keepStack.get());
+            }
+            this.select(player, held);
+            break;
+         case DROP_DESYNC:
+            for (int index = 0; index < count; index++) {
+               this.click(client, player, this.syncId, slot, this.throwButton(), "field_7795");
+               this.dropPacket(player, !this.keepStack.get());
+            }
+            break;
          case COMMAND_RACE:
             String line = this.command.get().strip();
             Object handler = Bridge.call(client, "method_1562");
@@ -478,6 +540,36 @@ public final class Duper extends Module {
             }
             break;
       }
+   }
+
+   /**
+    * A player-action drop. This path carries no window and no revision, which is the whole point:
+    * there is nothing for the server to compare and resync, and it is taken whatever menu the server
+    * believes is open.
+    */
+   private void dropPacket(Object player, boolean whole) throws Exception {
+      Class<?> action = Game.type("net.minecraft.class_2846$class_2847");
+      Class<?> pos = Game.type("net.minecraft.class_2338");
+      Class<?> facing = Game.type("net.minecraft.class_2350");
+      Object packet = Game.type("net.minecraft.class_2846")
+         .getConstructor(action, pos, facing)
+         .newInstance(
+            Bridge.field(action, whole ? "field_12970" : "field_12975"),
+            Bridge.field(pos, "field_10980"),
+            Bridge.field(facing, "field_11033")
+         );
+      this.send(player, packet);
+      this.sent++;
+   }
+
+   /** Tells the server which hotbar slot is held without touching what the client thinks. */
+   private void select(Object player, int slot) throws Exception {
+      this.send(player, Game.type("net.minecraft.class_2868").getConstructor(int.class).newInstance(slot));
+      this.sent++;
+   }
+
+   private void send(Object player, Object packet) throws Exception {
+      Game.invoke(Bridge.field(player, "field_3944"), "method_52787", new String[]{"net.minecraft.class_2596"}, packet);
    }
 
    /** No logout packet: the channel goes down under the server, so the drop races the save. */
