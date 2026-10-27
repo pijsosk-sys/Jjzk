@@ -28,8 +28,19 @@ def main():
             text=path.read_text()
             for name in re.findall(r'"((?:method|field)_\d+)"',text):
                 wanted.setdefault(name,set()).add(path.name)
+            for name in re.findall(r'"net\.minecraft\.(class_\d+(?:\$class_\d+)?)"',text):
+                wanted.setdefault(name,set()).add(path.name)
     missing=[]
+    classes=set(official.values())
     for name in sorted(wanted):
+        if name.startswith('class_'):
+            head=name.split('$')[0]
+            if head in classes and (len(name.split('$'))==1 or name in classes or name.split('$')[1] in {c.split('$')[-1] for c in classes if '$' in c}):
+                print(f'ok      {name:16} class exists')
+            else:
+                missing.append(name)
+                print(f'MISSING {name:16} used by {", ".join(sorted(wanted[name]))}')
+            continue
         hits=owners.get(name)
         if not hits:
             missing.append(name)

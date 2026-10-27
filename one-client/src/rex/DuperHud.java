@@ -205,6 +205,12 @@ public final class DuperHud extends Module {
       rows.add(new String[]{"count", duper.before() + " -> " + duper.live(), change > 0 ? "gain" : ""});
       rows.add(new String[]{"change", (change >= 0 ? "+" : "") + change, change > 0 ? "gain" : ""});
       rows.add(new String[]{"sent", String.valueOf(duper.sent())});
+      int stated = duper.confirmed() - duper.before();
+      rows.add(new String[]{
+         duper.serverSpoke() ? "server says" : "server quiet",
+         duper.serverSpoke() ? duper.confirmed() + "  (" + (stated >= 0 ? "+" : "") + stated + ")" : "predicted only",
+         stated > 0 && duper.serverSpoke() ? "gain" : ""
+      });
       if (duper.phase() == Duper.SETTLING) {
          rows.add(new String[]{"settling", duper.ticksLeft() + " ticks"});
       }

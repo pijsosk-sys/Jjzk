@@ -2,6 +2,7 @@ package rex;
 
 import dev.krypton.core.event.ClientTickEvent;
 import dev.krypton.core.event.EventHandler;
+import dev.krypton.core.event.PacketReceiveEvent;
 import dev.krypton.core.module.Category;
 import dev.krypton.core.module.Module;
 import dev.krypton.core.setting.BooleanSetting;
@@ -51,8 +52,8 @@ public final class Duper extends Module {
       .describe("Randomises the gap between bursts by up to this many ticks, so a fixed-interval rate limit sees no pattern.");
    public final NumberSetting radius = new NumberSetting("Ground Radius", 0.0, 32.0, 10.0, 1.0)
       .describe("Counts dropped items of the same kind within this distance, so a drop pattern can be measured at all.");
-   public final BooleanSetting stopOnGain = new BooleanSetting("Stop On Gain", true)
-      .describe("Ends the remaining runs the moment a run counts more than it started with.");
+   public final EnumSetting<DuperOnGain> onGain = new EnumSetting<>("On Gain", DuperOnGain.REPEAT, DuperOnGain.class)
+      .describe("STOP ends the sweep, REPEAT keeps running the pattern that gained until a run does not, SWEEP_ON carries on through the rest.");
    public final BooleanSetting report = new BooleanSetting("Report", true)
       .describe("Chat lines as well as the HUD.");
 
@@ -83,7 +84,10 @@ public final class Duper extends Module {
    private int sent;
    private int before;
    private int live;
+   private int confirmed;
    private int sweep;
+   private boolean resynced;
+   private boolean serverSpoke;
    private int resolved = -1;
    private int syncId;
    private int stale = -1;
@@ -97,7 +101,7 @@ public final class Duper extends Module {
       this.addSettings(
          new Setting[]{
             this.pattern, this.target, this.slot, this.clicks, this.bursts, this.gap, this.runs, this.settle,
-            this.button, this.keepStack, this.command, this.patience, this.jitter, this.radius, this.stopOnGain, this.report
+            this.button, this.keepStack, this.command, this.patience, this.jitter, this.radius, this.onGain, this.report
          }
       );
       instance = this;
@@ -114,7 +118,10 @@ public final class Duper extends Module {
       this.sweep = 0;
       this.resolved = -1;
       this.live = 0;
+      this.confirmed = 0;
       this.before = 0;
+      this.resynced = false;
+      this.serverSpoke = false;
       this.item = null;
       this.menu = null;
       this.itemName = "nothing";
@@ -173,6 +180,33 @@ public final class Duper extends Module {
       return pattern == DuperPattern.STALE_WINDOW || pattern == DuperPattern.DROP_SPAM;
    }
 
+   private static final String[] INVENTORY_PACKETS = {
+      "net.minecraft.class_2649", "net.minecraft.class_2653", "net.minecraft.class_9835", "net.minecraft.class_9834"
+   };
+
+   /**
+    * The client predicts its own inventory, so a count taken straight after a click can show a copy
+    * that only the client believes in. These are the packets in which the server states what you
+    * actually have; the count taken on the tick after one of them lands is the server's own view.
+    */
+   @EventHandler
+   public void onDuperPacket(PacketReceiveEvent event) {
+      Object packet = event.packet;
+      if (packet == null) {
+         return;
+      }
+      for (String name : INVENTORY_PACKETS) {
+         try {
+            if (Game.type(name).isInstance(packet)) {
+               this.resynced = true;
+               this.serverSpoke = true;
+               return;
+            }
+         } catch (LinkageError | Exception missing) {
+         }
+      }
+   }
+
    @EventHandler
    public void onDuperTick(ClientTickEvent event) {
       try {
@@ -191,6 +225,10 @@ public final class Duper extends Module {
          }
          if (this.item != null && this.menu != null) {
             this.live = this.total();
+            if (this.resynced) {
+               this.resynced = false;
+               this.confirmed = this.live;
+            }
          }
       } catch (LinkageError | Exception failure) {
          Game.message("Duper: " + message(failure));
@@ -226,6 +264,8 @@ public final class Duper extends Module {
       this.run++;
       this.before = this.total();
       this.live = this.before;
+      this.confirmed = this.before;
+      this.serverSpoke = false;
       this.remaining = this.bursts.getInt();
       this.phase = RUNNING;
       this.note("run " + this.run + " " + this.current() + " on slot " + this.resolved + ", " + this.before + " carried");
@@ -416,23 +456,48 @@ public final class Duper extends Module {
          return;
       }
       int after = this.total();
-      int change = after - this.before;
       this.live = after;
+      int judged = this.serverSpoke ? this.confirmed : after;
+      int change = judged - this.before;
       this.results.put(this.current(), change);
-      this.note(this.current() + ": " + this.before + " -> " + after + " (" + (change >= 0 ? "+" : "") + change + ")");
+      String source = this.serverSpoke ? "server" : "client only";
+      this.note(this.current() + ": " + this.before + " -> " + judged + " (" + (change >= 0 ? "+" : "") + change + ", " + source + ")");
       if (this.report.get()) {
          Game.message(
-            "Duper run " + this.run + " " + this.current() + ": " + this.before + " -> " + after + " (" + (change >= 0 ? "+" : "") + change
-               + ") after " + this.sent + " sent."
+            "Duper run " + this.run + " " + this.current() + ": " + this.before + " -> " + judged + " (" + (change >= 0 ? "+" : "") + change
+               + ") after " + this.sent + " sent, counted from the " + source + "."
          );
       }
-      if (change > 0 && this.stopOnGain.get()) {
-         Game.message("Duper: " + this.current() + " moved the count up. Stopping; check the container before you trust it.");
-         this.note("gain on " + this.current() + ", stopped");
-         this.setEnabled(false);
+      if (change > 0) {
+         this.gained();
          return;
       }
       this.step();
+   }
+
+   /** A run that gained: stop, keep hammering the same pattern, or carry on through the sweep. */
+   private void gained() {
+      DuperPattern winner = this.current();
+      if (!this.serverSpoke) {
+         Game.message("Duper: " + winner + " gained on the client's own count. Reopen the container to make the server state it.");
+      }
+      switch ((DuperOnGain)this.onGain.get()) {
+         case REPEAT:
+            Game.message("Duper: " + winner + " gained " + this.results.get(winner) + ". Running it again.");
+            this.note("gain on " + winner + ", repeating");
+            this.phase = WAITING;
+            this.waiting = 0;
+            return;
+         case SWEEP_ON:
+            this.note("gain on " + winner + ", carrying on");
+            this.step();
+            return;
+         case STOP:
+         default:
+            Game.message("Duper: " + winner + " moved the count up. Stopping; check the container before you trust it.");
+            this.note("gain on " + winner + ", stopped");
+            this.setEnabled(false);
+      }
    }
 
    /** Moves to the next pattern in a sweep, or the next run, or stops. */
@@ -675,6 +740,14 @@ public final class Duper extends Module {
 
    public int live() {
       return this.live;
+   }
+
+   public int confirmed() {
+      return this.confirmed;
+   }
+
+   public boolean serverSpoke() {
+      return this.serverSpoke;
    }
 
    public int slotUsed() {

@@ -4,7 +4,7 @@ import hashlib,json,re,zipfile
 ROOT=Path(__file__).resolve().parent
 INPUT=ROOT/'input.jar'
 OUTPUT=ROOT.parent/'output'/'REX-One-1.21.11.jar'
-VERSION='1.0.0-one.8'
+VERSION='1.0.0-one.9'
 NAME='REX One'
 ENTRY='rex.OneClient'
 NOTES='''REX One — Minecraft 1.21.11, Java 21, version """+VERSION+"""
@@ -93,6 +93,12 @@ Duper (Misc)
   Arm Timeout in seconds while it waits for the item, Stop On Gain to end the sweep on the first
   gain. Toggling it on prints what the pattern does and what to set up, then it names whatever it is
   still waiting for.
+  Counting happens twice. The client predicts its own inventory, so a number taken straight after a
+  burst can show a copy only the client believes in — which is what every "it worked" screenshot of
+  a patched dupe actually is. So the panel also counts on the tick after the server states your
+  inventory itself (container content, set slot, player inventory, cursor), and the verdict uses that
+  number whenever the server spoke during the run; the HUD says "server says" with it, or "server
+  quiet / predicted only" when it did not. A gain the server never confirmed is a client ghost.
   Counting covers your 36 inventory slots, the open container's own slots, and — for every pattern
   that drops — loose items of the same kind within Ground Radius, by item. Without that last part a
   drop run would always read as a loss and a real gain would be invisible. It also means the number
@@ -212,7 +218,7 @@ def main():
         assert ENTRY.replace('.','/')+'.class' in names
         for module in ('rex/LightESP','rex/BuildTempo','rex/BuildPatience','rex/Duper','rex/DuperPattern',
                        'rex/DonutFeature','rex/DonutFly','rex/DonutStorage','rex/DonutSpawner','rex/DonutChunks',
-                       'rex/DonutHud','rex/Modules','rex/DuperTarget','rex/DuperHud','rex/HudAnchor',
+                       'rex/DonutHud','rex/Modules','rex/DuperTarget','rex/DuperHud','rex/HudAnchor','rex/DuperOnGain',
                        'rex/mixin/DuperHudMixin'):assert module+'.class' in names
         for config in metadata['mixins']:
             mixins=json.loads(out.read(config));package=mixins['package'].replace('.','/')
