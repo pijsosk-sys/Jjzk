@@ -2,7 +2,7 @@
 # "Roblox Studio (experimental)" desktop app.
 start=/root/Phone/Download/; [ -d "$start" ] || start=/root/
 zenity --question --width=460 --title="Roblox Studio (experimental)" --ok-label="Try it" --cancel-label="Cancel" \
-    --text="Runs the official Windows Roblox Studio through Linux/Wine compatibility software. First setup needs several GB of storage and downloads. A Wine startup test runs before Studio is installed. Android graphics and sign-in remain unverified.\n\nFailures are saved to Downloads/Boddy-Studio-launch.log." 2>/dev/null || exit 0
+    --text="Runs the official Windows Roblox Studio through Linux/Wine compatibility software. First setup needs several GB of storage and downloads. A Wine startup test runs before Studio is installed. Android graphics and sign-in remain unverified.\n\nFailures are saved to Downloads/Boddy-Studio-launch.log.\n\nIf Boddy keeps reconnecting, Android is stopping it: on Android 14+ turn on Developer options → Disable child process restrictions." 2>/dev/null || exit 0
 choice=$(zenity --list --title="Roblox Studio" --width=420 --height=300 --column=Action \
     "Open Studio" "Diagnostics" "Open a place file" "Reset Studio" 2>/dev/null) || exit 0
 case "$choice" in

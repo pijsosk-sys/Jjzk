@@ -10,7 +10,7 @@ LOG="$HOME/.cache/roblox-studio/$([ $helper = 1 ] && echo helper || echo launche
 python3 - "$@" <<'BODDY_PY' 2>&1 | tee "$LOG"
 #!/usr/bin/env python3
 """Boddy Linux compatibility launcher. Does not modify Roblox binaries."""
-import os,sys,json,re,hashlib,zipfile,tarfile,shutil,subprocess,time,urllib.request,urllib.error,urllib.parse,ssl,fcntl,signal,resource
+import os,sys,json,re,hashlib,zipfile,tarfile,shutil,subprocess,time,threading,urllib.request,urllib.error,urllib.parse,ssl,fcntl,signal,resource
 from pathlib import Path
 ROOT=Path.home()/'.local/share/roblox-studio';CACHE=Path.home()/'.cache/roblox-studio'
 VERSION_URL='https://clientsettingscdn.roblox.com/v2/client-version/WindowsStudio64'
@@ -242,7 +242,11 @@ FIREFOX_PREFS={
  # Same as Boddy's system Firefox: the content sandbox needs kernel features proot lacks.
  'security.sandbox.content.level':0,
  # Studio already uses most of the phone's memory: one content process, no per-site processes.
- 'fission.autostart':False,'dom.ipc.processCount':1,'dom.ipc.processPrelaunch.enabled':False,
+ 'fission.autostart':False,'dom.ipc.processCount':1,'dom.ipc.processCount.webIsolated':1,'dom.ipc.processPrelaunch.enabled':False,
+ # Android 12+ kills an app's Linux processes beyond 32 in total, so keep Firefox to a main and one content process.
+ 'network.process.enabled':False,'media.rdd-process.enabled':False,'media.utility-process.enabled':False,
+ 'extensions.webextensions.remote':False,'dom.ipc.forkserver.enable':False,
+ 'browser.tabs.remote.separatePrivilegedContentProcess':False,'browser.tabs.remote.separatePrivilegedMozillaWebContentProcess':False,
  'browser.tabs.unloadOnLowMemory':True,'browser.sessionhistory.max_total_viewers':0,
  # Software WebRender is the stable path on the VNC desktop's software OpenGL.
  'gfx.webrender.software':True,
@@ -291,6 +295,38 @@ def open_in_browser(url):
  else:why='it exited with code %d'%code
  notify('Firefox closed unexpectedly: %s.\n\nClose other apps and try "Login via Browser" again. Firefox log: %s'%(why,where))
  raise RuntimeError('Firefox ended: '+why)
+def tune_prefix(wine,env,prefix):
+ # Bluetooth and USB drivers cannot work inside Boddy (no udev or libusb devices) and only add Wine
+ # driver work; Studio uses neither.
+ marker=prefix/'.boddy-tuned-1'
+ if marker.exists():return
+ for service in ('winebth','wineusb'):
+  command([wine,'reg','add','HKLM\\System\\CurrentControlSet\\Services\\'+service,'/v','Start','/t','REG_DWORD','/d','4','/f'],600,env)
+ marker.touch()
+PHANTOM_LIMIT=32
+def process_count():
+ return sum(1 for n in os.listdir('/proc') if n.isdigit())
+def mem_available_mb():
+ try:
+  with open('/proc/meminfo') as f:
+   for line in f:
+    if line.startswith('MemAvailable:'):return int(line.split()[1])//1024
+ except OSError:pass
+ return -1
+def start_monitor(stop):
+ # Android can stop Boddy without warning (more than 32 processes, or low memory). Boddy then restarts the
+ # desktop and this launcher dies with it, so record the state every 15 s; the last line shows what it was.
+ downloads=Path.home()/'Phone/Download';path=(downloads if downloads.is_dir() else CACHE)/'Boddy-Studio-monitor.log'
+ def run():
+  with path.open('w') as f:
+   f.write('Roblox Studio session monitor. If Boddy restarts, the last line shows the state just before.\n'
+    'processes = Linux processes of the Boddy app (Android 12+ stops apps above %d); mem = available memory.\n'%PHANTOM_LIMIT)
+   while True:
+    f.write('%s processes=%d mem=%dMB\n'%(time.strftime('%H:%M:%S'),process_count(),mem_available_mb()));f.flush();os.fsync(f.fileno())
+    if stop.wait(15):break
+   f.write('%s Studio closed normally\n'%time.strftime('%H:%M:%S'))
+ thread=threading.Thread(target=run,daemon=True);thread.start()
+ return path,thread
 STUDIO_MIN_HEIGHT=int(os.getenv('BODDY_STUDIO_HEIGHT') or 768)
 def xrandr(*args):
  return subprocess.run(['xrandr',*args],capture_output=True,text=True,timeout=30)
@@ -350,7 +386,7 @@ def main():
   # Creating the Wine prefix under x86 emulation can take several minutes on a phone.
   command([wine,'cmd.exe','/c','echo','BODDY_WINE_STARTUP_OK'],900,env)
   (prefix/'.boddy-tested').touch()
- studio=install_studio();setup_browser_login(wine,env,prefix);args=[wine,str(studio/'RobloxStudioBeta.exe')]
+ studio=install_studio();setup_browser_login(wine,env,prefix);tune_prefix(wine,env,prefix);args=[wine,str(studio/'RobloxStudioBeta.exe')]
  if arg and not arg.startswith('--'):
   place=Path(arg).resolve()
   if not place.is_file():raise RuntimeError('Place file does not exist')
@@ -358,9 +394,14 @@ def main():
  say('Launching real Roblox Studio. A process start alone does not prove the editor works.')
  say('Studio\'s built-in login does not work here: choose "Login via Browser", sign in in the Firefox window that opens,')
  say('then allow Firefox to open the Roblox Studio sign-in link.')
- restore_display=fit_display()
+ restore_display=fit_display();stop=threading.Event();monitor,monitor_thread=start_monitor(stop)
+ say('Session monitor: %s'%monitor)
+ if process_count()>PHANTOM_LIMIT-12:
+  say('Note: %d Linux processes are already running. Android 12+ stops Boddy above %d; close other Boddy apps,'%(process_count(),PHANTOM_LIMIT))
+  say('or turn off Android\'s child process limit (see "Boddy keeps reconnecting" in the Studio README).')
  try:result=subprocess.run(args,cwd=studio,env=env)
- finally:restore_display()
+ finally:
+  stop.set();restore_display();monitor_thread.join(5)
  say('Studio process exited with code '+str(result.returncode));sys.exit(result.returncode)
 if __name__=='__main__':
  try:main()

@@ -56,6 +56,30 @@ If Firefox closes unexpectedly, a dialog says why (crash, or killed for memory) 
   `Math.min` in `VncView.onDraw` to `Math.max`: the desktop keeps its size and the view follows the mouse cursor
   above the keyboard. Without the keyboard nothing changes.
 
+## Boddy keeps reconnecting
+
+"Reconnecting to the desktop…" means the Linux desktop stopped. With Studio running this is almost always Android:
+
+- **Android 12+ phantom process limit:** Android kills an app's Linux processes beyond 32 in total, or that use a lot
+  of CPU in the background, checking every few minutes. The Boddy desktop plus Wine, Studio and Firefox exceeds that.
+- **Low memory:** Android's low-memory killer stops Boddy.
+
+`Downloads/Boddy-Studio-monitor.log` gets a line every 15 s while Studio runs (process count and free memory);
+after a restart its last line shows which of the two it was.
+
+The launcher keeps the count down (Firefox runs as two processes; Wine's Bluetooth and USB drivers are off), but only
+Android settings remove the limit:
+
+- **Android 14 and newer:** Settings → System → Developer options → **Disable child process restrictions**.
+- **Android 12 and 13:** once, from a computer with ADB (or Wireless debugging):
+  ```
+  adb shell "/system/bin/device_config set_sync_disabled_for_tests persistent"
+  adb shell "/system/bin/device_config put activity_manager max_phantom_processes 2147483647"
+  adb shell settings put global settings_enable_monitor_phantom_procs false
+  ```
+
+Also allow Boddy to run in the background (no battery optimization), and close other apps to free memory.
+
 ## Storage and offline use
 
 After a successful install the downloaded package archives are deleted, and only the newest previous Studio is kept as a backup.
