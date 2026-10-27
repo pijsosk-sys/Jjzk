@@ -1,7 +1,7 @@
 {
   "output": "/home/user/Jjzk/output/REX-One-1.21.11.jar",
-  "size_bytes": 10753720,
-  "sha256": "f0245889d9eaeb23c124c0b849dfd651d74a8175c94a45b46ac0375c028af86d",
+  "size_bytes": 10774141,
+  "sha256": "4a7ed0cebf49fbb7871046598c6ae9ccba8b605b251030f847507d62ebea2e41",
   "entrypoint": "rex.OneClient",
   "folded_entrypoints": [
     "dev.donut.client.DonutClient",
@@ -15,6 +15,9 @@
     "dev/donut/client/DonutClient.class",
     "dev/donut/client/autobuild/AutoBuilderController.class",
     "dev/krypton/core/managers/ModuleManager.class",
+    "rex/AimStep$Rotation.class",
+    "rex/AimStep.class",
+    "rex/AimTune.class",
     "rex/BuildPatience.class",
     "rex/BuildTempo.class",
     "rex/DonutChunks.class",
@@ -35,6 +38,8 @@
     "rex/Modules.class",
     "rex/OneClient.class",
     "rex/RexCommands.class",
+    "rex/ScaffoldMode.class",
+    "rex/ScaffoldPlus.class",
     "rex/UnifiedAutoBuild.class",
     "rex/mixin/DuperHudMixin.class"
   ],

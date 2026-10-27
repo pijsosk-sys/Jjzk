@@ -298,7 +298,7 @@ public final class OnePatch {
         if (order.size() < 90) {
             throw new IllegalStateException("Only found " + order.size() + " modules");
         }
-        String[] names = {"rex/LightESP", TEMPO, "rex/Duper", "rex/DonutFly", "rex/DonutStorage", "rex/DonutSpawner", "rex/DonutChunks", "rex/DonutHud", "rex/DuperHud"};
+        String[] names = {"rex/LightESP", TEMPO, "rex/Duper", "rex/DonutFly", "rex/DonutStorage", "rex/DonutSpawner", "rex/DonutChunks", "rex/DonutHud", "rex/DuperHud", "rex/AimTune", "rex/ScaffoldPlus"};
         for (String module : names) {
             if (!order.contains(module)) {
                 order.add(module);

@@ -4,7 +4,7 @@ import hashlib,json,re,zipfile
 ROOT=Path(__file__).resolve().parent
 INPUT=ROOT/'input.jar'
 OUTPUT=ROOT.parent/'output'/'REX-One-1.21.11.jar'
-VERSION='1.0.0-one.9'
+VERSION='1.0.0-one.10'
 NAME='REX One'
 ENTRY='rex.OneClient'
 NOTES='''REX One — Minecraft 1.21.11, Java 21, version """+VERSION+"""
@@ -108,6 +108,35 @@ Duper (Misc)
   that any of it works on a given server.
   Click and command spam of this shape is exactly what server-side logging looks for, so it is an
   account risk, and LOGOUT ends the session by design.
+
+Aim Tune (Combat)
+  On by default. Shapes every stepped rotation this client sends — KillAura, Scaffold Plus and
+  anything else that goes through AimStep, whose class this build replaces. Server-side checks
+  reconstruct what the mouse must have done, so three things matter and all three are settings here:
+    Grid Snap      rounds each delta to a whole number of mouse steps for the sensitivity in use, so
+                   the reconstructed movement lands on the grid a real mouse produces. Sensitivity
+                   zero reads the game's own value; set it only to pin the grid elsewhere.
+    Ease / Spread  covers a share of what is left each tick, plus a random share on top, instead of
+                   the same number of degrees every tick
+    Noise          a fraction of a degree of offset per tick, applied before the snap
+    Minimum Step   keeps the easing from crawling when the target is far
+  Switch the module off and AimStep is the plain clamped step it was, with none of this.
+
+Scaffold Plus (Misc)
+  Bridging that turns toward the face it is about to click one tick before it clicks it, so the
+  rotation the server sees is the rotation the placement was made with — the ordering a rotation
+  check looks for. The turn itself goes through Aim Tune. It aims at a point on the face rather than
+  its centre (Face Spread), keeps the pitch inside a band a person could hold (Min/Max Pitch), can
+  bridge off the face normal (Yaw Offset), leaves sprint alone, and puts the hotbar slot back when
+  it stops.
+    Mode           NORMAL bridges where you walk, TELLY only places while off the ground, TOWER
+                   places underneath you
+    Extend         how far ahead of your feet it may fill
+    Yaw / Pitch Step  degrees per tick before Aim Tune's easing
+    Place Delay    ticks between placements
+    Rotate off     places without turning, which no rotation check will believe; there for testing
+    Solid Blocks Only  refuses sand, gravel, concrete powder and the rest that fall
+  It never places with a screen open, and it stops itself and says why if anything throws.
 
 Duper HUD (Render)
   On by default, and it draws again after an open screen so a container cannot hide it. It uses the
@@ -218,7 +247,7 @@ def main():
         assert ENTRY.replace('.','/')+'.class' in names
         for module in ('rex/LightESP','rex/BuildTempo','rex/BuildPatience','rex/Duper','rex/DuperPattern',
                        'rex/DonutFeature','rex/DonutFly','rex/DonutStorage','rex/DonutSpawner','rex/DonutChunks',
-                       'rex/DonutHud','rex/Modules','rex/DuperTarget','rex/DuperHud','rex/HudAnchor','rex/DuperOnGain',
+                       'rex/DonutHud','rex/Modules','rex/DuperTarget','rex/DuperHud','rex/HudAnchor','rex/DuperOnGain','rex/AimTune','rex/ScaffoldPlus','rex/ScaffoldMode',
                        'rex/mixin/DuperHudMixin'):assert module+'.class' in names
         for config in metadata['mixins']:
             mixins=json.loads(out.read(config));package=mixins['package'].replace('.','/')

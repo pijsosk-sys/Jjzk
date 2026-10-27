@@ -15,6 +15,10 @@ if [ -f tools/asm.jar ]; then
   java -cp "patchbuild:verify" DispatchTest
   java -cp "patchbuild:$CP" FlowCheck patched
 fi
+# The replaced rotation stepper: bounds, refusals, and identical behaviour with Aim Tune off.
+javac -nowarn -cp "build:input.jar" -d patchbuild patch/AimStepTest.java
+java -cp "patchbuild:build:input.jar" AimStepTest
+
 # Name gate: every intermediary name the sources reach for by string must exist in this version.
 # Needs maps/ with client.txt and Fabric intermediary; see tools-src/mapidx.py.
 if [ -f maps/client.txt ]; then
