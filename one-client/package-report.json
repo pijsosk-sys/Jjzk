@@ -1,7 +1,7 @@
 {
   "output": "/home/user/Jjzk/output/REX-One-1.21.11.jar",
-  "size_bytes": 10686924,
-  "sha256": "448c960e8d33070d64099f00f8733440340780fe88ec022a1e9166240e629463",
+  "size_bytes": 10711791,
+  "sha256": "405db1324527f5deca242253163d18f09497abd7f005052fb95d416a251e506e",
   "entrypoint": "rex.OneClient",
   "folded_entrypoints": [
     "dev.donut.client.DonutClient",
@@ -12,10 +12,20 @@
     "rex.LayerBuild"
   ],
   "added_classes": [
+    "dev/donut/client/DonutClient.class",
     "dev/donut/client/autobuild/AutoBuilderController.class",
     "dev/krypton/core/managers/ModuleManager.class",
     "rex/BuildPatience.class",
     "rex/BuildTempo.class",
+    "rex/DonutChunks.class",
+    "rex/DonutFeature.class",
+    "rex/DonutFly.class",
+    "rex/DonutHud.class",
+    "rex/DonutSpawner.class",
+    "rex/DonutStorage.class",
+    "rex/Duper$1.class",
+    "rex/Duper.class",
+    "rex/DuperPattern.class",
     "rex/LightESP$Target.class",
     "rex/LightESP.class",
     "rex/OneClient.class",

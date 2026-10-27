@@ -23,6 +23,7 @@ public final class OnePatch {
             write(output, "rex/UnifiedAutoBuild", binding(read(jar, "rex/UnifiedAutoBuild")));
             write(output, "dev/krypton/core/managers/ModuleManager", modules(read(jar, "dev/krypton/core/managers/ModuleManager")));
             write(output, "rex/RexCommands", commands(read(jar, "rex/RexCommands")));
+            write(output, "dev/donut/client/DonutClient", titleScreen(read(jar, "dev/donut/client/DonutClient")));
         }
     }
 
@@ -227,7 +228,8 @@ public final class OnePatch {
             throw new IllegalStateException("registerAll has no return");
         }
         InsnList added = new InsnList();
-        for (String module : new String[]{"rex/LightESP", TEMPO}) {
+        String[] names = {"rex/LightESP", TEMPO, "rex/Duper", "rex/DonutFly", "rex/DonutStorage", "rex/DonutSpawner", "rex/DonutChunks", "rex/DonutHud"};
+        for (String module : names) {
             added.add(new VarInsnNode(Opcodes.ALOAD, 0));
             added.add(new TypeInsnNode(Opcodes.NEW, module));
             added.add(new InsnNode(Opcodes.DUP));
@@ -235,7 +237,27 @@ public final class OnePatch {
             added.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL, node.name, "register", "(L" + MODULE + ";)V", false));
         }
         registerAll.instructions.insertBefore(last, added);
-        System.out.println(node.name + ": Light ESP and Build Tempo registered");
+        System.out.println(node.name + ": registered " + String.join(", ", names));
+        return node;
+    }
+
+    /** The Donut button on the title screen goes: one client, one menu. */
+    static ClassNode titleScreen(ClassNode node) {
+        MethodNode handler = method(node, "lambda$onInitializeClient$3", null);
+        boolean adds = false;
+        for (AbstractInsnNode instruction : handler.instructions.toArray()) {
+            if (instruction instanceof MethodInsnNode call && call.owner.endsWith("screen/v1/Screens")) {
+                adds = true;
+            }
+        }
+        if (!adds) {
+            throw new IllegalStateException("Not the title-screen handler");
+        }
+        handler.instructions.clear();
+        handler.tryCatchBlocks.clear();
+        handler.localVariables = null;
+        handler.instructions.add(new InsnNode(Opcodes.RETURN));
+        System.out.println(node.name + ": title-screen button removed");
         return node;
     }
 

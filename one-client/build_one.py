@@ -4,33 +4,68 @@ import hashlib,json,re,zipfile
 ROOT=Path(__file__).resolve().parent
 INPUT=ROOT/'input.jar'
 OUTPUT=ROOT.parent/'output'/'REX-One-1.21.11.jar'
-VERSION='1.0.0-one.1'
+VERSION='1.0.0-one.2'
 NAME='REX One'
 ENTRY='rex.OneClient'
-NOTES='''REX One — Minecraft 1.21.11, Java 21, version '''+VERSION+'''
+NOTES='''REX One — Minecraft 1.21.11, Java 21, version """+VERSION+"""
 
-One client. The six client entry points of the merged Donut/Krypton/REX build now start from
-rex.OneClient, in their old order, each inside its own guard: a subsystem that throws is reported
-and skipped instead of failing Fabric's entry point and taking the whole client down. "/.one status"
-lists what came up.
+Krypton is the client. Everything else that used to have its own menu, keybind set, HUD and title
+screen button is now a Krypton module row or a chat command.
 
-Keys and commands
-  Right Shift        the module menu (the only menu key)
-  O                  Auto Build window
-  .one               status of every subsystem plus the builder tempo
-  .one donut         legacy Donut settings screen (its old Right Alt binding is gone)
-  .one keys          this list
-  .autobuild | .build  setup | start | pause | resume | stop | status | list | creative on/off
+One entry point
+  rex.OneClient starts the six former entry points in their old order, each inside its own guard:
+  a subsystem that throws is reported and skipped instead of failing Fabric's entry point and
+  taking the client down with it. ".one status" lists whatever did not come up.
+
+One surface
+  Right Shift opens the menu. No other key is bound: every Donut binding is gone, including its
+  Right Alt menu and the O builder key, the Donut button on the title screen is removed, and the
+  legacy Donut HUD starts off (Donut HUD, Render) so Krypton's HUD stands alone. The old settings
+  screen is still there behind ".one donut" for the knobs that have no module row yet.
+
+  .one                     subsystems, builder tempo, duper state
+  .one list [category]     every module, enabled ones bracketed
+  .one toggle <module>     also: .one on <module> | .one off <module>  (prefixes work)
+  .one config save <id> [name] | load <id> | list | flush
+  .one donut               legacy Donut settings screen
+  .one keys                this list
+  .autobuild | .build      setup | start | pause | resume | stop | status | list | creative on/off
+
+Donut features as modules
+  Fly (Misc)               Donut flight with its ability packets and save handling
+  Storage Finder (Render)  Donut storage highlighter, per-type colours
+  Spawner Finder (Render)  Donut spawner highlighter
+  Growth Chunks (Base)     kelp, vine, amethyst and bamboo growth evidence
+  Donut HUD (Render)       the legacy module list and builder progress lines
+  Each row writes the Donut config and saves it, and follows along when you change the same
+  setting in .one donut, so the two never disagree.
 
 Light ESP (Render)
-  Player boxes drawn from a tick snapshot instead of a per-frame entity walk. Hitbox size, team
-  colour and tab-list state are resolved on the scan tick, so a frame reads three coordinates and
-  three interpolation fields per player, builds the box and draws it; nothing is allocated per
-  frame. Scan Interval trades freshness for cost, Max Targets bounds the draw, Range bounds both.
-  Tab List Only keeps holograms, shop stands and NPC bodies out of the overlay on DonutSMP by
-  requiring a tab-list entry; if that lookup is unavailable the filter reports once and stands down
-  rather than hiding players. Health Tint reads health on the scan tick. Friends uses the existing
-  friend list. Off by default, no keybind.
+  Player boxes from a tick snapshot instead of a per-frame entity walk. Hitbox size, team colour
+  and tab-list state are resolved on the scan tick, so a frame reads three coordinates and three
+  interpolation fields per player, builds the box and draws; nothing is allocated per frame. Scan
+  Interval trades freshness for cost, Max Targets bounds the draw, Range bounds both. Tab List Only
+  keeps holograms, shop stands and NPC bodies out of the overlay by requiring a tab-list entry; if
+  that lookup is unavailable it reports once and stands down rather than hiding players. Off by
+  default, no keybind.
+
+Duper (Misc)
+  Container clicks sent faster than the server can answer them, in the orders that have
+  historically desynchronised an open menu. Toggling it on runs once, bounded, and switches itself
+  back off.
+    Pattern        THROW_RACE   repeated throws of one slot against one local state
+                   MOVE_RACE    shift-move and throw the same slot, same tick
+                   CURSOR_SPLIT pick up and throw the cursor, repeatedly
+                   CLOSE_RACE   shift-move, then close the container in the same tick
+    Clicks         clicks per burst, all inside one client tick
+    Bursts         bursts per run; Burst Gap puts ticks between them, zero means one tick
+    Slot           menu slot index, or -1 for the held hotbar slot in whatever menu is open
+    Button         throw 0 drops one item, 1 drops the stack
+    Container Only refuses to run against the bare player inventory
+    Report         chat line with the clicks sent and what the slot held before and after
+  It stops if the menu changes. Whether any pattern does anything depends on that server's version
+  and patches; the report is there so you can see for yourself rather than take a claim on faith.
+  Click spam of this shape is exactly what server-side logging looks for, so it is an account risk.
 
 Build Tempo (Misc)
   Pacing for the unified builder, on by default; switch it off for the original cadence.
@@ -57,9 +92,11 @@ What did not change
   still one placement in flight at a time, so ping, not the client, bounds large builds.
 
 Validation
-  The patched dispatcher bytecode is hosted in a plain class and run by the JVM verifier, then
-  driven through its idle, armed, tempo-off and stopped states; every patched class is analysed for
-  stack and branch consistency. Minecraft itself was not launched here.
+  Every intermediary name and signature the new code calls was checked against Mojang's own 1.21.11
+  mappings and Fabric intermediary for 1.21.11; tools-src/mapidx.py is that index and says where to
+  get both. The patched dispatcher bytecode is hosted in a plain class and run by the JVM verifier,
+  then driven through its idle, armed, tempo-off and stopped states; every patched class is analysed
+  for stack and branch consistency. Minecraft itself was not launched here.
   Sources: one-client-source/.
 '''
 
@@ -72,7 +109,8 @@ def main():
             if name.startswith(('net/minecraft/','net/fabricmc/')):continue
             patched[name]=path.read_bytes()
     sources={'one-client-source/'+path.relative_to(ROOT).as_posix():path.read_bytes()
-             for path in list((ROOT/'src').rglob('*.java'))+list((ROOT/'patch').rglob('*.java'))+[ROOT/'build_one.py']}
+             for path in list((ROOT/'src').rglob('*.java'))+list((ROOT/'patch').rglob('*.java'))
+             +list((ROOT/'tools-src').rglob('*.py'))+[ROOT/'build_one.py',ROOT/'build.sh']}
 
     with zipfile.ZipFile(INPUT) as jar:
         metadata=json.loads(jar.read('fabric.mod.json'))
@@ -112,7 +150,9 @@ def main():
         assert not any(n.startswith(('net/minecraft/','net/fabricmc/api/','org/spongepowered/')) for n in names)
         assert not any(n.startswith(('TickHostUnderTest','TempoStub','OnePatch')) for n in names)
         assert ENTRY.replace('.','/')+'.class' in names
-        for module in ('rex/LightESP','rex/BuildTempo','rex/BuildPatience'):assert module+'.class' in names
+        for module in ('rex/LightESP','rex/BuildTempo','rex/BuildPatience','rex/Duper','rex/DuperPattern',
+                       'rex/DonutFeature','rex/DonutFly','rex/DonutStorage','rex/DonutSpawner','rex/DonutChunks',
+                       'rex/DonutHud'):assert module+'.class' in names
         for config in metadata['mixins']:
             mixins=json.loads(out.read(config));package=mixins['package'].replace('.','/')
             for name in mixins.get('client',[])+mixins.get('mixins',[]):

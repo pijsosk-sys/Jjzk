@@ -49,6 +49,7 @@ public final class BuildTempo extends Module {
    /** Called once per client tick before the controller runs. */
    public static void before(Object controller) {
       BuildPatience.tick(controller);
+      DonutFeature.syncAll();
    }
 
    public static int steps() {
