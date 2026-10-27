@@ -19,7 +19,7 @@ import net.fabricmc.api.ClientModInitializer;
  * features it alone had are Krypton module rows. Right Shift opens the one menu; the rest is chat.
  */
 public final class OneClient implements ClientModInitializer {
-   public static final String VERSION = "1.0.0-one.10";
+   public static final String VERSION = "1.0.0-one.11";
    private static final String[] PARTS = {
       "dev.donut.client.DonutClient",
       "dev.krypton.client.KryptonClient",
@@ -266,14 +266,18 @@ public final class OneClient implements ClientModInitializer {
       if (Bridge.field(Bridge.client(), "field_1687") == null) {
          throw new IllegalStateException("Join a world first.");
       }
-      Object snapshot = Game.invoke(
-         Game.type("dev.donut.client.autobuild.MaterialTracker"),
-         "snapshot",
-         new String[]{"net.minecraft.class_310", "dev.donut.client.autobuild.Schematic", "dev.donut.client.autobuild.PlacementTransform"},
-         Bridge.client(),
-         schematic,
-         Bridge.call(controller, "transform")
-      );
+      // The Build HUD scans a slice at a time; borrow its result rather than stalling the client.
+      Object snapshot = BuildHud.cached();
+      if (snapshot == null) {
+         snapshot = Game.invoke(
+            Game.type("dev.donut.client.autobuild.MaterialTracker"),
+            "snapshot",
+            new String[]{"net.minecraft.class_310", "dev.donut.client.autobuild.Schematic", "dev.donut.client.autobuild.PlacementTransform"},
+            Bridge.client(),
+            schematic,
+            Bridge.call(controller, "transform")
+         );
+      }
       Game.message(
          Bridge.call(schematic, "name") + ": " + number(snapshot, "correctBlocks") + "/" + number(snapshot, "totalBlocks") + " placed, "
             + number(snapshot, "remainingBlocks") + " to go, " + number(snapshot, "conflicts") + " conflicts, "

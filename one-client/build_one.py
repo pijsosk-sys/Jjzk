@@ -4,7 +4,7 @@ import hashlib,json,re,zipfile
 ROOT=Path(__file__).resolve().parent
 INPUT=ROOT/'input.jar'
 OUTPUT=ROOT.parent/'output'/'REX-One-1.21.11.jar'
-VERSION='1.0.0-one.10'
+VERSION='1.0.0-one.11'
 NAME='REX One'
 ENTRY='rex.OneClient'
 NOTES='''REX One — Minecraft 1.21.11, Java 21, version """+VERSION+"""
@@ -138,6 +138,18 @@ Scaffold Plus (Misc)
     Solid Blocks Only  refuses sand, gravel, concrete powder and the rest that fall
   It never places with a screen open, and it stops itself and says why if anything throws.
 
+Build HUD (Render)
+  On by default, top right, and it draws over the build window too, which is where you want it while
+  you are choosing a schematic. It carries the schematic, blocks confirmed out of total, the
+  builder's own reason line, temporary supports still standing, the tempo in force, a progress bar,
+  and the materials.
+  The material figures come from the builder's own scanner, driven Cells Per Tick inside
+  Microseconds each tick instead of in one pass, so a large blueprint costs frames rather than a
+  freeze; Rescan is the gap between scans. Shortages First puts what you are missing at the top, and
+  a shortage row is coloured and reads "short 384 of 512" — missing out of still to place. When a
+  build starts, one chat line names what it is short of before it walks into it, and ".one mats"
+  prints the same figures from the same scan rather than stalling for its own.
+
 Duper HUD (Render)
   On by default, and it draws again after an open screen so a container cannot hide it. It uses the
   game's own fill and text calls rather than the client's painter: the painter sets up and tears
@@ -247,7 +259,7 @@ def main():
         assert ENTRY.replace('.','/')+'.class' in names
         for module in ('rex/LightESP','rex/BuildTempo','rex/BuildPatience','rex/Duper','rex/DuperPattern',
                        'rex/DonutFeature','rex/DonutFly','rex/DonutStorage','rex/DonutSpawner','rex/DonutChunks',
-                       'rex/DonutHud','rex/Modules','rex/DuperTarget','rex/DuperHud','rex/HudAnchor','rex/DuperOnGain','rex/AimTune','rex/ScaffoldPlus','rex/ScaffoldMode',
+                       'rex/DonutHud','rex/Modules','rex/DuperTarget','rex/DuperHud','rex/HudAnchor','rex/DuperOnGain','rex/AimTune','rex/ScaffoldPlus','rex/ScaffoldMode','rex/BuildHud','rex/HudPanel','rex/Huds',
                        'rex/mixin/DuperHudMixin'):assert module+'.class' in names
         for config in metadata['mixins']:
             mixins=json.loads(out.read(config));package=mixins['package'].replace('.','/')

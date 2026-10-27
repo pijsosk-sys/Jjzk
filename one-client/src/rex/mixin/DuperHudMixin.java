@@ -7,9 +7,9 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * The in-game HUD draws under an open screen, and the duper's whole job happens with a container
- * open, so the panel is drawn again after the screen and its tooltips. Not required: if this ever
- * misses, the panel simply stays behind the container's backdrop.
+ * The in-game HUD draws under an open screen, while the duper works with a container open and the
+ * builder with its own window open, so the panels are drawn again after the screen and its
+ * tooltips. Not required: if this ever misses, they simply stay behind the screen's backdrop.
  */
 @Mixin(
    targets = {"net.minecraft.class_437"},
@@ -24,6 +24,6 @@ public abstract class DuperHudMixin {
       remap = false
    )
    private void rex$duperOverlay(class_332 graphics, int mouseX, int mouseY, float delta, CallbackInfo info) {
-      rex.DuperHud.overlay(graphics, delta);
+      rex.Huds.overlay(graphics, delta);
    }
 }

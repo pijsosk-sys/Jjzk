@@ -43,7 +43,7 @@ public final class DuperHud extends Module {
    public final ColorSetting text = new ColorSetting("Text", 242, 226, 208, 255);
    public final ColorSetting good = new ColorSetting("Gain", 110, 225, 130, 255);
 
-   private static final int PAD = 7;
+   private static final int PAD = HudPanel.PAD;
 
    public DuperHud() {
       super("Duper HUD", "Live panel for the duper: pattern, phase, slot, count and results.", -1, Category.RENDER);
@@ -91,16 +91,16 @@ public final class DuperHud extends Module {
          if (Bridge.field(client, "field_1724") == null) {
             return;
          }
-         this.panel(graphics, Bridge.field(client, "field_1772"), client, duper);
+         this.panel(graphics, HudPanel.font(), duper);
       } catch (LinkageError | Exception failure) {
          System.err.println("[ONE] Duper HUD: " + failure);
       }
    }
 
-   private void panel(class_332 graphics, Object font, Object client, Duper duper) throws Exception {
+   private void panel(class_332 graphics, Object font, Duper duper) throws Exception {
       List<String[]> rows = this.rows(duper);
       List<String> log = this.log(duper);
-      int line = ((Number)Bridge.field(font, "field_2000")).intValue();
+      int line = HudPanel.lineHeight(font);
       int step = line + 3;
       int panelWidth = this.width.getInt();
       int header = line + 11;
@@ -108,80 +108,41 @@ public final class DuperHud extends Module {
       int extra = log.isEmpty() ? 0 : 5 + log.size() * (line + 1);
       int panelHeight = header + body + extra + PAD;
 
-      int[] origin = this.origin(client, panelWidth, panelHeight);
+      int[] origin = HudPanel.origin((HudAnchor)this.anchor.get(), this.offsetX.getInt(), this.offsetY.getInt(), panelWidth, panelHeight);
       int x = origin[0];
       int y = origin[1];
-      int back = argb(this.background.m());
-      int tint = argb(this.accent.m());
-      int label = argb(this.text.m());
       Color base = this.text.m();
-      int dim = argb(new Color(base.red, base.green, base.blue, 155));
-      int faint = argb(new Color(base.red, base.green, base.blue, 40));
+      int tint = HudPanel.argb(this.accent.m());
+      int label = HudPanel.argb(base);
+      int dim = HudPanel.argb(HudPanel.fade(base, 155));
+      int faint = HudPanel.argb(HudPanel.fade(base, 40));
 
-      fill(graphics, x, y, x + panelWidth, y + panelHeight, back);
-      fill(graphics, x, y, x + panelWidth, y + 2, tint);
-      fill(graphics, x, y + panelHeight - 1, x + panelWidth, y + panelHeight, faint);
-      fill(graphics, x, y, x + 1, y + panelHeight, faint);
-      fill(graphics, x + panelWidth - 1, y, x + panelWidth, y + panelHeight, faint);
-
-      string(graphics, font, "DUPER", x + PAD, y + 6, label);
+      HudPanel.frame(graphics, x, y, panelWidth, panelHeight, HudPanel.argb(this.background.m()), tint, faint);
+      HudPanel.string(graphics, font, "DUPER", x + PAD, y + 6, label);
       String head = duper.enabled ? String.valueOf(duper.current()) : String.valueOf(duper.pattern.get());
-      string(graphics, font, head, x + panelWidth - PAD - width(font, head), y + 6, tint);
+      HudPanel.string(graphics, font, head, x + panelWidth - PAD - HudPanel.width(font, head), y + 6, tint);
 
       int row = y + header;
       for (String[] entry : rows) {
-         string(graphics, font, entry[0], x + PAD, row, dim);
-         int colour = entry.length > 2 && entry[2].equals("gain") ? argb(this.good.m()) : label;
-         String value = this.clip(font, entry[1], panelWidth - PAD * 2 - width(font, entry[0]) - 6);
-         string(graphics, font, value, x + panelWidth - PAD - width(font, value), row, colour);
+         int colour = entry.length > 2 && entry[2].equals("gain") ? HudPanel.argb(this.good.m()) : label;
+         HudPanel.row(graphics, font, entry[0], entry[1], x, row, panelWidth, dim, colour);
          row += step;
       }
 
       if (duper.enabled) {
-         int inner = panelWidth - PAD * 2;
          double done = duper.burstsPlanned() <= 0 ? 0.0 : 1.0 - (double)duper.burstsLeft() / duper.burstsPlanned();
-         fill(graphics, x + PAD, row + 2, x + PAD + inner, row + 5, faint);
-         fill(graphics, x + PAD, row + 2, x + PAD + (int)(inner * Math.max(0.0, Math.min(1.0, done))), row + 5, tint);
+         HudPanel.bar(graphics, x + PAD, row + 2, panelWidth - PAD * 2, done, faint, tint);
          row += step;
       }
 
       if (!log.isEmpty()) {
-         fill(graphics, x + PAD, row, x + panelWidth - PAD, row + 1, faint);
+         HudPanel.fill(graphics, x + PAD, row, x + panelWidth - PAD, row + 1, faint);
          row += 4;
          for (String entry : log) {
-            string(graphics, font, this.clip(font, entry, panelWidth - PAD * 2), x + PAD, row, dim);
+            HudPanel.string(graphics, font, HudPanel.clip(font, entry, panelWidth - PAD * 2), x + PAD, row, dim);
             row += line + 1;
          }
       }
-   }
-
-   private static int argb(Color color) {
-      return (Math.min(255, Math.max(0, color.alpha)) << 24)
-         | (Math.min(255, Math.max(0, color.red)) << 16)
-         | (Math.min(255, Math.max(0, color.green)) << 8)
-         | Math.min(255, Math.max(0, color.blue));
-   }
-
-   private static void fill(class_332 graphics, int x1, int y1, int x2, int y2, int colour) throws Exception {
-      Game.invoke(graphics, "method_25294", new String[]{"int", "int", "int", "int", "int"}, x1, y1, x2, y2, colour);
-   }
-
-   private static void string(class_332 graphics, Object font, String line, int x, int y, int colour) throws Exception {
-      Game.invoke(
-         graphics,
-         "method_51433",
-         new String[]{"net.minecraft.class_327", "java.lang.String", "int", "int", "int", "boolean"},
-         font,
-         line,
-         x,
-         y,
-         colour,
-         true
-      );
-   }
-
-   private static int width(Object font, String line) throws Exception {
-      return ((Number)Game.invoke(font, "method_1727", new String[]{"java.lang.String"}, line)).intValue();
    }
 
    /** Label and value per row, with "gain" on anything that went up. */
@@ -230,31 +191,4 @@ public final class DuperHud extends Module {
       return lines.size() <= wanted ? lines : lines.subList(lines.size() - wanted, lines.size());
    }
 
-   private String clip(Object font, String line, int room) throws Exception {
-      if (room <= 8 || width(font, line) <= room) {
-         return line;
-      }
-      String cut = line;
-      while (cut.length() > 2 && width(font, cut + "...") > room) {
-         cut = cut.substring(0, cut.length() - 1);
-      }
-      return cut + "...";
-   }
-
-   /** Top-left corner for the chosen anchor, in the game's scaled coordinates. */
-   private int[] origin(Object client, int panelWidth, int panelHeight) throws Exception {
-      Object window = Bridge.call(client, "method_22683");
-      int screenWidth = ((Number)Bridge.call(window, "method_4486")).intValue();
-      int screenHeight = ((Number)Bridge.call(window, "method_4502")).intValue();
-      int x = this.offsetX.getInt();
-      int y = this.offsetY.getInt();
-      HudAnchor corner = (HudAnchor)this.anchor.get();
-      if (corner == HudAnchor.TOP_RIGHT || corner == HudAnchor.BOTTOM_RIGHT) {
-         x = screenWidth - panelWidth - x;
-      }
-      if (corner == HudAnchor.BOTTOM_LEFT || corner == HudAnchor.BOTTOM_RIGHT) {
-         y = screenHeight - panelHeight - y;
-      }
-      return new int[]{Math.max(0, x), Math.max(0, y)};
-   }
 }
