@@ -28,6 +28,14 @@ Wine's own parser skips old `.fon` bitmap fonts and FreeType loads them instead.
 They only showed up because the launcher ran Wine with `WINEDEBUG=warn+all`. It now defaults to `-all,err+all`.
 Set `BODDY_WINEDEBUG=warn+all` to get the full log back.
 
+## The Studio app
+
+The desktop icon runs `studio-app.sh`: a menu, then a progress window (download progress, first-time Wine setup) that
+closes when Studio opens, instead of a terminal. Cancel stops the launcher and its downloads. Failures and Studio
+crashes show a dialog with **Show log**; Diagnostics opens in a window. The menu choice can be passed as an argument,
+e.g. `studio-app.sh "Open Studio"`. Dialog text is ASCII only: under Boddy's default C locale, zenity rejects
+arguments with other characters.
+
 ## Signing in
 
 Studio's built-in login window needs Microsoft WebView2, which does not run here, so it shows
