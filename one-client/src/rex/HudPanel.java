@@ -9,7 +9,7 @@ import net.minecraft.class_332;
  * projection and clip exactly as it found them.
  */
 public final class HudPanel {
-   public static final int PAD = 7;
+   public static final int PAD = 5;
 
    private HudPanel() {
    }
@@ -56,26 +56,44 @@ public final class HudPanel {
       );
    }
 
-   /** Body, accent bar along the top, hairline border. */
-   public static void frame(class_332 graphics, int x, int y, int width, int height, int back, int tint, int faint) throws Exception {
+   /**
+    * A card: body, a two pixel accent down the left edge, one hairline under it. A box outlined on
+    * all four sides reads as a dialog; at this size an edge and a shadow read as a label.
+    */
+   public static void card(class_332 graphics, int x, int y, int width, int height, int back, int tint, int faint) throws Exception {
       fill(graphics, x, y, x + width, y + height, back);
-      fill(graphics, x, y, x + width, y + 2, tint);
+      fill(graphics, x, y, x + 2, y + height, tint);
       fill(graphics, x, y + height - 1, x + width, y + height, faint);
-      fill(graphics, x, y, x + 1, y + height, faint);
-      fill(graphics, x + width - 1, y, x + width, y + height, faint);
+   }
+
+   /** One line of "label  value" with the value against the right edge. */
+   public static void pair(class_332 graphics, Object font, String label, String value, int x, int y, int width, int labelColour, int valueColour)
+      throws Exception {
+      row(graphics, font, label, value, x, y, width, labelColour, valueColour);
    }
 
    /** Label left, value right, on one row. */
    public static void row(class_332 graphics, Object font, String label, String value, int x, int y, int width, int labelColour, int valueColour)
       throws Exception {
-      string(graphics, font, label, x + PAD, y, labelColour);
-      String shown = clip(font, value, width - PAD * 2 - width(font, label) - 6);
+      string(graphics, font, label, x + PAD + 2, y, labelColour);
+      String shown = clip(font, value, width - PAD * 2 - 2 - width(font, label) - 6);
       string(graphics, font, shown, x + width - PAD - width(font, shown), y, valueColour);
    }
 
    public static void bar(class_332 graphics, int x, int y, int width, double done, int track, int fillColour) throws Exception {
       fill(graphics, x, y, x + width, y + 3, track);
       fill(graphics, x, y, x + (int)(width * Math.max(0.0, Math.min(1.0, done))), y + 3, fillColour);
+   }
+
+   /** Joins pieces with a middle dot, which costs less width than another row. */
+   public static String join(String... pieces) {
+      StringBuilder line = new StringBuilder();
+      for (String piece : pieces) {
+         if (piece != null && !piece.isEmpty()) {
+            line.append(line.length() == 0 ? "" : " \u00b7 ").append(piece);
+         }
+      }
+      return line.toString();
    }
 
    public static String clip(Object font, String line, int room) throws Exception {

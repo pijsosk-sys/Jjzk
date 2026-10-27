@@ -28,8 +28,10 @@ public final class BuildHud extends Module {
    public final EnumSetting<HudAnchor> anchor = new EnumSetting<>("Anchor", HudAnchor.TOP_RIGHT, HudAnchor.class);
    public final NumberSetting offsetX = new NumberSetting("X", 0.0, 400.0, 6.0, 1.0);
    public final NumberSetting offsetY = new NumberSetting("Y", 0.0, 400.0, 6.0, 1.0);
-   public final NumberSetting width = new NumberSetting("Width", 150.0, 420.0, 260.0, 10.0);
-   public final NumberSetting materials = new NumberSetting("Material Rows", 1.0, 16.0, 8.0, 1.0);
+   public final NumberSetting width = new NumberSetting("Width", 110.0, 400.0, 176.0, 2.0);
+   public final NumberSetting materials = new NumberSetting("Material Rows", 1.0, 16.0, 3.0, 1.0);
+   public final BooleanSetting detail = new BooleanSetting("Detail", false)
+      .describe("Adds the reason line, supports standing, the tempo in force and the scan state.");
    public final NumberSetting rescan = new NumberSetting("Rescan", 1.0, 60.0, 4.0, 1.0)
       .describe("Seconds between material scans.");
    public final NumberSetting cells = new NumberSetting("Cells Per Tick", 256.0, 32768.0, 4096.0, 256.0)
@@ -56,7 +58,7 @@ public final class BuildHud extends Module {
       super("Build HUD", "Auto Build status and the materials it still needs.", -1, Category.RENDER);
       this.addSettings(
          new Setting[]{
-            this.anchor, this.offsetX, this.offsetY, this.width, this.materials, this.rescan, this.cells, this.micros,
+            this.anchor, this.offsetX, this.offsetY, this.width, this.detail, this.materials, this.rescan, this.cells, this.micros,
             this.shortFirst, this.idle, this.overScreens, this.background, this.accent, this.text, this.shortage
          }
       );
@@ -175,7 +177,7 @@ public final class BuildHud extends Module {
          }
          short_++;
          if (line.length() < 90) {
-            line.append(line.length() == 0 ? "" : ", ").append(entry[1].replace(" of ", "/")).append(" ").append(entry[0]);
+            line.append(line.length() == 0 ? "" : ", ").append(entry[1]);
          }
       }
       if (short_ == 0) {
@@ -210,99 +212,112 @@ public final class BuildHud extends Module {
       List<String[]> rows = this.rows(controller, schematic);
       List<String[]> needs = this.needs();
       int line = HudPanel.lineHeight(font);
-      int step = line + 3;
+      int step = line + 2;
       int panelWidth = this.width.getInt();
-      int header = line + 11;
-      int height = header + rows.size() * step + step + (needs.isEmpty() ? 0 : 5 + needs.size() * step) + HudPanel.PAD;
+      int height = line + 8 + rows.size() * step + (schematic == null ? 0 : 6) + (needs.isEmpty() ? 0 : 3 + needs.size() * step) + 4;
 
       int[] origin = HudPanel.origin((HudAnchor)this.anchor.get(), this.offsetX.getInt(), this.offsetY.getInt(), panelWidth, height);
       int x = origin[0];
       int y = origin[1];
       Color base = this.text.m();
-      int label = HudPanel.argb(base);
-      int dim = HudPanel.argb(HudPanel.fade(base, 155));
-      int faint = HudPanel.argb(HudPanel.fade(base, 40));
       int tint = HudPanel.argb(this.accent.m());
+      int label = HudPanel.argb(base);
+      int dim = HudPanel.argb(HudPanel.fade(base, 150));
+      int faint = HudPanel.argb(HudPanel.fade(base, 38));
+      int alarm = HudPanel.argb(this.shortage.m());
 
-      HudPanel.frame(graphics, x, y, panelWidth, height, HudPanel.argb(this.background.m()), tint, faint);
-      HudPanel.string(graphics, font, "AUTO BUILD", x + HudPanel.PAD, y + 6, label);
+      HudPanel.card(graphics, x, y, panelWidth, height, HudPanel.argb(this.background.m()), tint, faint);
       String status = String.valueOf(Bridge.call(controller, "status"));
-      HudPanel.string(graphics, font, status, x + panelWidth - HudPanel.PAD - HudPanel.width(font, status), y + 6, tint);
+      HudPanel.string(graphics, font, "BUILD", x + HudPanel.PAD + 2, y + 4, dim);
+      HudPanel.string(graphics, font, status, x + panelWidth - HudPanel.PAD - HudPanel.width(font, status), y + 4, tint);
 
-      int row = y + header;
+      int row = y + line + 8;
       for (String[] entry : rows) {
-         HudPanel.row(graphics, font, entry[0], entry[1], x, row, panelWidth, dim, entry.length > 2 && entry[2].equals("short") ? HudPanel.argb(this.shortage.m()) : label);
+         int colour = entry.length > 2 && entry[2].equals("short") ? alarm : label;
+         if (entry[0].isEmpty()) {
+            HudPanel.string(graphics, font, HudPanel.clip(font, entry[1], panelWidth - HudPanel.PAD * 2 - 2), x + HudPanel.PAD + 2, row, colour);
+         } else {
+            HudPanel.row(graphics, font, entry[0], entry[1], x, row, panelWidth, dim, colour);
+         }
          row += step;
       }
 
-      double done = schematic == null ? 0.0 : ((Number)Bridge.call(controller, "progress")).doubleValue();
-      HudPanel.bar(graphics, x + HudPanel.PAD, row + 2, panelWidth - HudPanel.PAD * 2, done, faint, tint);
-      row += step;
+      if (schematic != null) {
+         double done = ((Number)Bridge.call(controller, "progress")).doubleValue();
+         HudPanel.bar(graphics, x + HudPanel.PAD + 2, row, panelWidth - HudPanel.PAD * 2 - 2, done, faint, tint);
+      }
 
       if (!needs.isEmpty()) {
-         HudPanel.fill(graphics, x + HudPanel.PAD, row, x + panelWidth - HudPanel.PAD, row + 1, faint);
-         row += 4;
+         row += 3;
          for (String[] entry : needs) {
-            HudPanel.row(
-               graphics, font, HudPanel.clip(font, entry[0], panelWidth / 2), entry[1], x, row, panelWidth, dim,
-               entry[2].equals("short") ? HudPanel.argb(this.shortage.m()) : label
+            HudPanel.string(
+               graphics, font, HudPanel.clip(font, entry[1], panelWidth - HudPanel.PAD * 2 - 2), x + HudPanel.PAD + 2, row,
+               entry[2].equals("short") ? alarm : dim
             );
             row += step;
          }
       }
    }
 
+   /** Two lines when it is quiet, three while it builds; Detail adds the rest. */
    private List<String[]> rows(Object controller, Object schematic) throws Exception {
       List<String[]> rows = new ArrayList<>();
       if (schematic == null) {
-         rows.add(new String[]{"schematic", "none loaded"});
-         rows.add(new String[]{"open it", ".autobuild setup"});
+         rows.add(new String[]{"", "no schematic \u00b7 .autobuild setup"});
          return rows;
       }
-      rows.add(new String[]{"schematic", String.valueOf(Bridge.call(schematic, "name"))});
       int confirmed = ((Number)Bridge.call(controller, "confirmedBlocks")).intValue();
       int total = ((List<?>)Bridge.call(schematic, "blocks")).size();
-      rows.add(new String[]{"blocks", confirmed + " / " + total});
-      rows.add(new String[]{"reason", String.valueOf(Bridge.call(controller, "reason"))});
-      int supports = ((Number)Bridge.call(controller, "supportsPlaced")).intValue();
-      if (supports > 0) {
-         rows.add(new String[]{"supports", String.valueOf(supports)});
+      double done = ((Number)Bridge.call(controller, "progress")).doubleValue();
+      rows.add(new String[]{"", HudPanel.clip(HudPanel.font(), String.valueOf(Bridge.call(schematic, "name")), this.width.getInt() - 14)});
+      rows.add(new String[]{confirmed + " / " + total, Math.round(done * 100.0) + "%"});
+      String status = String.valueOf(Bridge.call(controller, "status"));
+      if (this.detail.get() || status.equals("PAUSED")) {
+         rows.add(new String[]{"", String.valueOf(Bridge.call(controller, "reason"))});
       }
-      rows.add(new String[]{"tempo", BuildTempo.describe()});
-      if (this.scan != null) {
-         rows.add(new String[]{"scanning", Math.round(this.progress * 100.0) + "%"});
-      } else if (this.snapshot == null) {
-         rows.add(new String[]{"materials", "not scanned yet"});
+      if (this.detail.get()) {
+         int supports = ((Number)Bridge.call(controller, "supportsPlaced")).intValue();
+         if (supports > 0) {
+            rows.add(new String[]{"supports", String.valueOf(supports)});
+         }
+         rows.add(new String[]{"", BuildTempo.describe()});
+         rows.add(new String[]{"", this.scan != null ? "scanning " + Math.round(this.progress * 100.0) + "%"
+            : this.snapshot == null ? "materials not scanned" : "materials current"});
       }
       return rows;
    }
 
-   /** Material rows from the last finished scan, shortages first. */
+   /** The last finished scan as short lines, what is missing first. */
    private List<String[]> needs() throws Exception {
       Object snapshot = this.snapshot;
       if (snapshot == null) {
          return List.of();
       }
       List<Object> all = new ArrayList<>((List<Object>)Bridge.call(snapshot, "rows"));
-      List<String[]> rows = new ArrayList<>();
       if (this.shortFirst.get()) {
          all.sort(Comparator.comparingInt((Object row) -> -number(row, "missing")).thenComparingInt(row -> -number(row, "remaining")));
       }
+      List<String[]> rows = new ArrayList<>();
+      int shortages = 0;
       for (Object entry : all) {
-         if (rows.size() >= this.materials.getInt()) {
-            break;
-         }
          int missing = number(entry, "missing");
          int remaining = number(entry, "remaining");
          if (remaining <= 0 && missing <= 0) {
             continue;
          }
-         String name = String.valueOf(Bridge.call(entry, "name"));
          if (missing > 0) {
-            rows.add(new String[]{name, "short " + missing + " of " + remaining, "short"});
-         } else {
-            rows.add(new String[]{name, "need " + remaining + ", carried", "ok"});
+            shortages++;
          }
+         if (rows.size() >= this.materials.getInt()) {
+            continue;
+         }
+         String name = String.valueOf(Bridge.call(entry, "name"));
+         rows.add(new String[]{name, (missing > 0 ? missing : remaining) + "\u00d7 " + name, missing > 0 ? "short" : "ok"});
+      }
+      if (rows.isEmpty()) {
+         rows.add(new String[]{"", "nothing left to place", "ok"});
+      } else if (shortages > rows.size()) {
+         rows.add(new String[]{"", "and " + (shortages - rows.size()) + " more short", "short"});
       }
       return rows;
    }

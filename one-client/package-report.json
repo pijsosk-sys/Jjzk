@@ -1,7 +1,7 @@
 {
   "output": "/home/user/Jjzk/output/REX-One-1.21.11.jar",
-  "size_bytes": 10788544,
-  "sha256": "93b2d7da86d5d809ff5bb464b6db669fa93355215e7a871ba93e71474e1d1dbe",
+  "size_bytes": 10789605,
+  "sha256": "fa2f2ff848d4bee797cd936a780a246a5af64eae1ec924092b22aa0c060569d7",
   "entrypoint": "rex.OneClient",
   "folded_entrypoints": [
     "dev.donut.client.DonutClient",

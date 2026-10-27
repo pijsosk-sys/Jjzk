@@ -4,7 +4,7 @@ import hashlib,json,re,zipfile
 ROOT=Path(__file__).resolve().parent
 INPUT=ROOT/'input.jar'
 OUTPUT=ROOT.parent/'output'/'REX-One-1.21.11.jar'
-VERSION='1.0.0-one.11'
+VERSION='1.0.0-one.12'
 NAME='REX One'
 ENTRY='rex.OneClient'
 NOTES='''REX One — Minecraft 1.21.11, Java 21, version """+VERSION+"""
@@ -140,9 +140,13 @@ Scaffold Plus (Misc)
 
 Build HUD (Render)
   On by default, top right, and it draws over the build window too, which is where you want it while
-  you are choosing a schematic. It carries the schematic, blocks confirmed out of total, the
-  builder's own reason line, temporary supports still standing, the tempo in force, a progress bar,
-  and the materials.
+  you are choosing a schematic. Three lines and a bar: the schematic, blocks out of total with a
+  percentage, the three things you are shortest of as "384x Oak Planks", and the reason line only
+  when the build is paused, which is when you need it. Detail puts the rest back — reason, supports
+  standing, the tempo in force, the scan state — and Material Rows decides how many materials show.
+  Both panels are cards now: a body, a two pixel accent down the left edge and one hairline under
+  it, at 176 and 168 pixels wide instead of 260 and 250. A box outlined on four sides reads as a
+  dialog; at this size an edge and a shadow read as a label.
   The material figures come from the builder's own scanner, driven Cells Per Tick inside
   Microseconds each tick instead of in one pass, so a large blueprint costs frames rather than a
   freeze; Rescan is the gap between scans. Shortages First puts what you are missing at the top, and
@@ -151,7 +155,10 @@ Build HUD (Render)
   prints the same figures from the same scan rather than stalling for its own.
 
 Duper HUD (Render)
-  On by default, and it draws again after an open screen so a container cannot hide it. It uses the
+  On by default, four lines while it runs: the pattern, where the run is, the count with the change
+  called out and whether the server stated it, and a bar. Detail adds the slot and window, every
+  pattern already tried and the log. It draws again after an open screen so a container cannot hide
+  it, and uses the
   game's own fill and text calls rather than the client's painter: the painter sets up and tears
   down renderer state around each batch, which is correct in the HUD pass it was written for and
   wrong at the tail of a screen's own render, where it left the projection and clip changed under
