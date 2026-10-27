@@ -95,15 +95,19 @@ def destination(name):
  if stem in DEST:return DEST[stem]
  if stem.startswith('content-'):return 'content/'+stem[8:]
  if stem.startswith('extracontent-'):return 'ExtraContent/'+{'luapackages':'LuaPackages'}.get(stem[13:],stem[13:])
+ if stem.startswith('studiocontent-'):return 'StudioContent/'+stem[14:]
  return '.'
 def extract_zip(path,dest):
  with zipfile.ZipFile(path) as z:
   for item in z.infolist():
-   n=item.filename.replace('\\','/');p=Path(n)
-   if n in ('/','./','') and item.file_size==0:continue
-   if p.is_absolute() or '..' in p.parts or ':' in n or ((item.external_attr>>16)&0o170000)==0o120000:raise ValueError('Unsafe ZIP entry')
+   # Roblox packages use Windows paths with a leading separator, e.g. \Lua\ for a directory.
+   n=item.filename.replace('\\','/');is_dir=n.endswith('/');n=n.lstrip('/');p=Path(n)
+   if n in ('','.','./'):
+    if item.file_size==0:continue
+    raise ValueError('Unsafe ZIP entry: '+item.filename)
+   if '..' in p.parts or ':' in n or ((item.external_attr>>16)&0o170000)==0o120000:raise ValueError('Unsafe ZIP entry: '+item.filename)
    target=dest/p
-   if item.is_dir():target.mkdir(parents=True,exist_ok=True)
+   if is_dir:target.mkdir(parents=True,exist_ok=True)
    else:
     target.parent.mkdir(parents=True,exist_ok=True)
     with z.open(item) as src,target.open('wb') as out:shutil.copyfileobj(src,out)

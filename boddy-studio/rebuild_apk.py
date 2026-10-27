@@ -39,10 +39,10 @@ with zipfile.ZipFile(src) as z,zipfile.ZipFile(out,'w') as w:
   elif info.filename=='assets/boddy-studio-fix-source.zip':
    buf=io.BytesIO()
    with zipfile.ZipFile(io.BytesIO(data)) as a,zipfile.ZipFile(buf,'w',zipfile.ZIP_DEFLATED) as b:
+    ours={'assets/boddy/studio':'studio','test_launcher.py':'test_launcher.py','README.md':'README.md','rebuild_apk.py':'rebuild_apk.py','manifest.txt':'manifest.txt'}
     for n in a.namelist():
-     if n not in ('assets/boddy/studio','test_launcher.py','studio_runtime.py'):b.writestr(n,a.read(n))
-    for n in ('studio','test_launcher.py','README.md','rebuild_apk.py'):
-     b.writestr('assets/boddy/studio' if n=='studio' else n,(here/n).read_bytes())
+     if n not in ours and n!='studio_runtime.py':b.writestr(n,a.read(n))
+    for n,f in ours.items():b.writestr(n,(here/f).read_bytes())
    data=buf.getvalue()
   elif info.filename in replace:data=replace.pop(info.filename)
   w.writestr(info,data,compress_type=info.compress_type)

@@ -23,9 +23,18 @@ with tempfile.TemporaryDirectory() as td:
  except ValueError:pass
  with zipfile.ZipFile(z,'w') as f:f.writestr('folder/file','good')
  r.extract_zip(z,p/'dest');assert (p/'dest/folder/file').read_text()=='good'
+ # Real Roblox packages: Windows separators, a bare root entry and leading-separator directory entries.
+ with zipfile.ZipFile(z,'w') as f:
+  f.writestr('\\','');f.writestr('\\Lua\\','');f.writestr('\\Lua\\Dark\\','');f.writestr('Lua\\Dark\\icon.png','png')
+ r.extract_zip(z,p/'win');assert (p/'win/Lua/Dark/icon.png').read_text()=='png' and (p/'win/Lua').is_dir()
+ for bad in ['\\..\\escape','C:\\evil','\\a\\..\\..\\b']:
+  with zipfile.ZipFile(z,'w') as f:f.writestr(bad,'bad')
+  try:r.extract_zip(z,p/'win2');raise AssertionError('accepted '+bad)
+  except ValueError:pass
+assert r.destination('studiocontent-textures.zip')=='StudioContent/textures'
 def intercepted(*a,**k):raise urllib.error.URLError(ssl.SSLCertVerificationError(1,'self-signed certificate in certificate chain'))
 real=r.urllib.request.urlopen;r.urllib.request.urlopen=intercepted;r.presented_chain=lambda host,port=443:[]
 try:r.fetch(r.VERSION_URL);raise AssertionError('certificate failure not reported')
 except r.TlsError as e:assert 'clientsettingscdn.roblox.com' in str(e) and 'update-ca-certificates' in str(e)
 finally:r.urllib.request.urlopen=real
-print('PASS: original CRLF defect reproduced (0 packages), replacement parses 34; destinations, malformed manifests, checksum recovery, safe extraction, TLS interception reported.')
+print('PASS: original CRLF defect reproduced (0 packages), replacement parses 34; destinations, malformed manifests, checksum recovery, safe extraction incl. Windows-style entries, TLS interception reported.')
