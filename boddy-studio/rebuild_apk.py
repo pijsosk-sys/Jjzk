@@ -4,7 +4,7 @@
 Usage: rebuild_apk.py ORIGINAL.apk OUT-unsigned.apk VERSION_CODE
 Then: zipalign -P 16 -f 4 OUT-unsigned.apk OUT-aligned.apk && apksigner sign --ks KEY OUT-aligned.apk
 
-Only assets/boddy/studio, assets/boddy-studio-fix-source.zip and the manifest versionCode change.
+Only assets/boddy/studio, assets/boddy/studio-app.sh, assets/boddy-studio-fix-source.zip and the manifest versionCode change.
 Every other entry is copied byte-for-byte with its original compression method (resources.arsc stays STORED).
 """
 import io,struct,sys,zipfile
@@ -29,7 +29,7 @@ def set_version_code(b):
   pos+=size
  assert len(changed)==1 and changed[0]<version,changed
  return changed[0]
-replace={'assets/boddy/studio':(here/'studio').read_bytes()}
+replace={'assets/boddy/'+n:(here/n).read_bytes() for n in ('studio','studio-app.sh')}
 with zipfile.ZipFile(src) as z,zipfile.ZipFile(out,'w') as w:
  for info in z.infolist():
   if info.filename.startswith('META-INF/'):continue
@@ -39,7 +39,7 @@ with zipfile.ZipFile(src) as z,zipfile.ZipFile(out,'w') as w:
   elif info.filename=='assets/boddy-studio-fix-source.zip':
    buf=io.BytesIO()
    with zipfile.ZipFile(io.BytesIO(data)) as a,zipfile.ZipFile(buf,'w',zipfile.ZIP_DEFLATED) as b:
-    ours={'assets/boddy/studio':'studio','test_launcher.py':'test_launcher.py','README.md':'README.md','rebuild_apk.py':'rebuild_apk.py','manifest.txt':'manifest.txt'}
+    ours={'assets/boddy/studio':'studio','assets/boddy/studio-app.sh':'studio-app.sh','test_launcher.py':'test_launcher.py','README.md':'README.md','rebuild_apk.py':'rebuild_apk.py','manifest.txt':'manifest.txt'}
     for n in a.namelist():
      if n not in ours and n!='studio_runtime.py':b.writestr(n,a.read(n))
     for n,f in ours.items():b.writestr(n,(here/f).read_bytes())

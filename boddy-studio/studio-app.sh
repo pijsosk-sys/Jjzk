@@ -12,6 +12,7 @@ case "$choice" in
         f=$(zenity --file-selection --filename="$start" --file-filter="Roblox place | *.rbxl *.rbxlx" 2>/dev/null) || exit 0
         cmd=(/opt/boddy/studio "$f") ;;
     "Reset Studio") cmd=(/opt/boddy/studio --reset) ;;
+    *) exit 0 ;;  # OK pressed with nothing selected
 esac
 # Show progress in a terminal so the user can see what's happening (and any error).
 exec xfce4-terminal --disable-server --title="Roblox Studio" -x bash -c '"$@"; echo; read -rp "Press Enter to close."' _ "${cmd[@]}"

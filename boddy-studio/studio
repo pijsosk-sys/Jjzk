@@ -25,7 +25,9 @@ def tls_context():
  if _tls is None:
   _tls=ssl.create_default_context()
   extra=os.getenv('BODDY_CA_FILE')
-  if extra:_tls.load_verify_locations(cafile=extra)
+  if extra:
+   try:_tls.load_verify_locations(cafile=extra)
+   except (OSError,ssl.SSLError) as e:raise RuntimeError('BODDY_CA_FILE=%s is not a readable PEM certificate: %s'%(extra,e)) from e
  return _tls
 def presented_chain(host,port=443):
  # Show who signed the certificate we were given, so the user can identify the interceptor.
@@ -115,32 +117,37 @@ def extract_zip(path,dest):
    else:
     target.parent.mkdir(parents=True,exist_ok=True)
     with z.open(item) as src,target.open('wb') as out:shutil.copyfileobj(src,out)
-def prune_downloads(keep_stage=None):
+def prune_downloads(keep_stage=None,keep_version=None):
  # Package archives are only a download cache; old Studio copies are 1+ GB each. Keep the newest backup.
  for f in CACHE.iterdir():
-  if re.fullmatch(r'version-[0-9a-fA-F]+-[A-Za-z0-9_.-]+\.zip(\.part)?',f.name) and f.is_file():f.unlink()
+  m=re.fullmatch(r'(version-[0-9a-fA-F]+)-[A-Za-z0-9_.-]+\.zip(\.part)?',f.name)
+  if m and m.group(1)!=keep_version and f.is_file():f.unlink()
  for d in ROOT.glob('stage-version-*'):
   if d.is_dir() and d!=keep_stage:shutil.rmtree(d,ignore_errors=True)
  for d in sorted(ROOT.glob('Studio-backup-*'),key=lambda d:d.name)[:-1]:
   if d.is_dir():shutil.rmtree(d,ignore_errors=True)
+def prune_logs(keep=10):
+ for pattern in ('launcher-*.log','helper-*.log'):
+  for f in sorted(CACHE.glob(pattern),key=lambda f:f.stat().st_mtime)[:-keep]:f.unlink(missing_ok=True)
 def install_studio():
  target=ROOT/'Studio';stamp=target/'.version'
- try:meta=json.loads(fetch(VERSION_URL))
+ try:
+  version=json.loads(fetch(VERSION_URL))['clientVersionUpload']
+  if not isinstance(version,str) or not re.fullmatch(r'version-[0-9a-fA-F]+',version):raise ValueError('Invalid Studio version from Roblox: %r'%(version,))
  except Exception as e:
   if (target/'RobloxStudioBeta.exe').exists():
    say('Could not check for Studio updates; opening the installed version.\n'+str(e));return target
   raise
- version=meta['clientVersionUpload']
- if not re.fullmatch(r'version-[0-9a-fA-F]+',version):raise ValueError('Invalid Studio version')
  if stamp.exists() and stamp.read_text().strip()==version and (target/'RobloxStudioBeta.exe').exists():return target
  packages=manifest(fetch(CDN+version+'-rbxPkgManifest.txt'))
  required=sum(p[3] for p in packages)+max(p[2] for p in packages)+512*1024*1024
  if shutil.disk_usage(ROOT).free<required:raise RuntimeError('Insufficient free storage; need about %.1f GB'%(required/1e9))
- stage=ROOT/('stage-'+version);prune_downloads(keep_stage=stage);stage.mkdir(exist_ok=True)
+ stage=ROOT/('stage-'+version);prune_downloads(keep_stage=stage,keep_version=version);stage.mkdir(exist_ok=True)
  for index,(name,md5,size,_) in enumerate(packages):
   say('Studio %d/%d: %s'%(index+1,len(packages),name))
   archive=CACHE/(version+'-'+name);download(CDN+version+'-'+name,archive,size,md5)
-  extract_zip(archive,stage/destination(name))
+  # Delete each verified archive once extracted, so only one is on disk at a time (the free-space check assumes this).
+  extract_zip(archive,stage/destination(name));archive.unlink()
  if not (stage/'RobloxStudioBeta.exe').exists():raise RuntimeError('Studio executable absent after extraction')
  (stage/'AppSettings.xml').write_text('<Settings><ContentFolder>content</ContentFolder><BaseUrl>https://www.roblox.com</BaseUrl></Settings>')
  (stage/'.version').write_text(version)
@@ -151,7 +158,7 @@ def install_studio():
   if backup.exists():backup.rename(target)
   raise
  prune_downloads()
- say('Studio installation verified. The previous installation is kept as a backup.');return target
+ say('Studio installation verified.'+(' The previous installation is kept as a backup.' if backup.exists() else ''));return target
 def find_wine():
  candidates=['/opt/hangover/bin/wine','/usr/bin/hangover-wine','/usr/local/bin/wine','/usr/bin/wine',shutil.which('wine')]
  return next((str(p) for p in candidates if p and os.path.isfile(p) and os.access(p,os.X_OK)),None)
@@ -167,22 +174,24 @@ def install_wine():
  if not url.startswith('https://github.com/AndreRH/hangover/releases/download/'):raise ValueError('Unexpected runtime URL')
  archive=CACHE/a['name'];digest=a.get('digest') or '';sha=digest[7:] if digest.startswith('sha256:') else None
  download(url,archive,a['size'],sha256=sha)
- unpack=CACHE/'hangover-packages';unpack.mkdir(exist_ok=True)
+ # A fresh directory: packages left from an earlier attempt or release would be installed alongside.
+ unpack=CACHE/'hangover-packages';shutil.rmtree(unpack,ignore_errors=True);unpack.mkdir()
  with tarfile.open(archive) as t:
   for member in t.getmembers():
    p=Path(member.name)
    if p.is_absolute() or '..' in p.parts or not (member.isdir() or member.isfile()):raise ValueError('Unsafe runtime archive')
-  t.extractall(unpack)
+  t.extractall(unpack,filter='data')
  debs=list(unpack.rglob('*.deb'))
  if not debs:raise RuntimeError('Runtime archive contains no Debian packages')
  subprocess.run(['apt-get','update'],check=True)
  subprocess.run(['apt-get','install','-y',*[str(p.resolve()) for p in debs]],check=True,env=dict(os.environ,DEBIAN_FRONTEND='noninteractive'))
+ shutil.rmtree(unpack,ignore_errors=True);archive.unlink(missing_ok=True)
  w=find_wine()
  if not w:raise RuntimeError('Hangover installed but Wine executable not found')
  return w
 def command(args,timeout=90,env=None):
  say('Running: '+' '.join(args));r=subprocess.run(args,timeout=timeout,env=env)
- if r.returncode:raise RuntimeError('Runtime check failed with exit code '+str(r.returncode))
+ if r.returncode:raise RuntimeError('%s failed with exit code %d'%(' '.join(args[:3]),r.returncode))
 def diagnose():
  say('Boddy Studio compatibility report')
  say('Kernel: '+str(os.uname()));say('DISPLAY='+os.getenv('DISPLAY','<unset>'));say('Free storage: %.2f GB'%(shutil.disk_usage(ROOT).free/1e9))
@@ -226,7 +235,7 @@ def setup_browser_login(wine,env,prefix):
  if not marker.exists() or marker.read_text()!=BROWSERS:
   # Wine's default list (xdg-open, firefox, ...) finds no browser in Boddy, and a browser started
   # directly by Wine inherits Wine's process state, so links go through open_in_browser().
-  command([wine,'reg','add','HKCU\\Software\\Wine\\WineBrowser','/v','Browsers','/t','REG_SZ','/d',BROWSERS,'/f'],120,env)
+  command([wine,'reg','add','HKCU\\Software\\Wine\\WineBrowser','/v','Browsers','/t','REG_SZ','/d',BROWSERS,'/f'],600,env)
   marker.write_text(BROWSERS)
 BROWSERS='/opt/boddy/studio --open-url,firefox-esr,xdg-open,firefox'
 FIREFOX_PREFS={
@@ -288,10 +297,11 @@ def pass_auth(link):
  wine=find_wine();studio=ROOT/'Studio'
  if not wine or not (studio/'RobloxStudioBeta.exe').exists():raise RuntimeError('Studio is not installed; open Studio from the desktop first')
  say('Passing browser sign-in to Roblox Studio')
+ # This second Studio process only forwards the link to the running one; its exit code says nothing about the sign-in.
  r=subprocess.run([wine,str(studio/'RobloxStudioBeta.exe'),link],cwd=studio,env=wine_env(ROOT/'prefix'))
- if r.returncode:raise RuntimeError('Studio did not accept the sign-in (exit code %d)'%r.returncode)
+ say('Sign-in forwarded to Studio (forwarding process exit code %d)'%r.returncode)
 def main():
- ROOT.mkdir(parents=True,exist_ok=True);CACHE.mkdir(parents=True,exist_ok=True)
+ ROOT.mkdir(parents=True,exist_ok=True);CACHE.mkdir(parents=True,exist_ok=True);prune_logs()
  arg=sys.argv[1] if len(sys.argv)>1 else ''
  if arg.startswith(AUTH_SCHEME):pass_auth(arg);return
  if arg=='--open-url':open_in_browser(sys.argv[2] if len(sys.argv)>2 else '');return
@@ -309,7 +319,8 @@ def main():
  command([wine,'--version'],30,env)
  if not (prefix/'.boddy-tested').exists():
   say('Testing Windows command execution before downloading Studio')
-  command([wine,'cmd.exe','/c','echo','BODDY_WINE_STARTUP_OK'],180,env)
+  # Creating the Wine prefix under x86 emulation can take several minutes on a phone.
+  command([wine,'cmd.exe','/c','echo','BODDY_WINE_STARTUP_OK'],900,env)
   (prefix/'.boddy-tested').touch()
  studio=install_studio();setup_browser_login(wine,env,prefix);args=[wine,str(studio/'RobloxStudioBeta.exe')]
  if arg and not arg.startswith('--'):
