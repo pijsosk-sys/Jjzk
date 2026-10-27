@@ -54,8 +54,8 @@ def tls_help(url,reason):
   '     (or set BODDY_CA_FILE=/path/to/<name>.pem for this launcher only).',
   'Certificate verification is not skipped.']
  return '\n'.join(lines)
-def open_url(url):
- req=urllib.request.Request(url,headers={'User-Agent':'Boddy-Studio-Compatibility/1.0'})
+def open_url(url,headers=None):
+ req=urllib.request.Request(url,headers={'User-Agent':'Boddy-Studio-Compatibility/1.0',**(headers or {})})
  try:return urllib.request.urlopen(req,timeout=60,context=tls_context())
  except urllib.error.URLError as e:
   if isinstance(e.reason,ssl.SSLCertVerificationError):raise TlsError(tls_help(url,e.reason)) from e
@@ -76,9 +76,14 @@ def download(url,path,size=None,md5=None,sha256=None):
  part=path.with_suffix(path.suffix+'.part');path.parent.mkdir(parents=True,exist_ok=True)
  for attempt in range(3):
   try:
-   with open_url(url) as r,part.open('wb') as f:
-    shutil.copyfileobj(r,f,1048576)
-   if not valid(part):raise RuntimeError('Download size/checksum mismatch: '+path.name)
+   # Continue a partial download (Android may have stopped Boddy mid-way); the checksum covers the joined file.
+   have=part.stat().st_size if part.exists() else 0
+   if size is not None and have>=size:have=0
+   with open_url(url,{'Range':'bytes=%d-'%have} if have else None) as r:
+    if have and getattr(r,'status',None)!=206:have=0  # server sent the whole file
+    with part.open('ab' if have else 'wb') as f:shutil.copyfileobj(r,f,1048576)
+   if not valid(part):
+    part.unlink(missing_ok=True);raise RuntimeError('Download size/checksum mismatch: '+path.name)
    part.replace(path);return
   except TlsError:raise
   except Exception:
@@ -143,14 +148,18 @@ def install_studio():
  required=sum(p[3] for p in packages)+max(p[2] for p in packages)+512*1024*1024
  if shutil.disk_usage(ROOT).free<required:raise RuntimeError('Insufficient free storage; need about %.1f GB'%(required/1e9))
  stage=ROOT/('stage-'+version);prune_downloads(keep_stage=stage,keep_version=version);stage.mkdir(exist_ok=True)
+ # Packages already unpacked into this stage are skipped, so a stopped install continues where it was.
+ done_file=stage/'.boddy-extracted';done=set(done_file.read_text().split()) if done_file.exists() else set()
  for index,(name,md5,size,_) in enumerate(packages):
-  say('Studio %d/%d: %s'%(index+1,len(packages),name))
+  say('Studio %d/%d: %s'%(index+1,len(packages),name)+(' (already done)' if name+':'+md5 in done else ''))
+  if name+':'+md5 in done:continue
   archive=CACHE/(version+'-'+name);download(CDN+version+'-'+name,archive,size,md5)
   # Delete each verified archive once extracted, so only one is on disk at a time (the free-space check assumes this).
   extract_zip(archive,stage/destination(name));archive.unlink()
+  with done_file.open('a') as f:f.write(name+':'+md5+'\n');f.flush();os.fsync(f.fileno())
  if not (stage/'RobloxStudioBeta.exe').exists():raise RuntimeError('Studio executable absent after extraction')
  (stage/'AppSettings.xml').write_text('<Settings><ContentFolder>content</ContentFolder><BaseUrl>https://www.roblox.com</BaseUrl></Settings>')
- (stage/'.version').write_text(version)
+ (stage/'.version').write_text(version);done_file.unlink()
  backup=ROOT/('Studio-backup-'+str(time.time_ns()))
  if target.exists():target.rename(backup)
  try:stage.rename(target)

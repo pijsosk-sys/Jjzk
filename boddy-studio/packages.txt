@@ -7,7 +7,7 @@ firefox-esr synaptic
 adwaita-icon-theme gnome-themes-extra librsvg2-common
 fonts-dejavu-core fonts-noto-color-emoji
 ca-certificates curl wget xz-utils unzip zip sudo procps less nano git
-xdotool scrot x11-utils x11-xserver-utils python3
+xdotool scrot x11-utils x11-xserver-utils xclip python3
 pulseaudio pulseaudio-utils zenity
 openjdk-21-jdk-headless nodejs npm
 

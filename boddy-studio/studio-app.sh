@@ -6,7 +6,36 @@ LOG_DIR="$HOME/.cache/roblox-studio"
 SEEN="$HOME/.config/boddy"
 TITLE="Roblox Studio"
 start=/root/Phone/Download/; [ -d "$start" ] || start=/root/
+MONITOR=/root/Phone/Download/Boddy-Studio-monitor.log; [ -d /root/Phone/Download ] || MONITOR="$LOG_DIR/Boddy-Studio-monitor.log"
+RUNNING="$SEEN/studio-running"
 mkdir -p "$SEEN" "$LOG_DIR"
+
+escape() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }  # for zenity's Pango markup
+
+# Copies the end of a launch log (and the session monitor) to the clipboard; Boddy passes the
+# desktop clipboard on to the phone, so it can be pasted into a chat or an email.
+copy_log() {
+    command -v xclip >/dev/null || apt-get install -y -q --no-install-recommends xclip >/dev/null 2>&1
+    report=$( echo "Roblox Studio on Boddy - log from $(date '+%Y-%m-%d %H:%M')"
+              echo "=== launcher log (last 200 lines) ==="; tail -n 200 "$1" 2>/dev/null
+              [ -s "$MONITOR" ] && { echo "=== session monitor (last 20 lines) ==="; tail -n 20 "$MONITOR"; } )
+    if command -v xclip >/dev/null && printf '%s\n' "$report" | xclip -selection clipboard 2>/dev/null; then
+        zenity --info --width=360 --title="$TITLE" --timeout=6 --text="Log copied. Paste it anywhere on your phone." 2>/dev/null
+    else
+        printf '%s\n' "$report" >"$start/Boddy-Studio-log.txt"
+        zenity --info --width=400 --title="$TITLE" --text="Could not use the clipboard. The log was saved as Boddy-Studio-log.txt in $start." 2>/dev/null
+    fi
+}
+
+# A run that Android stopped (or a crash of Boddy itself) cannot show an error, so say so on the next start.
+if [ -e "$RUNNING" ] && ! kill -0 "$(cat "$RUNNING" 2>/dev/null)" 2>/dev/null; then
+    rm -f "$RUNNING"
+    previous=$(readlink -f "$LOG_DIR/latest.log")
+    where=$(grep -E '^(Studio [0-9]+/[0-9]+:|Testing Windows|Installing Hangover|Launching real)' "$previous" 2>/dev/null | tail -n 1)
+    text="Roblox Studio was stopped before it finished last time${where:+ (at: $where)}.\n\nThis usually means Android stopped Boddy: too many background processes or low memory. On Android 14+ turn on Developer options > Disable child process restrictions, and close other apps. Downloads continue where they stopped."
+    [ "$(zenity --warning --width=520 --title="$TITLE" --ok-label="Continue" --extra-button="Copy log" \
+        --text="$(printf '%s' "$text" | escape)" 2>/dev/null)" = "Copy log" ] && copy_log "$previous"
+fi
 
 if [ ! -e "$SEEN/studio-intro-shown" ]; then
     zenity --question --width=460 --title="Roblox Studio (experimental)" --ok-label="Try it" --cancel-label="Cancel" \
@@ -34,7 +63,8 @@ case "$choice" in
 esac
 
 work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
+echo $$ >"$RUNNING"
+trap 'rm -rf "$work" "$RUNNING"' EXIT
 mkfifo "$work/progress"
 zenity --progress --title="$TITLE" --width=440 --auto-close --percentage=0 \
     --text="Starting..." <"$work/progress" 2>/dev/null &
@@ -89,8 +119,9 @@ if [ -s "$work/error" ]; then
 else
     text="Roblox Studio closed unexpectedly (exit code $(cat "$work/exit" 2>/dev/null || echo "$status"))."
 fi
-# Pango markup: escape what the launcher printed.
-text=$(printf '%s' "$text" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g')
-if [ "$(zenity --error --width=520 --title="$TITLE" --text="$text" --extra-button="Show log" 2>/dev/null)" = "Show log" ]; then
-    mousepad "$LOG_DIR/latest.log" >/dev/null 2>&1 &
-fi
+log=$(readlink -f "$LOG_DIR/latest.log")
+case "$(zenity --error --width=520 --title="$TITLE" --text="$(printf '%s' "$text" | escape)" \
+        --extra-button="Copy log" --extra-button="Show log" 2>/dev/null)" in
+    "Copy log") copy_log "$log" ;;
+    "Show log") mousepad "$log" >/dev/null 2>&1 & ;;
+esac

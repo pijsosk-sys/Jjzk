@@ -32,7 +32,10 @@ Set `BODDY_WINEDEBUG=warn+all` to get the full log back.
 
 The desktop icon runs `studio-app.sh`: a menu, then a progress window (download progress, first-time Wine setup) that
 closes when Studio opens, instead of a terminal. Cancel stops the launcher and its downloads. Failures and Studio
-crashes show a dialog with **Show log**; Diagnostics opens in a window. The menu choice can be passed as an argument,
+crashes show a dialog with **Copy log** (copies the end of the log and the session monitor to the clipboard,
+which Boddy passes to the phone) and **Show log**; Diagnostics opens in a window. If Android stopped the last run, so
+no dialog could appear, the next start says where it stopped and offers **Copy log**. Downloads resume with HTTP
+range requests and already unpacked packages are skipped, so a stopped install continues instead of starting over. The menu choice can be passed as an argument,
 e.g. `studio-app.sh "Open Studio"`. Dialog text is ASCII only: under Boddy's default C locale, zenity rejects
 arguments with other characters.
 
