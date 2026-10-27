@@ -4,7 +4,7 @@ import hashlib,json,re,zipfile
 ROOT=Path(__file__).resolve().parent
 INPUT=ROOT/'input.jar'
 OUTPUT=ROOT.parent/'output'/'REX-One-1.21.11.jar'
-VERSION='1.0.0-one.6'
+VERSION='1.0.0-one.7'
 NAME='REX One'
 ENTRY='rex.OneClient'
 NOTES='''REX One — Minecraft 1.21.11, Java 21, version """+VERSION+"""
@@ -90,7 +90,11 @@ Duper (Misc)
   account risk, and LOGOUT ends the session by design.
 
 Duper HUD (Render)
-  On by default, and it draws again after an open screen so a container cannot hide it. The panel
+  On by default, and it draws again after an open screen so a container cannot hide it. It uses the
+  game's own fill and text calls rather than the client's painter: the painter sets up and tears
+  down renderer state around each batch, which is correct in the HUD pass it was written for and
+  wrong at the tail of a screen's own render, where it left the projection and clip changed under
+  the screen still drawing — that is what zoomed and cut the chat screen. The panel
   carries the pattern and, while idle, what that pattern is for; then the phase and whatever it is
   waiting for, the run number, the stack it picked, the slot and window id it is clicking, the count
   as it moves with the change called out in green, how much it has sent, a burst progress bar, every
