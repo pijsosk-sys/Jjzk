@@ -4,7 +4,7 @@ import hashlib,json,re,zipfile
 ROOT=Path(__file__).resolve().parent
 INPUT=ROOT/'input.jar'
 OUTPUT=ROOT.parent/'output'/'REX-One-1.21.11.jar'
-VERSION='1.0.0-one.4'
+VERSION='1.0.0-one.5'
 NAME='REX One'
 ENTRY='rex.OneClient'
 NOTES='''REX One — Minecraft 1.21.11, Java 21, version """+VERSION+"""
@@ -67,14 +67,19 @@ Duper (Misc)
   runs when a connection dies. It works on whatever is in your hand.
     AUTO           the default: one run per pattern, counted separately, and it names the one that
                    moved the number, or says plainly that this server leaves no seam open
-    GUI_RACE       several clicks on one slot of a plugin menu inside a single tick
+    GUI_RACE       several left clicks on one plugin-menu slot inside a single tick
+    SHIFT_SPAM     several shift-clicks on one slot inside a tick: sell slots, deposit slots, bags
+    DOUBLE_PICKUP  pick up, then collect every match onto the cursor, repeatedly
+    SWAP_RACE      swap the slot into a hotbar slot and throw it in the same tick
     STALE_WINDOW   keeps clicking the window id the plugin has already replaced
+    DROP_SPAM      throws from your own inventory window while another menu is open; works anywhere
     COMMAND_RACE   one command several times in a tick; set it with .one dupe cmd /sell all
     LOGOUT         drops the stack, then kills the socket with no logout packet, so the drop races
                    the save; reconnect and compare, nothing can be counted for you while gone
     HELD_THROW     the vanilla race, kept as the baseline the others are measured against
   Target HELD finds the held stack wherever it sits in the open menu, hotbar first; Target SLOT uses
-  the index you name. Clicks per burst, Bursts per run, Burst Gap in ticks, Settle before counting,
+  the index you name. Keep Stack throws one item per click instead of the whole stack, so a probe
+  that fails costs one item. Clicks per burst, Bursts per run, Burst Gap in ticks, Settle before counting,
   Arm Timeout in seconds while it waits for the item, Stop On Gain to end the sweep on the first
   gain. Toggling it on prints what the pattern does and what to set up, then it names whatever it is
   still waiting for.
@@ -83,6 +88,16 @@ Duper (Misc)
   that any of it works on a given server.
   Click and command spam of this shape is exactly what server-side logging looks for, so it is an
   account risk, and LOGOUT ends the session by design.
+
+Duper HUD (Render)
+  On by default, and it draws again after an open screen so a container cannot hide it. The panel
+  carries the pattern and, while idle, what that pattern is for; then the phase and whatever it is
+  waiting for, the run number, the stack it picked, the slot and window id it is clicking, the count
+  as it moves with the change called out in green, how much it has sent, a burst progress bar, every
+  pattern already tried with its result, and the last few things that happened. Anchor, X, Y, Width
+  and Log Lines place and size it; Background, Accent, Text and Gain colour it. The screen pass is
+  not a required mixin: if it ever misses a version, the panel stays behind the container backdrop
+  rather than failing the client.
 
 Build Tempo (Misc)
   Pacing for the unified builder, on by default; switch it off for the original cadence.
@@ -129,7 +144,7 @@ def main():
         base=ROOT/folder
         for path in base.rglob('*.class'):
             name=path.relative_to(base).as_posix()
-            if name.startswith(('net/minecraft/','net/fabricmc/')):continue
+            if name.startswith(('net/minecraft/','net/fabricmc/','org/spongepowered/')):continue
             patched[name]=path.read_bytes()
     sources={'one-client-source/'+path.relative_to(ROOT).as_posix():path.read_bytes()
              for path in list((ROOT/'src').rglob('*.java'))+list((ROOT/'patch').rglob('*.java'))
@@ -137,6 +152,8 @@ def main():
 
     with zipfile.ZipFile(INPUT) as jar:
         metadata=json.loads(jar.read('fabric.mod.json'))
+        mixins=json.loads(jar.read('rex-fantasy.mixins.json'))
+        if 'DuperHudMixin' not in mixins['client']:mixins['client'].append('DuperHudMixin')
         legacy=metadata['entrypoints']['client']
         if ENTRY in legacy:raise ValueError('Already merged')
         metadata['name']=NAME
@@ -153,6 +170,7 @@ def main():
         if len(dropped)<30:raise ValueError('Expected the per-build readmes: '+str(len(dropped)))
         replaced=dict(patched)
         replaced['fabric.mod.json']=(json.dumps(metadata,indent=2)+'\n').encode()
+        replaced['rex-fantasy.mixins.json']=(json.dumps(mixins,indent=2)+'\n').encode()
         replaced['META-INF/MANIFEST.MF']=manifest.encode()
         OUTPUT.parent.mkdir(parents=True,exist_ok=True)
         with zipfile.ZipFile(OUTPUT,'w',zipfile.ZIP_DEFLATED) as output:
@@ -171,11 +189,13 @@ def main():
         names=out.namelist()
         assert len(names)==len(set(names)),'duplicate entries'
         assert not any(n.startswith(('net/minecraft/','net/fabricmc/api/','org/spongepowered/')) for n in names)
+        assert 'DuperHudMixin' in json.loads(out.read('rex-fantasy.mixins.json'))['client']
         assert not any(n.startswith(('TickHostUnderTest','TempoStub','OnePatch')) for n in names)
         assert ENTRY.replace('.','/')+'.class' in names
         for module in ('rex/LightESP','rex/BuildTempo','rex/BuildPatience','rex/Duper','rex/DuperPattern',
                        'rex/DonutFeature','rex/DonutFly','rex/DonutStorage','rex/DonutSpawner','rex/DonutChunks',
-                       'rex/DonutHud','rex/Modules','rex/DuperTarget'):assert module+'.class' in names
+                       'rex/DonutHud','rex/Modules','rex/DuperTarget','rex/DuperHud','rex/HudAnchor',
+                       'rex/mixin/DuperHudMixin'):assert module+'.class' in names
         for config in metadata['mixins']:
             mixins=json.loads(out.read(config));package=mixins['package'].replace('.','/')
             for name in mixins.get('client',[])+mixins.get('mixins',[]):

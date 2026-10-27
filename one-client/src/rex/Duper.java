@@ -9,14 +9,19 @@ import dev.krypton.core.setting.EnumSetting;
 import dev.krypton.core.setting.NumberSetting;
 import dev.krypton.core.setting.Setting;
 import dev.krypton.core.setting.StringSetting;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
- * Four races and a baseline, aimed at the layers that still have a seam: plugin menus that handle a
- * click more than once, plugin menus that do not check which window the click came from, economy
+ * Eight races and a baseline, aimed at the layers that still have a seam: plugin menus that handle a
+ * click more than once, plugin menus that never check which window a click came from, economy
  * commands that read an inventory before they empty it, and the save that runs when a connection
- * dies. It works on whatever is in your hand, reports a count before and after each run, and leaves
- * the verdict to that count.
+ * dies. It works on the one stack in your hand, counts it before and after every run, and leaves the
+ * verdict to that count. Duper HUD shows all of it while it runs.
  */
 public final class Duper extends Module {
    public static Duper instance;
@@ -35,21 +40,34 @@ public final class Duper extends Module {
    public final NumberSetting settle = new NumberSetting("Settle", 2.0, 100.0, 20.0, 1.0)
       .describe("Ticks to wait for the server before counting.");
    public final NumberSetting button = new NumberSetting("Button", 0.0, 8.0, 1.0, 1.0)
-      .describe("Throw 0 drops one item, 1 drops the stack.");
+      .describe("Hotbar slot for the swap race; otherwise the throw button when Keep Stack is off.");
+   public final BooleanSetting keepStack = new BooleanSetting("Keep Stack", true)
+      .describe("Throws one item per click instead of the whole stack, so a failed probe costs one item.");
    public final StringSetting command = new StringSetting("Command", "/sell all")
       .describe("Sent by COMMAND_RACE. Also settable in chat: .one dupe cmd <text>");
    public final NumberSetting patience = new NumberSetting("Arm Timeout", 0.0, 60.0, 15.0, 5.0)
       .describe("Seconds to wait for the item to be there. Zero refuses instead of waiting.");
    public final BooleanSetting stopOnGain = new BooleanSetting("Stop On Gain", true)
       .describe("Ends the remaining runs the moment a run counts more than it started with.");
-   public final BooleanSetting report = new BooleanSetting("Report", true);
+   public final BooleanSetting report = new BooleanSetting("Report", true)
+      .describe("Chat lines as well as the HUD.");
 
    private static final DuperPattern[] SWEEP = {
-      DuperPattern.GUI_RACE, DuperPattern.STALE_WINDOW, DuperPattern.COMMAND_RACE, DuperPattern.HELD_THROW
+      DuperPattern.GUI_RACE,
+      DuperPattern.SHIFT_SPAM,
+      DuperPattern.DOUBLE_PICKUP,
+      DuperPattern.SWAP_RACE,
+      DuperPattern.STALE_WINDOW,
+      DuperPattern.DROP_SPAM,
+      DuperPattern.COMMAND_RACE,
+      DuperPattern.HELD_THROW
    };
-   private static final int WAITING = 0;
-   private static final int RUNNING = 1;
-   private static final int SETTLING = 2;
+   public static final int WAITING = 0;
+   public static final int RUNNING = 1;
+   public static final int SETTLING = 2;
+
+   private final Deque<String> log = new ArrayDeque<>();
+   private final Map<DuperPattern, Integer> results = new LinkedHashMap<>();
 
    private int phase = WAITING;
    private int remaining;
@@ -57,20 +75,22 @@ public final class Duper extends Module {
    private int run;
    private int sent;
    private int before;
+   private int live;
    private int sweep;
    private int resolved = -1;
    private int syncId;
    private int stale = -1;
    private Object item;
    private Object menu;
+   private String itemName = "nothing";
    private String blocked = "";
 
    public Duper() {
-      super("Duper", "Plugin menu, command and logout races on the item in your hand.", -1, Category.MISC);
+      super("Duper", "Plugin menu, command and logout races on the one stack in your hand.", -1, Category.MISC);
       this.addSettings(
          new Setting[]{
-            this.pattern, this.target, this.slot, this.clicks, this.bursts, this.gap, this.runs,
-            this.settle, this.button, this.command, this.patience, this.stopOnGain, this.report
+            this.pattern, this.target, this.slot, this.clicks, this.bursts, this.gap, this.runs, this.settle,
+            this.button, this.keepStack, this.command, this.patience, this.stopOnGain, this.report
          }
       );
       instance = this;
@@ -86,44 +106,64 @@ public final class Duper extends Module {
       this.remaining = 0;
       this.sweep = 0;
       this.resolved = -1;
+      this.live = 0;
+      this.before = 0;
       this.item = null;
       this.menu = null;
+      this.itemName = "nothing";
       this.blocked = "";
+      this.log.clear();
+      this.results.clear();
       DuperPattern chosen = (DuperPattern)this.pattern.get();
-      Game.message("Duper " + chosen + ": " + chosen.what);
-      Game.message("  " + chosen.how);
-      Game.message(
-         "  " + this.plan() + ", " + this.bursts.getInt() + " x " + this.clicks.getInt() + " per run, gap " + this.gap.getInt()
-            + ", settle " + this.settle.getInt() + ", target " + (this.target.get() == DuperTarget.HELD ? "held item" : "slot " + this.slot.getInt())
-            + ". Toggle off to stop."
-      );
-   }
-
-   private String plan() {
-      return this.pattern.get() == DuperPattern.AUTO ? SWEEP.length + " runs, one per pattern" : this.runs.getInt() + " run(s)";
+      this.note(chosen + ": " + chosen.what);
+      if (this.report.get()) {
+         Game.message("Duper " + chosen + ": " + chosen.what);
+         Game.message("  " + chosen.how);
+         Game.message(
+            "  " + this.plan() + ", " + this.bursts.getInt() + " x " + this.clicks.getInt() + " per run, gap " + this.gap.getInt()
+               + ", settle " + this.settle.getInt() + ", target "
+               + (this.target.get() == DuperTarget.HELD ? "held stack" : "slot " + this.slot.getInt()) + ". Toggle off to stop."
+         );
+      }
    }
 
    @Override
    public void onDisable() {
       super.onDisable();
       if (this.sent > 0 && this.report.get()) {
-         Game.message("Duper stopped: " + this.sent + " clicks over " + this.run + " run(s).");
+         Game.message("Duper stopped: " + this.sent + " sent over " + this.run + " run(s).");
       }
+      this.note("stopped after " + this.run + " run(s)");
       this.phase = WAITING;
       this.remaining = 0;
-      this.sent = 0;
       this.menu = null;
       this.item = null;
    }
 
+   private String plan() {
+      return this.pattern.get() == DuperPattern.AUTO ? SWEEP.length + " runs, one per pattern" : this.runs.getInt() + " run(s)";
+   }
+
+   private void note(String line) {
+      this.log.addLast(line);
+      while (this.log.size() > 8) {
+         this.log.removeFirst();
+      }
+   }
+
    /** The pattern this run uses: the setting, or the next one in the sweep. */
-   private DuperPattern current() {
+   public DuperPattern current() {
       DuperPattern chosen = (DuperPattern)this.pattern.get();
       return chosen == DuperPattern.AUTO ? SWEEP[Math.min(this.sweep, SWEEP.length - 1)] : chosen;
    }
 
    private int plannedRuns() {
       return this.pattern.get() == DuperPattern.AUTO ? SWEEP.length : this.runs.getInt();
+   }
+
+   /** Patterns that aim at a window other than the open one, so a menu change is not a reason to stop. */
+   private boolean tolerant(DuperPattern pattern) {
+      return pattern == DuperPattern.STALE_WINDOW || pattern == DuperPattern.DROP_SPAM;
    }
 
    @EventHandler
@@ -142,15 +182,19 @@ public final class Duper extends Module {
             default:
                break;
          }
+         if (this.item != null && this.menu != null) {
+            this.live = this.total();
+         }
       } catch (LinkageError | Exception failure) {
          Game.message("Duper: " + message(failure));
+         this.note("stopped: " + message(failure));
          this.setEnabled(false);
       }
    }
 
    private void awaitConditions() throws Exception {
       if (this.pattern.get() == DuperPattern.AUTO && this.current() == DuperPattern.COMMAND_RACE && this.command.get().strip().isEmpty()) {
-         Game.message("Duper: skipping COMMAND_RACE, no command set (.one dupe cmd <text>).");
+         this.note("skipped COMMAND_RACE, no command set");
          this.step();
          return;
       }
@@ -159,7 +203,10 @@ public final class Duper extends Module {
          this.waiting++;
          if (!missing.equals(this.blocked)) {
             this.blocked = missing;
-            Game.message("Duper waiting: " + missing);
+            this.note("waiting: " + missing);
+            if (this.report.get()) {
+               Game.message("Duper waiting: " + missing);
+            }
          }
          if (this.patience.getInt() == 0 || this.waiting > this.patience.getInt() * 20) {
             Game.message("Duper: gave up waiting (" + missing + ").");
@@ -171,19 +218,21 @@ public final class Duper extends Module {
       this.waiting = 0;
       this.run++;
       this.before = this.total();
+      this.live = this.before;
       this.remaining = this.bursts.getInt();
       this.phase = RUNNING;
+      this.note("run " + this.run + " " + this.current() + " on slot " + this.resolved + ", " + this.before + " carried");
       if (this.report.get()) {
          Game.message(
-            "Duper run " + this.run + "/" + this.plannedRuns() + " " + this.current() + ": slot " + this.resolved + " of menu " + this.syncId
-               + ", " + this.before + " carried."
+            "Duper run " + this.run + "/" + this.plannedRuns() + " " + this.current() + ": slot " + this.resolved + " of window "
+               + this.window() + ", " + this.before + " carried."
          );
       }
    }
 
    /**
-    * Finds the menu, the slot and the item for this run, remembering the last plugin menu id so a
-    * replaced window can still be clicked. Null when everything needed is there.
+    * Finds the menu, the slot and the item for this run, remembering the last plugin window id so a
+    * replaced one can still be clicked. Null when everything needed is there.
     */
    private String resolve() throws Exception {
       Object client = Bridge.client();
@@ -205,7 +254,7 @@ public final class Duper extends Module {
          this.stale = this.syncId;
       }
       DuperPattern pattern = this.current();
-      if (pattern.clicks && open == own && pattern != DuperPattern.HELD_THROW) {
+      if (pattern.container && open == own) {
          return "open the plugin menu you want to race";
       }
       if (pattern == DuperPattern.STALE_WINDOW && this.stale <= 0) {
@@ -219,22 +268,24 @@ public final class Duper extends Module {
          return this.target.get() == DuperTarget.HELD ? "hold the stack you want copied" : "put a stack in slot " + this.slot.getInt();
       }
       this.item = Bridge.call(stack, "method_7909");
+      this.itemName = String.valueOf(Bridge.call(Bridge.call(stack, "method_7964"), "getString"));
       return null;
    }
 
-   /** Resolves the slot: the held item wherever it sits in this menu, or the slot you named. */
+   /** Resolves the slot: the held stack wherever it sits in this menu, or the slot you named. */
    private Object find(Object player) throws Exception {
       int size = ((List<?>)Bridge.field(this.menu, "field_7761")).size();
       if (this.target.get() == DuperTarget.SLOT) {
          this.resolved = Math.min(this.slot.getInt(), size - 1);
          return this.filled(this.resolved);
       }
-      Object held = Bridge.call(Bridge.call(player, "method_31548"), "method_7391");
+      Object inventory = Bridge.call(player, "method_31548");
+      Object held = Bridge.call(inventory, "method_7391");
       if (held == null || (Boolean)Bridge.call(held, "method_7960")) {
          return null;
       }
       Object wanted = Bridge.call(held, "method_7909");
-      int selected = ((Number)Bridge.call(Bridge.call(player, "method_31548"), "method_67532")).intValue();
+      int selected = ((Number)Bridge.call(inventory, "method_67532")).intValue();
       int hotbar = size - 9 + Math.max(0, Math.min(8, selected));
       Object stack = this.filled(hotbar);
       if (stack != null && Bridge.call(stack, "method_7909") == wanted) {
@@ -264,10 +315,12 @@ public final class Duper extends Module {
    private int total() throws Exception {
       int count = 0;
       Object player = Bridge.field(Bridge.client(), "field_1724");
+      if (player == null) {
+         return this.live;
+      }
       Object inventory = Bridge.call(player, "method_31548");
       for (int index = 0; index < 36; index++) {
-         Object stack = Game.invoke(inventory, "method_5438", new String[]{"int"}, index);
-         count += this.sizeOf(stack);
+         count += this.sizeOf(Game.invoke(inventory, "method_5438", new String[]{"int"}, index));
       }
       Object own = Bridge.field(player, "field_7498");
       if (this.menu != own) {
@@ -293,8 +346,9 @@ public final class Duper extends Module {
          this.setEnabled(false);
          return;
       }
-      if (this.current().clicks && !this.current().stale && Bridge.field(player, "field_7512") != this.menu) {
-         Game.message("Duper: the menu changed under it, counting what there is.");
+      DuperPattern pattern = this.current();
+      if (pattern.clicks && !this.tolerant(pattern) && Bridge.field(player, "field_7512") != this.menu) {
+         this.note("menu changed, counting what there is");
          this.waiting = this.settle.getInt();
          this.phase = SETTLING;
          return;
@@ -322,14 +376,18 @@ public final class Duper extends Module {
       }
       int after = this.total();
       int change = after - this.before;
+      this.live = after;
+      this.results.put(this.current(), change);
+      this.note(this.current() + ": " + this.before + " -> " + after + " (" + (change >= 0 ? "+" : "") + change + ")");
       if (this.report.get()) {
          Game.message(
             "Duper run " + this.run + " " + this.current() + ": " + this.before + " -> " + after + " (" + (change >= 0 ? "+" : "") + change
-               + ") after " + this.sent + " clicks."
+               + ") after " + this.sent + " sent."
          );
       }
       if (change > 0 && this.stopOnGain.get()) {
          Game.message("Duper: " + this.current() + " moved the count up. Stopping; check the container before you trust it.");
+         this.note("gain on " + this.current() + ", stopped");
          this.setEnabled(false);
          return;
       }
@@ -343,6 +401,7 @@ public final class Duper extends Module {
       if (done) {
          if (this.pattern.get() == DuperPattern.AUTO) {
             Game.message("Duper: no pattern changed the count here. This server does not leave these seams open.");
+            this.note("sweep finished, nothing moved");
          }
          this.setEnabled(false);
          return;
@@ -351,23 +410,49 @@ public final class Duper extends Module {
       this.waiting = 0;
    }
 
+   private int window() {
+      return this.current() == DuperPattern.STALE_WINDOW ? this.stale : this.current() == DuperPattern.DROP_SPAM ? 0 : this.syncId;
+   }
+
+   private int throwButton() {
+      return this.keepStack.get() ? 0 : 1;
+   }
+
    private void burst(Object client, Object player) throws Exception {
       int slot = this.resolved;
       int count = this.clicks.getInt();
       switch (this.current()) {
-         case HELD_THROW:
-            for (int index = 0; index < count; index++) {
-               this.click(client, player, this.syncId, slot, this.button.getInt(), "field_7795");
-            }
-            break;
          case GUI_RACE:
             for (int index = 0; index < count; index++) {
                this.click(client, player, this.syncId, slot, 0, "field_7790");
             }
             break;
+         case SHIFT_SPAM:
+            for (int index = 0; index < count; index++) {
+               this.click(client, player, this.syncId, slot, 0, "field_7794");
+            }
+            break;
+         case DOUBLE_PICKUP:
+            for (int index = 0; index < count; index++) {
+               this.click(client, player, this.syncId, slot, 0, "field_7790");
+               this.click(client, player, this.syncId, slot, 0, "field_7793");
+            }
+            break;
+         case SWAP_RACE:
+            for (int index = 0; index < count; index++) {
+               this.click(client, player, this.syncId, slot, Math.min(8, this.button.getInt()), "field_7791");
+               this.click(client, player, this.syncId, slot, this.throwButton(), "field_7795");
+            }
+            break;
          case STALE_WINDOW:
             for (int index = 0; index < count; index++) {
                this.click(client, player, this.stale, slot, 0, "field_7790");
+            }
+            break;
+         case DROP_SPAM:
+            int own = 36 + ((Number)Bridge.call(Bridge.call(player, "method_31548"), "method_67532")).intValue();
+            for (int index = 0; index < count; index++) {
+               this.click(client, player, 0, own, this.throwButton(), "field_7795");
             }
             break;
          case COMMAND_RACE:
@@ -386,7 +471,11 @@ public final class Duper extends Module {
             this.kill(client);
             this.remaining = 1;
             break;
+         case HELD_THROW:
          default:
+            for (int index = 0; index < count; index++) {
+               this.click(client, player, this.syncId, slot, this.throwButton(), "field_7795");
+            }
             break;
       }
    }
@@ -394,14 +483,11 @@ public final class Duper extends Module {
    /** No logout packet: the channel goes down under the server, so the drop races the save. */
    private void kill(Object client) {
       try {
-         Object handler = Bridge.call(client, "method_1562");
-         Object connection = Bridge.call(handler, "method_48296");
-         Object channel = Bridge.field(connection, "field_11651");
-         Game.invoke(channel, "close", new String[0]);
+         Object connection = Bridge.call(Bridge.call(client, "method_1562"), "method_48296");
+         Game.invoke(Bridge.field(connection, "field_11651"), "close", new String[0]);
       } catch (LinkageError | Exception hardFailed) {
          try {
-            Object handler = Bridge.call(client, "method_1562");
-            Bridge.call(handler, "method_47658");
+            Bridge.call(Bridge.call(client, "method_1562"), "method_47658");
          } catch (LinkageError | Exception softFailed) {
             Game.message("Duper: could not drop the connection: " + message(hardFailed));
          }
@@ -436,12 +522,10 @@ public final class Duper extends Module {
          return true;
       }
       if (argument.equalsIgnoreCase("cmd") || argument.equalsIgnoreCase("command")) {
-         if (rest.strip().isEmpty()) {
-            Game.message("Duper command: " + duper.command.get());
-         } else {
+         if (!rest.strip().isEmpty()) {
             duper.command.set(rest.strip());
-            Game.message("Duper command: " + duper.command.get());
          }
+         Game.message("Duper command: " + duper.command.get());
          return true;
       }
       Game.message(status());
@@ -458,11 +542,74 @@ public final class Duper extends Module {
       }
       if (!duper.enabled) {
          return "Duper idle: " + duper.pattern.get() + ", " + duper.clicks.getInt() + " x " + duper.bursts.getInt() + ", target "
-            + (duper.target.get() == DuperTarget.HELD ? "held item" : "slot " + duper.slot.getInt());
+            + (duper.target.get() == DuperTarget.HELD ? "held stack" : "slot " + duper.slot.getInt());
       }
-      String phase = duper.phase == WAITING
-         ? "waiting" + (duper.blocked.isEmpty() ? "" : " (" + duper.blocked + ")")
-         : duper.phase == RUNNING ? "run " + duper.run + ", " + duper.remaining + " bursts left" : "settling";
-      return "Duper " + duper.current() + ": " + phase + ", " + duper.sent + " sent";
+      return "Duper " + duper.current() + ": " + duper.phaseName() + ", " + duper.sent + " sent";
+   }
+
+   public String phaseName() {
+      return this.phase == WAITING
+         ? "waiting" + (this.blocked.isEmpty() ? "" : " (" + this.blocked + ")")
+         : this.phase == RUNNING ? "running" : "settling";
+   }
+
+   public int phase() {
+      return this.phase;
+   }
+
+   public int run() {
+      return this.run;
+   }
+
+   public int planned() {
+      return this.plannedRuns();
+   }
+
+   public int burstsLeft() {
+      return this.remaining;
+   }
+
+   public int burstsPlanned() {
+      return this.bursts.getInt();
+   }
+
+   public int sent() {
+      return this.sent;
+   }
+
+   public int before() {
+      return this.before;
+   }
+
+   public int live() {
+      return this.live;
+   }
+
+   public int slotUsed() {
+      return this.resolved;
+   }
+
+   public int windowUsed() {
+      return this.window();
+   }
+
+   public String itemName() {
+      return this.itemName;
+   }
+
+   public String blocked() {
+      return this.blocked;
+   }
+
+   public int ticksLeft() {
+      return this.waiting;
+   }
+
+   public List<String> lines() {
+      return new ArrayList<>(this.log);
+   }
+
+   public Map<DuperPattern, Integer> results() {
+      return new LinkedHashMap<>(this.results);
    }
 }
