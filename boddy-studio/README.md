@@ -33,12 +33,22 @@ Set `BODDY_WINEDEBUG=warn+all` to get the full log back.
 Studio's built-in login window needs Microsoft WebView2, which does not run here, so it shows
 "An error occurred while launching Studio login". Choose **Login via Browser** instead:
 
-1. Firefox opens inside the Boddy desktop (the launcher sets Wine's browser to `firefox-esr`).
+1. Firefox opens inside the Boddy desktop. Wine hands the link to `studio --open-url`, which starts Firefox
+   with a clean environment (no Wine variables, signal state or raised file limit), Firefox's seccomp sandboxes off
+   (they conflict with proot), and a separate low-memory profile in `~/.local/share/roblox-studio/firefox-profile`.
 2. Sign in to Roblox there.
 3. When Firefox asks to open the `roblox-studio-auth` link, allow it. The launcher hands the link to the running Studio.
 
 The launcher registers itself for `roblox-studio-auth:` links in `~/.local/share/applications` and `~/.config/mimeapps.list`.
 Sign in from Firefox in the Boddy desktop, not the phone's browser: Android cannot pass the link back to Studio.
+
+If Firefox closes unexpectedly, a dialog says why (crash, or killed for memory) and its log is saved to
+`Downloads/Boddy-Studio-firefox.log`.
+
+## Storage and offline use
+
+After a successful install the downloaded package archives are deleted, and only the newest previous Studio is kept as a backup.
+If the update check fails (offline, or a certificate problem) and Studio is installed, the installed version opens.
 
 ## Tests
 
