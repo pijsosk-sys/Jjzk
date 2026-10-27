@@ -31,3 +31,19 @@ Set `BODDY_WINEDEBUG=warn+all` to get the full log back.
 ## Tests
 
 `python3 -I test_launcher.py`
+
+## Rebuilding the APK
+
+`rebuild_apk.py` swaps in this launcher, updates the embedded `boddy-studio-fix-source.zip` and bumps `versionCode`.
+Every other entry, including `classes.dex` and native libraries, is copied unchanged with its original compression.
+Android build-tools provide `zipalign` and `apksigner`:
+
+```
+python3 rebuild_apk.py Boddy-Studio-Compat.apk unsigned.apk 4
+zipalign -p -f 4 unsigned.apk aligned.apk
+apksigner sign --ks boddy-studio.jks --ks-key-alias boddy --out Boddy-Studio-Compat-v4.apk aligned.apk
+```
+
+The original signing key was not shipped, so a build signed with a new key cannot update an installed copy in place.
+Keep the keystore outside the repo, and sign later builds with that same key so they install as updates.
+The app copies `assets/boddy/*` into `/opt/boddy` every time the desktop starts, so a new launcher takes effect on the next start.
