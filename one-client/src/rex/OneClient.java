@@ -19,7 +19,7 @@ import net.fabricmc.api.ClientModInitializer;
  * features it alone had are Krypton module rows. Right Shift opens the one menu; the rest is chat.
  */
 public final class OneClient implements ClientModInitializer {
-   public static final String VERSION = "1.0.0-one.3";
+   public static final String VERSION = "1.0.0-one.4";
    private static final String[] PARTS = {
       "dev.donut.client.DonutClient",
       "dev.krypton.client.KryptonClient",
@@ -128,6 +128,10 @@ public final class OneClient implements ClientModInitializer {
             case "list":
                list((argument + " " + extra).strip());
                break;
+            case "dupe":
+            case "duper":
+               Duper.chat(argument, extra);
+               break;
             case "mats":
             case "materials":
                materials();
@@ -142,11 +146,11 @@ public final class OneClient implements ClientModInitializer {
                break;
             case "keys":
                Game.message("Right Shift: the menu. Nothing else is bound.");
-               Game.message(".one list [category|text] | toggle <module> | on/off <module> | mats | config save <id> [name] | config load <id> | donut | status");
+               Game.message(".one list [category|text] | toggle <module> | on/off <module> | mats | dupe [cmd <text>] | config save <id> [name] | config load <id> | donut | status");
                Game.message(".autobuild / .build: setup | start | pause | resume | stop | status | list | creative on/off");
                break;
             default:
-               Game.message(".one status | list | toggle <module> | on/off <module> | mats | config | donut | keys");
+               Game.message(".one status | list | toggle <module> | on/off <module> | mats | dupe | config | donut | keys");
          }
       } catch (LinkageError | Exception failure) {
          Game.message("One: " + failure.getMessage());

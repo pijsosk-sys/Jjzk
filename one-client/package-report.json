@@ -1,7 +1,7 @@
 {
   "output": "/home/user/Jjzk/output/REX-One-1.21.11.jar",
-  "size_bytes": 10721783,
-  "sha256": "b28220981f1717883e63177b16d1599b532c99095634a8ece616f1c7f2adf46b",
+  "size_bytes": 10727593,
+  "sha256": "a022c26569d721bb7727c907acf98a789ffc17decd63033810df83b687ef219f",
   "entrypoint": "rex.OneClient",
   "folded_entrypoints": [
     "dev.donut.client.DonutClient",
@@ -26,6 +26,7 @@
     "rex/Duper$1.class",
     "rex/Duper.class",
     "rex/DuperPattern.class",
+    "rex/DuperTarget.class",
     "rex/LightESP$Target.class",
     "rex/LightESP.class",
     "rex/Modules.class",

@@ -4,7 +4,7 @@ import hashlib,json,re,zipfile
 ROOT=Path(__file__).resolve().parent
 INPUT=ROOT/'input.jar'
 OUTPUT=ROOT.parent/'output'/'REX-One-1.21.11.jar'
-VERSION='1.0.0-one.3'
+VERSION='1.0.0-one.4'
 NAME='REX One'
 ENTRY='rex.OneClient'
 NOTES='''REX One — Minecraft 1.21.11, Java 21, version """+VERSION+"""
@@ -26,6 +26,7 @@ One surface
   .one                     subsystems, builder tempo, duper state
   .one list [category|text]  every module, enabled ones bracketed; text filters by name
   .one mats                what the loaded blueprint still needs, before it stalls on it
+  .one dupe [cmd <text>]   duper state, the patterns, and the command COMMAND_RACE sends
   .one toggle <module>     also: .one on <module> | .one off <module>  (prefixes work)
   .one config save <id> [name] | load <id> | list | flush
   .one donut               legacy Donut settings screen
@@ -58,28 +59,30 @@ Light ESP (Render)
   default, no keybind.
 
 Duper (Misc)
-  Container clicks sent faster than the server can answer them, in the orders that have historically
-  desynchronised an open menu. Toggling it on prints what the pattern does and what you have to set
-  up, then waits for the container and the stack — naming whatever it is still missing — runs its
-  bursts, waits out Settle, counts that item across every slot of the menu again and reports the
-  difference. That count, not a claim, is how you tell whether a pattern does anything here.
-    Pattern        THROW_RACE   repeated throws of one slot against one local state
-                   MOVE_RACE    shift-move and throw the same slot, same tick
-                   CURSOR_SPLIT pick up the slot and throw the cursor, repeatedly
-                   SWAP_RACE    swap the slot into a hotbar slot and throw it, same tick
-                   CLOSE_RACE   shift-move, then close the container in the same tick
-    Clicks         clicks per burst, all inside one client tick
-    Bursts         bursts per run; Burst Gap puts ticks between them, zero means one tick
-    Runs           whole cycles, each counted and reported on its own
-    Settle         ticks to wait for the server before counting
-    Slot           menu slot index, or -1 for the held hotbar slot in whatever menu is open
-    Button         throw 0 drops one item, 1 drops the stack; swap uses it as the hotbar slot
-    Arm Timeout    seconds to wait for the container and the stack; zero refuses instead of waiting
-    Container Only refuses to run against the bare player inventory
-    Stop On Gain   ends the remaining runs the moment a run counts more than it started with
-    Report         the chat lines described above
-  It stops if the menu changes under it. Click spam of this shape is exactly what server-side
-  logging looks for, so it is an account risk.
+  The plain click race is dead and has been since 1.17: every click carries the menu's revision now,
+  and on a mismatch the server resends the whole menu instead of applying anything. That is why the
+  earlier version did nothing. What is left is not in vanilla's hands, so this aims there instead:
+  plugin menus that handle one click more than once, plugin menus that never check which window a
+  click came from, economy commands that read an inventory before they empty it, and the save that
+  runs when a connection dies. It works on whatever is in your hand.
+    AUTO           the default: one run per pattern, counted separately, and it names the one that
+                   moved the number, or says plainly that this server leaves no seam open
+    GUI_RACE       several clicks on one slot of a plugin menu inside a single tick
+    STALE_WINDOW   keeps clicking the window id the plugin has already replaced
+    COMMAND_RACE   one command several times in a tick; set it with .one dupe cmd /sell all
+    LOGOUT         drops the stack, then kills the socket with no logout packet, so the drop races
+                   the save; reconnect and compare, nothing can be counted for you while gone
+    HELD_THROW     the vanilla race, kept as the baseline the others are measured against
+  Target HELD finds the held stack wherever it sits in the open menu, hotbar first; Target SLOT uses
+  the index you name. Clicks per burst, Bursts per run, Burst Gap in ticks, Settle before counting,
+  Arm Timeout in seconds while it waits for the item, Stop On Gain to end the sweep on the first
+  gain. Toggling it on prints what the pattern does and what to set up, then it names whatever it is
+  still waiting for.
+  Counting covers your 36 inventory slots plus the open container's own slots, by item, so a copy
+  that lands anywhere you can reach is counted. The count is the verdict; there is no claim here
+  that any of it works on a given server.
+  Click and command spam of this shape is exactly what server-side logging looks for, so it is an
+  account risk, and LOGOUT ends the session by design.
 
 Build Tempo (Misc)
   Pacing for the unified builder, on by default; switch it off for the original cadence.
@@ -172,7 +175,7 @@ def main():
         assert ENTRY.replace('.','/')+'.class' in names
         for module in ('rex/LightESP','rex/BuildTempo','rex/BuildPatience','rex/Duper','rex/DuperPattern',
                        'rex/DonutFeature','rex/DonutFly','rex/DonutStorage','rex/DonutSpawner','rex/DonutChunks',
-                       'rex/DonutHud','rex/Modules'):assert module+'.class' in names
+                       'rex/DonutHud','rex/Modules','rex/DuperTarget'):assert module+'.class' in names
         for config in metadata['mixins']:
             mixins=json.loads(out.read(config));package=mixins['package'].replace('.','/')
             for name in mixins.get('client',[])+mixins.get('mixins',[]):
