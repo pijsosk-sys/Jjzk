@@ -15,4 +15,9 @@ if [ -f tools/asm.jar ]; then
   java -cp "patchbuild:verify" DispatchTest
   java -cp "patchbuild:$CP" FlowCheck patched
 fi
+# Name gate: every intermediary name the sources reach for by string must exist in this version.
+# Needs maps/ with client.txt and Fabric intermediary; see tools-src/mapidx.py.
+if [ -f maps/client.txt ]; then
+  python3 tools-src/checknames.py maps src | tail -1
+fi
 python3 build_one.py

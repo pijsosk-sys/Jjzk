@@ -2,6 +2,7 @@ package rex;
 
 import dev.krypton.core.managers.ModuleManager;
 import dev.krypton.core.module.Module;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.LinkedHashMap;
@@ -19,13 +20,20 @@ public final class Modules {
 
    public static void add(ModuleManager manager, String className) {
       try {
-         Module module = (Module)Class.forName(className).getDeclaredConstructor().newInstance();
+         Constructor<?> constructor = Class.forName(className).getDeclaredConstructor();
+         constructor.setAccessible(true);
+         Module module = (Module)constructor.newInstance();
          if (register == null) {
             register = ModuleManager.class.getDeclaredMethod("register", Module.class);
             register.setAccessible(true);
          }
          register.invoke(manager, module);
          registered++;
+         // A module that ships enabled never had onEnable called, so its handlers were never on the
+         // bus. The config pass that follows turns it off again if that is what was saved.
+         if (module.enabled) {
+            module.onEnable();
+         }
       } catch (Throwable failure) {
          Throwable cause = failure instanceof InvocationTargetException && failure.getCause() != null ? failure.getCause() : failure;
          failures.put(className, cause.toString());

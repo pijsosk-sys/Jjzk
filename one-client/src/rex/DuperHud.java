@@ -56,9 +56,14 @@ public final class DuperHud extends Module {
 
    /** Called from the screen mixin so an open container cannot cover the panel. */
    public static void overlay(class_332 graphics, float delta) {
-      DuperHud hud = instance;
-      if (hud != null && hud.enabled && hud.overContainers.get()) {
-         hud.draw(graphics);
+      try {
+         DuperHud hud = instance;
+         if (hud != null && hud.enabled && hud.overContainers.get()) {
+            hud.draw(graphics);
+         }
+      } catch (Throwable escaped) {
+         // Nothing may travel from here into the screen's own render pass.
+         System.err.println("[ONE] Duper HUD overlay: " + escaped);
       }
    }
 
@@ -86,6 +91,10 @@ public final class DuperHud extends Module {
          return;
       }
       GuiPainter painter = GuiPainter.wca;
+      if (painter == null || painter.at) {
+         // No painter yet, or something else holds it and a second begin would throw.
+         return;
+      }
       painter.tne(graphics);
       try {
          this.panel(painter, duper);
