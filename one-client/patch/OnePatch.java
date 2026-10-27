@@ -139,11 +139,70 @@ public final class OnePatch {
         node.methods.add(idle(node));
         node.methods.add(driver());
         changes.add("paced dispatcher");
+        node.methods.add(waited(node, tick));
+        earlyFinish(tick, changes);
         System.out.println(node.name + ": " + String.join(", ", changes));
-        if (changes.size() != 7) {
+        if (changes.size() != 8) {
             throw new IllegalStateException("Builder patches: " + changes);
         }
         return node;
+    }
+
+    /** Ticks since the placement in flight was sent, or zero when nothing is in flight. */
+    static MethodNode waited(ClassNode node, MethodNode tick) {
+        FieldInsnNode sent = null;
+        for (AbstractInsnNode instruction : tick.instructions.toArray()) {
+            if (instruction instanceof FieldInsnNode field && field.name.equals("sentTick")) {
+                sent = field;
+                break;
+            }
+        }
+        if (sent == null) {
+            throw new IllegalStateException("No sentTick read");
+        }
+        MethodNode waited = new MethodNode(Opcodes.ACC_PUBLIC, "rex$waited", "()I", null, null);
+        InsnList code = waited.instructions;
+        LabelNode flight = new LabelNode(new Label());
+        String pending = fieldDescriptor(node, "pending");
+        code.add(new VarInsnNode(Opcodes.ALOAD, 0));
+        code.add(new FieldInsnNode(Opcodes.GETFIELD, node.name, "pending", pending));
+        code.add(new JumpInsnNode(Opcodes.IFNONNULL, flight));
+        code.add(new InsnNode(Opcodes.ICONST_0));
+        code.add(new InsnNode(Opcodes.IRETURN));
+        code.add(flight);
+        code.add(new FrameNode(Opcodes.F_SAME, 0, null, 0, null));
+        code.add(new VarInsnNode(Opcodes.ALOAD, 0));
+        code.add(new FieldInsnNode(Opcodes.GETFIELD, node.name, "tick", "I"));
+        code.add(new VarInsnNode(Opcodes.ALOAD, 0));
+        code.add(new FieldInsnNode(Opcodes.GETFIELD, node.name, "pending", pending));
+        code.add(new FieldInsnNode(Opcodes.GETFIELD, sent.owner, "sentTick", "I"));
+        code.add(new InsnNode(Opcodes.ISUB));
+        code.add(new InsnNode(Opcodes.IRETURN));
+        return waited;
+    }
+
+    /** Finishing on the client's own prediction is an extra way into the same branch. */
+    static void earlyFinish(MethodNode tick, List<String> changes) {
+        for (AbstractInsnNode instruction : tick.instructions.toArray()) {
+            if (!(instruction instanceof FieldInsnNode field) || !field.name.equals("acknowledged")) {
+                continue;
+            }
+            AbstractInsnNode read = field.getPrevious();
+            AbstractInsnNode load = read == null ? null : read.getPrevious();
+            if (!(field.getNext() instanceof JumpInsnNode branch) || branch.getOpcode() != Opcodes.IFNE
+                    || load == null || load.getOpcode() != Opcodes.ALOAD) {
+                throw new IllegalStateException("Unexpected acknowledgement branch");
+            }
+            InsnList head = new InsnList();
+            head.add(new VarInsnNode(Opcodes.ALOAD, 0));
+            head.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL, CONTROLLER, "rex$waited", "()I", false));
+            head.add(new MethodInsnNode(Opcodes.INVOKESTATIC, TEMPO, "earlyFinish", "(I)Z", false));
+            head.add(new JumpInsnNode(Opcodes.IFNE, branch.label));
+            tick.instructions.insertBefore(load, head);
+            changes.add("optional prediction finish");
+            return;
+        }
+        throw new IllegalStateException("No acknowledgement branch");
     }
 
     /** True while no placement is armed or waiting, so extra steps only advance the queue. */
@@ -218,26 +277,51 @@ public final class OnePatch {
         return node;
     }
 
+    /** Rebuilds registerAll as guarded, named registrations and appends this build's own modules. */
     static ClassNode modules(ClassNode node) {
         MethodNode registerAll = method(node, "registerAll", "()V");
-        AbstractInsnNode last = registerAll.instructions.getLast();
-        while (last != null && last.getOpcode() != Opcodes.RETURN) {
-            last = last.getPrevious();
+        List<String> order = new ArrayList<>();
+        for (AbstractInsnNode instruction : registerAll.instructions.toArray()) {
+            if (!(instruction instanceof TypeInsnNode created) || created.getOpcode() != Opcodes.NEW) {
+                continue;
+            }
+            AbstractInsnNode init = created.getNext();
+            if (init != null && init.getOpcode() == Opcodes.DUP) {
+                init = init.getNext();
+            }
+            if (init instanceof MethodInsnNode call && call.getOpcode() == Opcodes.INVOKESPECIAL
+                    && call.name.equals("<init>") && call.owner.equals(created.desc)
+                    && call.getNext() instanceof MethodInsnNode next && next.name.equals("register")) {
+                order.add(created.desc);
+            }
         }
-        if (last == null) {
-            throw new IllegalStateException("registerAll has no return");
+        if (order.size() < 90) {
+            throw new IllegalStateException("Only found " + order.size() + " modules");
         }
-        InsnList added = new InsnList();
         String[] names = {"rex/LightESP", TEMPO, "rex/Duper", "rex/DonutFly", "rex/DonutStorage", "rex/DonutSpawner", "rex/DonutChunks", "rex/DonutHud"};
         for (String module : names) {
-            added.add(new VarInsnNode(Opcodes.ALOAD, 0));
-            added.add(new TypeInsnNode(Opcodes.NEW, module));
-            added.add(new InsnNode(Opcodes.DUP));
-            added.add(new MethodInsnNode(Opcodes.INVOKESPECIAL, module, "<init>", "()V", false));
-            added.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL, node.name, "register", "(L" + MODULE + ";)V", false));
+            if (!order.contains(module)) {
+                order.add(module);
+            }
         }
-        registerAll.instructions.insertBefore(last, added);
-        System.out.println(node.name + ": registered " + String.join(", ", names));
+        registerAll.instructions.clear();
+        registerAll.tryCatchBlocks.clear();
+        registerAll.localVariables = null;
+        for (String module : order) {
+            registerAll.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
+            registerAll.instructions.add(new LdcInsnNode(module.replace('/', '.')));
+            registerAll.instructions.add(new MethodInsnNode(Opcodes.INVOKESTATIC, "rex/Modules", "add",
+                    "(Ldev/krypton/core/managers/ModuleManager;Ljava/lang/String;)V", false));
+        }
+        registerAll.instructions.add(new FieldInsnNode(Opcodes.GETSTATIC, "dev/krypton/client/KryptonClient", "instance",
+                "Ldev/krypton/client/KryptonClient;"));
+        registerAll.instructions.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL, "dev/krypton/client/KryptonClient", "events",
+                "()Ldev/krypton/core/managers/EventManager;", false));
+        registerAll.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
+        registerAll.instructions.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL, "dev/krypton/core/managers/EventManager", "register",
+                "(Ljava/lang/Object;)V", false));
+        registerAll.instructions.add(new InsnNode(Opcodes.RETURN));
+        System.out.println(node.name + ": " + order.size() + " modules registered one by one, including " + String.join(", ", names));
         return node;
     }
 

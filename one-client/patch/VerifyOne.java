@@ -20,13 +20,15 @@ public final class VerifyOne {
         new ClassReader(Files.readAllBytes(Path.of(args[0], SOURCE + ".class"))).accept(patched, 0);
         MethodNode tick = find(patched, "tick");
         MethodNode idle = find(patched, "rex$idle");
-        for (MethodNode method : List.of(tick, idle)) {
+        MethodNode waited = find(patched, "rex$waited");
+        for (MethodNode method : List.of(tick, idle, waited)) {
             retarget(method);
         }
 
         ClassWriter writer = new ClassWriter(0);
         writer.visit(Opcodes.V21, Opcodes.ACC_PUBLIC, HOST, null, "java/lang/Object", null);
-        writer.visitField(Opcodes.ACC_PUBLIC, "pending", "Ljava/lang/Object;", null, null).visitEnd();
+        writer.visitField(Opcodes.ACC_PUBLIC, "pending", "LPendingStub;", null, null).visitEnd();
+        writer.visitField(Opcodes.ACC_PUBLIC, "tick", "I", null, null).visitEnd();
         writer.visitField(Opcodes.ACC_PUBLIC, "prepared", "Ljava/lang/Object;", null, null).visitEnd();
         writer.visitField(Opcodes.ACC_PUBLIC, "steps", "I", null, null).visitEnd();
         writer.visitField(Opcodes.ACC_PUBLIC, "running", "Z", null, null).visitEnd();
@@ -35,6 +37,7 @@ public final class VerifyOne {
         once(writer);
         tick.accept(writer);
         idle.accept(writer);
+        waited.accept(writer);
         writer.visitEnd();
 
         Path out = Path.of(args[1]);
@@ -70,7 +73,10 @@ public final class VerifyOne {
             }
             if (instruction instanceof FieldInsnNode field && field.owner.equals(SOURCE)) {
                 field.owner = HOST;
-                field.desc = "Ljava/lang/Object;";
+                field.desc = field.name.equals("pending") ? "LPendingStub;" : field.name.equals("tick") ? "I" : "Ljava/lang/Object;";
+            }
+            if (instruction instanceof FieldInsnNode field && field.owner.endsWith("$Pending")) {
+                field.owner = "PendingStub";
             }
             if (instruction instanceof FrameNode frame) {
                 replace(frame.local);

@@ -10,7 +10,7 @@ java  $ASM -cp patchbuild OnePatch input.jar patched
 # Verification needs ow2 asm 9.9 in tools/ (asm, asm-tree, asm-util, asm-analysis).
 if [ -f tools/asm.jar ]; then
   CP="tools/asm.jar:tools/asm-tree.jar:tools/asm-analysis.jar"
-  javac -nowarn -cp "$CP" -d patchbuild patch/VerifyOne.java patch/TempoStub.java patch/DispatchTest.java patch/FlowCheck.java
+  javac -nowarn -cp "$CP" -d patchbuild patch/VerifyOne.java patch/TempoStub.java patch/PendingStub.java patch/DispatchTest.java patch/FlowCheck.java
   java -cp "patchbuild:$CP" VerifyOne patched verify
   java -cp "patchbuild:verify" DispatchTest
   java -cp "patchbuild:$CP" FlowCheck patched

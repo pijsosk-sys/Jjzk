@@ -19,7 +19,7 @@ import net.fabricmc.api.ClientModInitializer;
  * features it alone had are Krypton module rows. Right Shift opens the one menu; the rest is chat.
  */
 public final class OneClient implements ClientModInitializer {
-   public static final String VERSION = "1.0.0-one.2";
+   public static final String VERSION = "1.0.0-one.3";
    private static final String[] PARTS = {
       "dev.donut.client.DonutClient",
       "dev.krypton.client.KryptonClient",
@@ -116,13 +116,21 @@ public final class OneClient implements ClientModInitializer {
                      Game.message("  " + part.getKey() + ": " + part.getValue());
                   }
                }
+               Game.message("  " + Modules.count() + " modules registered");
+               for (Map.Entry<String, String> broken : Modules.failures().entrySet()) {
+                  Game.message("  " + broken.getKey() + ": " + broken.getValue());
+               }
                break;
             case "donut":
             case "settings":
                openDonutScreen();
                break;
             case "list":
-               list(argument);
+               list((argument + " " + extra).strip());
+               break;
+            case "mats":
+            case "materials":
+               materials();
                break;
             case "toggle":
             case "on":
@@ -134,11 +142,11 @@ public final class OneClient implements ClientModInitializer {
                break;
             case "keys":
                Game.message("Right Shift: the menu. Nothing else is bound.");
-               Game.message(".one list | toggle <module> | on <module> | off <module> | config save <id> [name] | config load <id> | donut | status");
+               Game.message(".one list [category|text] | toggle <module> | on/off <module> | mats | config save <id> [name] | config load <id> | donut | status");
                Game.message(".autobuild / .build: setup | start | pause | resume | stop | status | list | creative on/off");
                break;
             default:
-               Game.message(".one status | list | toggle <module> | on/off <module> | config | donut | keys");
+               Game.message(".one status | list | toggle <module> | on/off <module> | mats | config | donut | keys");
          }
       } catch (LinkageError | Exception failure) {
          Game.message("One: " + failure.getMessage());
@@ -159,14 +167,14 @@ public final class OneClient implements ClientModInitializer {
             category = candidate;
          }
       }
-      if (!wanted.isEmpty() && category == null) {
-         Game.message("Categories: COMBAT MISC DONUT BASEFINDING RENDER CLIENT");
-         return;
-      }
+      String filter = category == null ? wanted.toLowerCase(Locale.ROOT) : "";
       StringBuilder line = new StringBuilder();
       int count = 0;
       for (Module module : modules()) {
          if (category != null && module.category != category) {
+            continue;
+         }
+         if (!filter.isEmpty() && !module.name.toLowerCase(Locale.ROOT).contains(filter)) {
             continue;
          }
          if (line.length() > 180) {
@@ -179,7 +187,14 @@ public final class OneClient implements ClientModInitializer {
       if (line.length() > 0) {
          Game.message(line.toString());
       }
-      Game.message(count + " modules" + (category == null ? "" : " in " + category.name()) + "; enabled ones are bracketed.");
+      if (count == 0) {
+         Game.message("Nothing matched. Categories: COMBAT MISC DONUT BASEFINDING RENDER CLIENT");
+         return;
+      }
+      Game.message(
+         count + " modules" + (category == null ? "" : " in " + category.name()) + (filter.isEmpty() ? "" : " matching " + filter)
+            + "; enabled ones are bracketed."
+      );
    }
 
    private static void switchModule(String action, String wanted) throws Exception {
@@ -235,6 +250,56 @@ public final class OneClient implements ClientModInitializer {
       } catch (NumberFormatException wrong) {
          throw new IllegalArgumentException("give a config id, a whole number");
       }
+   }
+
+   /** What the loaded blueprint still needs, before it stops mid-build on the first missing stack. */
+   private static void materials() throws Exception {
+      Object controller = Game.invoke(Game.type("dev.donut.client.autobuild.AutoBuilderController"), "get", new String[0]);
+      Object schematic = Bridge.call(controller, "schematic");
+      if (schematic == null) {
+         throw new IllegalStateException("Load a schematic first: .autobuild setup");
+      }
+      if (Bridge.field(Bridge.client(), "field_1687") == null) {
+         throw new IllegalStateException("Join a world first.");
+      }
+      Object snapshot = Game.invoke(
+         Game.type("dev.donut.client.autobuild.MaterialTracker"),
+         "snapshot",
+         new String[]{"net.minecraft.class_310", "dev.donut.client.autobuild.Schematic", "dev.donut.client.autobuild.PlacementTransform"},
+         Bridge.client(),
+         schematic,
+         Bridge.call(controller, "transform")
+      );
+      Game.message(
+         Bridge.call(schematic, "name") + ": " + number(snapshot, "correctBlocks") + "/" + number(snapshot, "totalBlocks") + " placed, "
+            + number(snapshot, "remainingBlocks") + " to go, " + number(snapshot, "conflicts") + " conflicts, "
+            + number(snapshot, "unknownBlocks") + " unplaceable"
+      );
+      int shown = 0;
+      int short_ = 0;
+      for (Object row : (List<?>)Bridge.call(snapshot, "rows")) {
+         int missing = number(row, "missing");
+         if (missing <= 0) {
+            continue;
+         }
+         short_++;
+         if (shown < 12) {
+            shown++;
+            Game.message(
+               "  need " + missing + " more " + Bridge.call(row, "name") + " (have " + (number(row, "hotbar") + number(row, "inventory"))
+                  + ", want " + number(row, "remaining") + ")"
+            );
+         }
+      }
+      if (short_ == 0) {
+         Game.message("  every remaining block is covered by what you are carrying.");
+      } else if (short_ > shown) {
+         Game.message("  and " + (short_ - shown) + " more items short.");
+      }
+   }
+
+   private static int number(Object record, String component) throws Exception {
+      return ((Number)Bridge.call(record, component)).intValue();
    }
 
    private static void openDonutScreen() throws Exception {

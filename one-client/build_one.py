@@ -4,7 +4,7 @@ import hashlib,json,re,zipfile
 ROOT=Path(__file__).resolve().parent
 INPUT=ROOT/'input.jar'
 OUTPUT=ROOT.parent/'output'/'REX-One-1.21.11.jar'
-VERSION='1.0.0-one.2'
+VERSION='1.0.0-one.3'
 NAME='REX One'
 ENTRY='rex.OneClient'
 NOTES='''REX One — Minecraft 1.21.11, Java 21, version """+VERSION+"""
@@ -24,12 +24,20 @@ One surface
   screen is still there behind ".one donut" for the knobs that have no module row yet.
 
   .one                     subsystems, builder tempo, duper state
-  .one list [category]     every module, enabled ones bracketed
+  .one list [category|text]  every module, enabled ones bracketed; text filters by name
+  .one mats                what the loaded blueprint still needs, before it stalls on it
   .one toggle <module>     also: .one on <module> | .one off <module>  (prefixes work)
   .one config save <id> [name] | load <id> | list | flush
   .one donut               legacy Donut settings screen
   .one keys                this list
   .autobuild | .build      setup | start | pause | resume | stop | status | list | creative on/off
+
+Modules
+  KillAura and Auto Totem were already registered and are still where they were, in COMBAT, next to
+  AutoCrystal, TriggerBot, AutoInvTotem, TotemOffhand and HoverTotem; ".one list combat" prints the
+  row. What was wrong is that registerAll was one long sequence of constructor calls, so a module
+  that threw on construction silently took every module after it off the menu. Each of the 113 rows
+  now stands on its own and a failure is named in ".one status".
 
 Donut features as modules
   Fly (Misc)               Donut flight with its ability packets and save handling
@@ -50,22 +58,28 @@ Light ESP (Render)
   default, no keybind.
 
 Duper (Misc)
-  Container clicks sent faster than the server can answer them, in the orders that have
-  historically desynchronised an open menu. Toggling it on runs once, bounded, and switches itself
-  back off.
+  Container clicks sent faster than the server can answer them, in the orders that have historically
+  desynchronised an open menu. Toggling it on prints what the pattern does and what you have to set
+  up, then waits for the container and the stack — naming whatever it is still missing — runs its
+  bursts, waits out Settle, counts that item across every slot of the menu again and reports the
+  difference. That count, not a claim, is how you tell whether a pattern does anything here.
     Pattern        THROW_RACE   repeated throws of one slot against one local state
                    MOVE_RACE    shift-move and throw the same slot, same tick
-                   CURSOR_SPLIT pick up and throw the cursor, repeatedly
+                   CURSOR_SPLIT pick up the slot and throw the cursor, repeatedly
+                   SWAP_RACE    swap the slot into a hotbar slot and throw it, same tick
                    CLOSE_RACE   shift-move, then close the container in the same tick
     Clicks         clicks per burst, all inside one client tick
     Bursts         bursts per run; Burst Gap puts ticks between them, zero means one tick
+    Runs           whole cycles, each counted and reported on its own
+    Settle         ticks to wait for the server before counting
     Slot           menu slot index, or -1 for the held hotbar slot in whatever menu is open
-    Button         throw 0 drops one item, 1 drops the stack
+    Button         throw 0 drops one item, 1 drops the stack; swap uses it as the hotbar slot
+    Arm Timeout    seconds to wait for the container and the stack; zero refuses instead of waiting
     Container Only refuses to run against the bare player inventory
-    Report         chat line with the clicks sent and what the slot held before and after
-  It stops if the menu changes. Whether any pattern does anything depends on that server's version
-  and patches; the report is there so you can see for yourself rather than take a claim on faith.
-  Click spam of this shape is exactly what server-side logging looks for, so it is an account risk.
+    Stop On Gain   ends the remaining runs the moment a run counts more than it started with
+    Report         the chat lines described above
+  It stops if the menu changes under it. Click spam of this shape is exactly what server-side
+  logging looks for, so it is an account risk.
 
 Build Tempo (Misc)
   Pacing for the unified builder, on by default; switch it off for the original cadence.
@@ -79,12 +93,18 @@ Build Tempo (Misc)
     Swap Cooldown    ticks after pulling material into the hotbar (was two).
     Layer Window     blueprint layers eligible at once (was one), fewer walk-backs per layer.
     Candidates       targets examined when choosing the next block (was 256).
+    Trust Prediction finishes a placement on the client's own prediction instead of the server's
+                     acknowledgement, after Prediction Delay ticks. Off by default: it gives up the
+                     confirmation this build is built around, and leans on the revalidation pass and
+                     the final whole-structure check to re-queue anything the server refused. Worth
+                     it on a high ping, where the acknowledgement wait is the whole cost.
     Auto Resume      re-queues deferred blocks after unloaded chunks, lost routes, missing supports
                      and occupied positions, with Retry Delay between tries, backing off every
                      eight tries, and Max Retries without confirmed progress before it stops. A
                      pause you have to clear yourself — your own pause, Freecam, an open menu, death,
                      a vehicle, missing materials, world bounds, a disconnect — is never resumed.
-  Exact-state checks, server acknowledgement and the four-tick stability window are untouched.
+  Exact-state checks and the four-tick stability window are untouched, and the acknowledgement wait
+  stays in place unless you switch Trust Prediction on yourself.
 
 What did not change
   Every other module, mixin, bundled Baritone and Netty jar, asset and resource pack is the merged
@@ -152,7 +172,7 @@ def main():
         assert ENTRY.replace('.','/')+'.class' in names
         for module in ('rex/LightESP','rex/BuildTempo','rex/BuildPatience','rex/Duper','rex/DuperPattern',
                        'rex/DonutFeature','rex/DonutFly','rex/DonutStorage','rex/DonutSpawner','rex/DonutChunks',
-                       'rex/DonutHud'):assert module+'.class' in names
+                       'rex/DonutHud','rex/Modules'):assert module+'.class' in names
         for config in metadata['mixins']:
             mixins=json.loads(out.read(config));package=mixins['package'].replace('.','/')
             for name in mixins.get('client',[])+mixins.get('mixins',[]):

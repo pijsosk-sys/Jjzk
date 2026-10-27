@@ -14,12 +14,21 @@ public final class DispatchTest {
         Object instance = host.getDeclaredConstructor().newInstance();
         running.set(instance, true);
         check("idle with an empty queue", (Boolean)idle.invoke(instance));
-        pending.set(instance, new Object());
+        pending.set(instance, new PendingStub(0));
         check("busy while a placement is in flight", !(Boolean)idle.invoke(instance));
         pending.set(instance, null);
         prepared.set(instance, new Object());
         check("busy while a placement is armed", !(Boolean)idle.invoke(instance));
         prepared.set(instance, null);
+
+        Method waited = host.getMethod("rex$waited");
+        Field tickField = host.getField("tick");
+        check("nothing in flight waited zero ticks", (Integer)waited.invoke(instance) == 0);
+        pending.set(instance, new PendingStub(5));
+        tickField.set(instance, 12);
+        check("in flight for seven ticks, got " + waited.invoke(instance), (Integer)waited.invoke(instance) == 7);
+        pending.set(instance, null);
+        tickField.set(instance, 0);
 
         TempoStub.reset(3, Integer.MAX_VALUE);
         tick.invoke(instance, new Object());

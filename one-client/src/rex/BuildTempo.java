@@ -31,11 +31,18 @@ public final class BuildTempo extends Module {
    public final NumberSetting delay = new NumberSetting("Retry Delay", 10.0, 200.0, 40.0, 10.0);
    public final NumberSetting retries = new NumberSetting("Max Retries", 0.0, 64.0, 32.0, 1.0)
       .describe("Retries without confirmed progress before it stops asking.");
+   public final BooleanSetting trust = new BooleanSetting("Trust Prediction", false)
+      .describe("Finish a placement on the client's own prediction instead of the server's acknowledgement. "
+         + "Faster on a high ping; the revalidation pass and the final check re-queue anything the server refused.");
+   public final NumberSetting trustDelay = new NumberSetting("Prediction Delay", 1.0, 20.0, 2.0, 1.0)
+      .describe("Ticks after sending before the prediction is trusted.");
 
    public BuildTempo() {
       super("Build Tempo", "Placement pacing and automatic retry for Auto Build.", -1, Category.MISC);
       this.addSettings(
-         new Setting[]{this.steps, this.arm, this.ack, this.swap, this.layers, this.candidates, this.resume, this.delay, this.retries}
+         new Setting[]{
+            this.steps, this.arm, this.ack, this.swap, this.layers, this.candidates, this.resume, this.delay, this.retries, this.trust, this.trustDelay
+         }
       );
       this.enabled = true;
       instance = this;
@@ -88,6 +95,11 @@ public final class BuildTempo extends Module {
       return on() ? instance.retries.getInt() : 0;
    }
 
+   /** Called from the controller with the ticks since the placement in flight was sent. */
+   public static boolean earlyFinish(int waited) {
+      return on() && instance.trust.get() && waited >= instance.trustDelay.getInt();
+   }
+
    public static String describe() {
       if (!on()) {
          return "Build Tempo off (original cadence)";
@@ -100,6 +112,7 @@ public final class BuildTempo extends Module {
          + instance.ack.getInt()
          + ", layers "
          + instance.layers.getInt()
-         + (instance.resume.get() ? ", auto resume" : "");
+         + (instance.resume.get() ? ", auto resume" : "")
+         + (instance.trust.get() ? ", trusting prediction after " + instance.trustDelay.getInt() : "");
    }
 }
