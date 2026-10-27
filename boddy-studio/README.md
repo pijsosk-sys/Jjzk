@@ -28,6 +28,18 @@ Wine's own parser skips old `.fon` bitmap fonts and FreeType loads them instead.
 They only showed up because the launcher ran Wine with `WINEDEBUG=warn+all`. It now defaults to `-all,err+all`.
 Set `BODDY_WINEDEBUG=warn+all` to get the full log back.
 
+## Signing in
+
+Studio's built-in login window needs Microsoft WebView2, which does not run here, so it shows
+"An error occurred while launching Studio login". Choose **Login via Browser** instead:
+
+1. Firefox opens inside the Boddy desktop (the launcher sets Wine's browser to `firefox-esr`).
+2. Sign in to Roblox there.
+3. When Firefox asks to open the `roblox-studio-auth` link, allow it. The launcher hands the link to the running Studio.
+
+The launcher registers itself for `roblox-studio-auth:` links in `~/.local/share/applications` and `~/.config/mimeapps.list`.
+Sign in from Firefox in the Boddy desktop, not the phone's browser: Android cannot pass the link back to Studio.
+
 ## Tests
 
 `python3 -I test_launcher.py`

@@ -1,4 +1,4 @@
-import importlib.util,tempfile,zipfile,hashlib,subprocess,ssl,urllib.error
+import os,importlib.util,tempfile,zipfile,hashlib,subprocess,ssl,urllib.error
 from pathlib import Path
 here=Path(__file__).resolve().parent
 # The launcher's Python lives in a heredoc inside the studio shell script; load it from there.
@@ -37,4 +37,17 @@ real=r.urllib.request.urlopen;r.urllib.request.urlopen=intercepted;r.presented_c
 try:r.fetch(r.VERSION_URL);raise AssertionError('certificate failure not reported')
 except r.TlsError as e:assert 'clientsettingscdn.roblox.com' in str(e) and 'update-ca-certificates' in str(e)
 finally:r.urllib.request.urlopen=real
-print('PASS: original CRLF defect reproduced (0 packages), replacement parses 34; destinations, malformed manifests, checksum recovery, safe extraction incl. Windows-style entries, TLS interception reported.')
+# Browser sign-in: handler registration keeps other defaults, Wine browser set once, links validated.
+with tempfile.TemporaryDirectory() as td:
+ p=Path(td);ran=[];r.command=lambda args,*a,**k:ran.append(args)
+ os.environ['XDG_CONFIG_HOME']=str(p/'config');os.environ['XDG_DATA_HOME']=str(p/'data')
+ (p/'config').mkdir();(p/'config/mimeapps.list').write_text('[Default Applications]\ntext/html=firefox-esr.desktop;\n')
+ (p/'prefix').mkdir();r.setup_browser_login('wine',{},p/'prefix');r.setup_browser_login('wine',{},p/'prefix')
+ m=(p/'config/mimeapps.list').read_text()
+ assert 'text/html=firefox-esr.desktop;' in m and 'x-scheme-handler/roblox-studio-auth=boddy-roblox-studio-auth.desktop;' in m
+ assert 'MimeType=x-scheme-handler/roblox-studio-auth;' in (p/'data/applications'/r.AUTH_DESKTOP).read_text()
+ assert len(ran)==1 and 'firefox-esr' in ran[0][-2]
+ for bad in ['roblox-studio-auth:','roblox-studio-auth:a b','roblox-studio-auth:x\n--evil','https://x']:
+  try:r.pass_auth(bad);raise AssertionError('accepted '+repr(bad))
+  except ValueError:pass
+print('PASS: original CRLF defect reproduced (0 packages), replacement parses 34; destinations, malformed manifests, checksum recovery, safe extraction incl. Windows-style entries, TLS interception reported, browser sign-in handler.')

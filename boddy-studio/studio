@@ -181,12 +181,48 @@ def diagnose():
   try:command([w,'--version'],30)
   except Exception as e:say(str(e))
  say('Report does not include account tokens or application configuration files.')
+AUTH_SCHEME='roblox-studio-auth:'
+AUTH_DESKTOP='boddy-roblox-studio-auth.desktop'
+def wine_env(prefix):
+ return dict(os.environ,WINEPREFIX=str(prefix),WINEARCH='win64',WINEDEBUG=os.getenv('BODDY_WINEDEBUG','-all,err+all'),LIBGL_ALWAYS_SOFTWARE='1',QT_X11_NO_MITSHM='1')
+def set_default_handler(mime,desktop):
+ import configparser
+ path=Path(os.getenv('XDG_CONFIG_HOME') or Path.home()/'.config')/'mimeapps.list'
+ cfg=configparser.ConfigParser(interpolation=None,strict=False);cfg.optionxform=str
+ if path.exists():cfg.read(path)
+ if not cfg.has_section('Default Applications'):cfg.add_section('Default Applications')
+ if cfg.get('Default Applications',mime,fallback='')==desktop+';':return
+ cfg.set('Default Applications',mime,desktop+';')
+ path.parent.mkdir(parents=True,exist_ok=True)
+ with path.open('w') as f:cfg.write(f,space_around_delimiters=False)
+def setup_browser_login(wine,env,prefix):
+ # Studio's built-in login needs WebView2, which does not run here. "Login via Browser" opens the
+ # sign-in page through Wine's winebrowser, and roblox.com returns to a roblox-studio-auth: link
+ # that has to be handed back to the running Studio (the same approach as Vinegar).
+ apps=Path(os.getenv('XDG_DATA_HOME') or Path.home()/'.local/share')/'applications';apps.mkdir(parents=True,exist_ok=True)
+ (apps/AUTH_DESKTOP).write_text('[Desktop Entry]\nType=Application\nName=Roblox Studio sign-in\nExec=/opt/boddy/studio %u\nNoDisplay=true\nTerminal=false\nMimeType=x-scheme-handler/roblox-studio-auth;\n')
+ set_default_handler('x-scheme-handler/roblox-studio-auth',AUTH_DESKTOP)
+ if shutil.which('update-desktop-database'):subprocess.run(['update-desktop-database',str(apps)],timeout=60)
+ marker=prefix/'.boddy-browser-login'
+ if not marker.exists():
+  # Wine's default list (xdg-open, firefox, ...) finds no browser in Boddy, which only has firefox-esr.
+  command([wine,'reg','add','HKCU\\Software\\Wine\\WineBrowser','/v','Browsers','/t','REG_SZ','/d','firefox-esr,xdg-open,firefox','/f'],120,env)
+  marker.touch()
+def pass_auth(link):
+ # Called by the browser through the desktop handler; Studio is already running, so no install lock.
+ if len(link)>16384 or not re.fullmatch(r'roblox-studio-auth:[\x21-\x7e]+',link):raise ValueError('Invalid Studio sign-in link')
+ wine=find_wine();studio=ROOT/'Studio'
+ if not wine or not (studio/'RobloxStudioBeta.exe').exists():raise RuntimeError('Studio is not installed; open Studio from the desktop first')
+ say('Passing browser sign-in to Roblox Studio')
+ r=subprocess.run([wine,str(studio/'RobloxStudioBeta.exe'),link],cwd=studio,env=wine_env(ROOT/'prefix'))
+ if r.returncode:raise RuntimeError('Studio did not accept the sign-in (exit code %d)'%r.returncode)
 def main():
  ROOT.mkdir(parents=True,exist_ok=True);CACHE.mkdir(parents=True,exist_ok=True)
+ arg=sys.argv[1] if len(sys.argv)>1 else ''
+ if arg.startswith(AUTH_SCHEME):pass_auth(arg);return
  lock=(ROOT/'launcher.lock').open('w')
  try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
  except BlockingIOError:raise RuntimeError('A Studio launcher is already running')
- arg=sys.argv[1] if len(sys.argv)>1 else ''
  if arg=='--diagnose':diagnose();return
  if arg=='--reset':
   p=ROOT/'prefix'
@@ -194,18 +230,19 @@ def main():
  if arg=='--uninstall':raise RuntimeError('Automatic deletion disabled. Remove installations manually after exporting projects.')
  if not os.getenv('DISPLAY'):raise RuntimeError('Open this launcher inside the Boddy desktop so DISPLAY is set')
  wine=install_wine();prefix=ROOT/'prefix'
- env=dict(os.environ,WINEPREFIX=str(prefix),WINEARCH='win64',WINEDEBUG=os.getenv('BODDY_WINEDEBUG','-all,err+all'),LIBGL_ALWAYS_SOFTWARE='1',QT_X11_NO_MITSHM='1')
+ env=wine_env(prefix)
  command([wine,'--version'],30,env)
  if not (prefix/'.boddy-tested').exists():
   say('Testing Windows command execution before downloading Studio')
   command([wine,'cmd.exe','/c','echo','BODDY_WINE_STARTUP_OK'],180,env)
   (prefix/'.boddy-tested').touch()
- studio=install_studio();args=[wine,str(studio/'RobloxStudioBeta.exe')]
+ studio=install_studio();setup_browser_login(wine,env,prefix);args=[wine,str(studio/'RobloxStudioBeta.exe')]
  if arg and not arg.startswith('--'):
   place=Path(arg).resolve()
   if not place.is_file():raise RuntimeError('Place file does not exist')
   args.append('Z:'+str(place).replace('/','\\'))
  say('Launching real Roblox Studio. A process start alone does not prove the editor works.')
+ say('To sign in, choose "Login via Browser" in Studio, sign in in Firefox, then allow it to open the Roblox Studio sign-in link.')
  result=subprocess.run(args,cwd=studio,env=env)
  say('Studio process exited with code '+str(result.returncode));sys.exit(result.returncode)
 if __name__=='__main__':
@@ -215,7 +252,8 @@ if __name__=='__main__':
 BODDY_PY
 status=${PIPESTATUS[0]}
 echo "Launcher log: $LOG"
-if [ -d "$HOME/Phone/Download" ]; then
+# Sign-in hand-offs from the browser keep their own log and leave the last launch log in Downloads.
+if [ -d "$HOME/Phone/Download" ] && [[ "${1:-}" != roblox-studio-auth:* ]]; then
  cp "$LOG" "$HOME/Phone/Download/Boddy-Studio-launch.log" || true
  echo "Log copied to Downloads/Boddy-Studio-launch.log"
 fi
