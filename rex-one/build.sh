@@ -52,6 +52,15 @@ with zipfile.ZipFile(base) as zin, zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATE
                                    "one menu key, snapshot Light ESP and a pipelined Auto Build with speed presets, "
                                    "a redesigned builder screen and automatic retry.")
             data = (json.dumps(meta, indent=2) + '\n').encode()
+        elif name == 'assets/rex/schematics/kelp-blue-behemoth.litematic':
+            # Saved by a newer Minecraft (data version 4790), so 1.21.11 (4671) refused to load it.
+            # Its block states all exist in 1.21.11; it loads and builds there once stamped 4671.
+            import gzip, struct
+            raw = gzip.decompress(data)
+            for key in (b'MinecraftDataVersion', b'DataVersion'):
+                head = bytes([3]) + struct.pack('>H', len(key)) + key
+                raw = raw.replace(head + struct.pack('>i', 4790), head + struct.pack('>i', 4671))
+            data = gzip.compress(raw, mtime=0)
         elif name == 'README.txt':
             text = data.decode('utf-8')
             text = re.sub(r'version 1\.0\.0-one\.\d+', 'version ' + version, text)

@@ -21,6 +21,15 @@ Build Tempo (Misc)
     Trust Prediction used to pause the build ("No server confirmation") instead of speeding it up;
     it now finishes on the prediction, keeps the position unconfirmed until the server answers,
     and re-queues it if the answer is a different block. Max In Flight bounds how far ahead it runs.
+    Target choice only looked at the first few hundred blocks of the work list, in list order,
+    so on a wide layer it walked back and forth. It now weighs thousands of candidates by distance
+    (Candidates), and when the nearest block cannot be placed from where the player stands it takes
+    a reachable block of the same material instead of walking.
+    After a step the player keeps drifting for a while, and placement waited for the aim to match
+    exactly. It now also accepts the rotation the server already has, when a ray along it clicks a
+    face that places exactly the wanted block, so it places without waiting to come to rest.
+    Holding still to place at the top of a step's jump dropped the player back out of reach, and
+    it could loop walk, jump, arm forever; it no longer arms a placement in mid-air.
     Every delay is now in real client ticks. Before, extra Steps Per Tick also burned through
     cooldowns and counted walking stalls several times per tick, so "Cannot reach" fired about
     three times too early.

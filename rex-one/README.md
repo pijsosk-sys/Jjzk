@@ -29,6 +29,34 @@ commit on this branch holds that decompiled baseline, so `git diff` shows exactl
    "Cannot reach" fired about three times too early. Every delay is now in real client ticks.
 4. **A fixed two-tick pause after every block.** This is now *Place Delay*: 0 in Balanced/Fast,
    2 in Safe.
+5. **It walked back and forth.** Target choice looked only at the first few hundred entries of
+   the work list, in list order, not by distance. It now weighs thousands of candidates. When the
+   nearest block can't be placed from where the player stands, it takes a reachable block of the
+   same material instead of walking.
+6. **It waited for the player to stop drifting.** After every step, placement waited until the
+   aim matched a fixed point exactly. It now also uses the rotation the server already has, when
+   a ray along it clicks a face that places exactly the wanted block.
+7. **Found in game: an endless walk/jump loop.** Mid-jump onto a block, the target came into
+   reach, the builder held still to place, the player dropped back out of reach, and it repeated
+   forever. It no longer arms a placement in mid-air.
+
+## Measured in game
+
+The bundled 15,460-block kelp farm, built in a real Minecraft 1.21.11 singleplayer world. Every
+block was checked on the server afterwards.
+
+| Jar / preset | Blocks placed in 2 min | Rate | Wrong blocks |
+| --- | --- | --- | --- |
+| original one.13 jar | 183 | 1.5 /s | 0 |
+| one.14 Balanced | 614 | 5.1 /s | 0 |
+| one.14 Fast | 846 | 7.0 /s | 0 |
+
+Each pair of runs shared a 4-core machine with software rendering, so these figures are for
+comparing runs with each other; real hardware will be faster. What's left is mostly walking
+between spots (about 40%).
+
+Not solved here: the walking pathfinder can't climb tall narrow builds (the compact kelp tower)
+or get out of a closed box, in either jar.
 
 ## Why it still won't mess up the build
 
@@ -66,6 +94,13 @@ Three columns:
   Start/Pause/Resume, Materials, Cancel, the builder's current reason (click it for the full
   text), and the creative-mode switch.
 
+## Also fixed: the big kelp farm wouldn't load
+
+`assets/rex/schematics/kelp-blue-behemoth.litematic` was saved by a newer Minecraft (data
+version 4790), so 1.21.11 (4671) refused it: "Schematic was saved by a newer Minecraft version".
+Every block state in it exists in 1.21.11, so the build stamps it 4671. It loads and builds in
+game.
+
 ## Also fixed: launch crash
 
 Eleven Krypton/REX mixins (`HeightContextMixin`, `CameraMixin`, `MouseMixin`,
@@ -95,7 +130,19 @@ libraries into `.cache/`. Then the build:
 
 ## In-game test
 
-`test/` holds a real in-game check. `make_house.py` writes a 260-block house: planks, logs,
+`test/` holds a real in-game check, run against a real Minecraft client:
+
+1. Download the official 1.21.11 client and its libraries from Mojang, Fabric Loader 0.18.4 and
+   Fabric API from Fabric's maven, and the game assets minus sounds.
+2. Launch it headless: `KnotClient` (Fabric's launcher) under Xvfb, a virtual screen, with Mesa
+   software OpenGL, in offline mode, with `--quickPlaySingleplayer` into a flat world.
+3. `smoke/` is a small extra mod that takes over once the world loads. It runs `/gamemode`,
+   `/give` and `/fill` on the integrated server, loads the schematic into the real builder,
+   picks a preset, presses Start, and waits until it completes or stalls. It then compares every
+   block on the server with the blueprint, logs where time went by builder state, takes
+   screenshots, and quits.
+
+Details: `make_house.py` writes a 260-block house: planks, logs,
 stone bricks, glass, a door, stairs in four facings, top and bottom slabs, and a lantern.
 `smoke/` is a small Fabric mod that joins a flat singleplayer world. It builds the house under
 each preset and with Build Tempo off, compares every block on the server with the blueprint,

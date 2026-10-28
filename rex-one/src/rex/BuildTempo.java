@@ -22,11 +22,11 @@ public final class BuildTempo extends Module {
 
    public enum Preset {
       /** Waits for the server on every block. For strict servers and high packet loss. */
-      SAFE(2, 1, 60, 2, 1, 256, 64, false, 0, 2, 1, 2),
+      SAFE(2, 1, 60, 2, 1, 4096, 64, false, 0, 2, 1, 2),
       /** Trusts the client's prediction one tick after sending, two placements unconfirmed at most. */
-      BALANCED(3, 1, 60, 1, 2, 384, 64, true, 1, 0, 2, 0),
+      BALANCED(3, 1, 60, 1, 2, 16384, 64, true, 1, 0, 2, 0),
       /** One block per tick, the protocol floor for a placement that needs its own rotation. */
-      FAST(4, 0, 80, 1, 2, 512, 96, true, 0, 0, 4, 0),
+      FAST(4, 0, 80, 1, 2, 16384, 96, true, 0, 0, 4, 0),
       CUSTOM(0, 0, 0, 0, 0, 0, 0, false, 0, 0, 0, 0);
 
       final int steps, arm, ack, swap, layers, candidates, revalidate;
@@ -72,8 +72,8 @@ public final class BuildTempo extends Module {
       .describe("Minimum ticks between two placement packets. A hard cap on blocks per second for servers that limit it.");
    public final NumberSetting layers = new NumberSetting("Layer Window", 1.0, 4.0, 2.0, 1.0)
       .describe("How many blueprint layers may be placed at once. Fewer walk-backs, looser bottom-up order.");
-   public final NumberSetting candidates = new NumberSetting("Candidates", 64.0, 1024.0, 384.0, 64.0)
-      .describe("Targets examined when choosing the next block.");
+   public final NumberSetting candidates = new NumberSetting("Candidates", 64.0, 32768.0, 16384.0, 64.0)
+      .describe("Targets examined when choosing the next block. The nearest of them is built first; too few and it walks back and forth across a wide layer.");
    public final BooleanSetting trust = new BooleanSetting("Trust Prediction", true)
       .describe("Move on once the client has predicted the placement instead of waiting for the server's acknowledgement. "
          + "The block only counts once the server agrees and it has stayed put; a refusal re-queues it.");

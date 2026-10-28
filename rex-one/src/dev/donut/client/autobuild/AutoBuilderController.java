@@ -1,6 +1,7 @@
 package dev.donut.client.autobuild;
 
 import dev.donut.client.freecam.FreecamController;
+import dev.donut.client.mixin.BlockItemAccessor;
 import dev.donut.client.mixin.BuilderClientLevelAccessor;
 import dev.donut.client.mixin.BuilderLocalPlayerAccessor;
 import java.util.ArrayDeque;
@@ -18,6 +19,12 @@ import java.util.TreeSet;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.minecraft.class_1268;
+import net.minecraft.class_3965;
+import net.minecraft.class_3959.class_3960;
+import net.minecraft.class_3959;
+import net.minecraft.class_3959.class_242;
+import net.minecraft.class_239.class_240;
+import net.minecraft.class_1750;
 import net.minecraft.class_1269;
 import net.minecraft.class_1713;
 import net.minecraft.class_1747;
@@ -55,6 +62,9 @@ import rex.UnifiedAutoBuild;
 @Environment(EnvType.CLIENT)
 public final class AutoBuilderController {
    private static final AutoBuilderController INSTANCE = new AutoBuilderController();
+   private static final int NEARBY = 12;
+   private final List<Target> nearby = new ArrayList<>();
+   private final List<Double> nearbyScores = new ArrayList<>();
    private final BuilderNavigator navigator = new BuilderNavigator();
    private Schematic schematic;
    private PlacementTransform transform = new PlacementTransform(class_2338.field_10980, 0, false);
@@ -608,6 +618,7 @@ public final class AutoBuilderController {
                                  PlacementPlanner.Plan plan = PlacementPlanner.plan(
                                     client, this.current.pos, this.current.state, client.field_1724.method_6047()
                                  );
+                                 Target alternative;
                                  if (plan != null) {
                                     this.navigator.hold(client, shouldSneak(client, this.current, plan));
                                     aim(client, plan);
@@ -620,6 +631,8 @@ public final class AutoBuilderController {
                                        + " at "
                                        + coordinates(this.current.pos);
                                     this.noProgress = 0;
+                                 } else if ((alternative = this.reachableAlternative(client, requirement.item())) != null) {
+                                    this.current = alternative;
                                  } else {
                                     Target lateral = this.lateralSupport(client, this.current);
                                     if (lateral != null) {
@@ -706,6 +719,8 @@ public final class AutoBuilderController {
       } else {
          int minimumY = this.work.first().pos.method_10264();
          int examined = 0;
+         this.nearby.clear();
+         this.nearbyScores.clear();
 
          for (Target target : this.work) {
             if (++examined > BuildTempo.candidates() || target.pos.method_10264() > minimumY + BuildTempo.layers()) {
@@ -719,9 +734,97 @@ public final class AutoBuilderController {
                bestScore = score;
                best = target;
             }
+
+            // Keep the closest few as fallbacks for when the best one cannot be placed from here.
+            if (this.nearby.size() < NEARBY || score < this.nearbyScores.get(this.nearbyScores.size() - 1)) {
+               int at = 0;
+               while (at < this.nearbyScores.size() && this.nearbyScores.get(at) <= score) {
+                  at++;
+               }
+               this.nearby.add(at, target);
+               this.nearbyScores.add(at, score);
+               if (this.nearby.size() > NEARBY) {
+                  this.nearby.remove(NEARBY);
+                  this.nearbyScores.remove(NEARBY);
+               }
+            }
          }
 
          return best;
+      }
+   }
+
+   /**
+    * A nearby target of the same material that can be placed from where the player stands, so an
+    * awkward block does not send the builder walking while others are within reach.
+    */
+   private Target reachableAlternative(class_310 client, class_1792 item) {
+      class_1799 hand = client.field_1724.method_6047();
+      for (Target candidate : this.nearby) {
+         if (candidate == this.current
+            || candidate.support
+            || !this.work.contains(candidate)
+            || this.unconfirmed.containsKey(candidate.pos)
+            || MaterialTracker.isSecondary(candidate.state)
+            || !MaterialTracker.isLoaded(client.field_1687, candidate.pos)
+            || MaterialTracker.requirement(candidate.state).item() != item) {
+            continue;
+         }
+
+         class_2680 actual = client.field_1687.method_8320(candidate.pos);
+         if (!actual.method_45474()
+            || manualStateReason(candidate.state, actual) != null
+            || !candidate.state.method_26184(client.field_1687, candidate.pos)
+            || !hasNeighborSupport(client, candidate.pos)) {
+            continue;
+         }
+
+         if (PlacementPlanner.plan(client, candidate.pos, candidate.state, hand) != null) {
+            return candidate;
+         }
+      }
+
+      return null;
+   }
+
+   /**
+    * The rotation the server already has, if a ray along it from the player's eye clicks a face
+    * that places exactly the wanted block at the target. Placing on that hit needs no further
+    * aiming, so a player still drifting after a step does not have to wait to come to rest.
+    */
+   private static PlacementPlanner.Plan planAlongSent(class_310 client, Target target, float yaw, float pitch) {
+      class_746 player = client.field_1724;
+      class_1799 stack = player.method_6047();
+      if (!(stack.method_7909() instanceof class_1747 item) || !client.field_1687.method_8320(target.pos).method_45474()) {
+         return null;
+      }
+
+      double yawRad = Math.toRadians(yaw);
+      double pitchRad = Math.toRadians(pitch);
+      class_243 look = new class_243(-Math.sin(yawRad) * Math.cos(pitchRad), -Math.sin(pitchRad), Math.cos(yawRad) * Math.cos(pitchRad));
+      class_243 eye = player.method_33571();
+      double reach = player.method_55754() - 0.05;
+      class_3965 hit = client.field_1687.method_17742(new class_3959(eye, eye.method_1019(look.method_1021(reach)), class_3960.field_17559, class_242.field_1348, player));
+      if (hit.method_17783() != class_240.field_1332 || hit.method_17781()) {
+         return null;
+      }
+
+      float oldYaw = player.method_36454();
+      float oldPitch = player.method_36455();
+      try {
+         player.method_36456(yaw);
+         player.method_36457(pitch);
+         class_1750 context = item.method_16356(new class_1750(player, class_1268.field_5808, stack, hit));
+         if (context != null && context.method_8037().equals(target.pos) && context.method_7716()) {
+            class_2680 predicted = ((BlockItemAccessor)item).donut$getPlacementState(context);
+            if (PlacementPlanner.compatible(target.state, predicted)) {
+               return new PlacementPlanner.Plan(hit, predicted, yaw, pitch, false);
+            }
+         }
+         return null;
+      } finally {
+         player.method_36456(oldYaw);
+         player.method_36457(oldPitch);
       }
    }
 
@@ -759,6 +862,17 @@ public final class AutoBuilderController {
             this.navigator.hold(client, sneak);
             aim(client, plan);
             BuilderLocalPlayerAccessor sent = (BuilderLocalPlayerAccessor)client.field_1724;
+            if (!plan.configure()
+               && sent.donut$lastSentInput() != null
+               && sent.donut$lastSentInput().comp_3164() == sneak
+               && (Math.abs(class_3532.method_15393(sent.donut$lastSentYaw() - plan.yaw())) > 0.001F || Math.abs(sent.donut$lastSentPitch() - plan.pitch()) > 0.001F)) {
+               PlacementPlanner.Plan along = planAlongSent(client, this.current, sent.donut$lastSentYaw(), sent.donut$lastSentPitch());
+               if (along != null && shouldSneak(client, this.current, along) == sneak) {
+                  plan = along;
+                  aim(client, plan);
+               }
+            }
+
             if (!(Math.abs(class_3532.method_15393(sent.donut$lastSentYaw() - plan.yaw())) > 0.001F)
                && !(Math.abs(sent.donut$lastSentPitch() - plan.pitch()) > 0.001F)
                && sent.donut$lastSentInput() != null

@@ -50,6 +50,7 @@ public final class SmokeDriver implements ClientModInitializer {
    private int lastConfirmed;
    private int still;
    private volatile int[] verified;
+   private final java.util.Map<String, Integer> reasons = new java.util.HashMap<>();
 
    @Override
    public void onInitializeClient() {
@@ -133,6 +134,9 @@ public final class SmokeDriver implements ClientModInitializer {
          case 3 -> {
             AutoBuilderController builder = AutoBuilderController.get();
             this.ticks++;
+            String reason = builder.reason();
+            int cut = reason.indexOf(" at ");
+            this.reasons.merge(cut > 0 ? reason.substring(0, cut) : reason.replaceAll("[0-9]+", "#"), 1, Integer::sum);
             int confirmed = builder.confirmedBlocks();
             if (confirmed != this.lastConfirmed) {
                this.lastConfirmed = confirmed;
@@ -152,9 +156,12 @@ public final class SmokeDriver implements ClientModInitializer {
             this.verified = null;
             double seconds = this.ticks / 20.0;
             Object current = this.modes.get(this.mode);
-            this.log(String.format(Locale.ROOT, "%-9s %-9s %6.1fs  %5.1f blocks/s  placements sent %s  server: %d/%d match (%d exact), %d wrong  | %s",
-               current == null ? "default" : current, builder.status(), seconds, this.schematic.blocks().size() / seconds, sent(builder), result[1],
+            this.log(String.format(Locale.ROOT, "%-9s %-9s %6.1fs  %5.1f placed/s  placements sent %s  server: %d/%d match (%d exact), %d wrong  | %s",
+               current == null ? "default" : current, builder.status(), seconds, result[1] / seconds, sent(builder), result[1],
                this.schematic.blocks().size(), result[0], result[2], builder.reason()));
+            this.reasons.entrySet().stream().sorted((a, b) -> b.getValue() - a.getValue()).limit(6)
+               .forEach(e -> this.log(String.format(Locale.ROOT, "    %5.1f%%  %s", e.getValue() * 100.0 / this.ticks, e.getKey())));
+            this.reasons.clear();
             String name = "rexsmoke-" + (current == null ? "default" : current.toString().toLowerCase(Locale.ROOT)) + ".png";
             class_318.method_22690(client.field_1697, name, client.method_1522(), 1, message -> {});
             if (this.mode == this.modes.size() - 2 || this.modes.size() == 1) {
