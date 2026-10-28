@@ -1,6 +1,6 @@
 """Writes a small Sponge v2 .schem test build. Default: a house that exercises the planner: full blocks, a planks floor,
 glass panes, a door (paired block), bottom and top slabs, stairs in four facings and a lantern.
-usage: make_house.py out.schem [house|tower]
+usage: make_house.py out.schem [house|tower|signs]
 The tower is a hollow 5x5 stone-brick ring 14 high with no stairs: the top can only be reached
 by pillaring."""
 import gzip, struct, sys
@@ -16,12 +16,20 @@ def compound(entries):
     return b''.join(entries) + b'\x00'
 
 KIND = sys.argv[2] if len(sys.argv) > 2 else 'house'
-W, H, L = (9, 6, 9) if KIND == 'house' else (5, 14, 5)
+W, H, L = {'house': (9, 6, 9), 'tower': (5, 14, 5), 'signs': (5, 3, 3)}[KIND]
 blocks = {}
 
 def put(x, y, z, state):
     blocks[(x, y, z)] = state
 
+if KIND == 'signs':
+    # a stone wall with standing signs on top and wall signs on its face
+    for x in range(W):
+        put(x, 0, 1, 'minecraft:stone_bricks')
+        put(x, 1, 1, 'minecraft:stone_bricks')
+        put(x, 2, 1, 'minecraft:oak_sign[rotation=0,waterlogged=false]' if x % 2 == 0 else 'minecraft:stone_bricks')
+        if x % 2 == 1:
+            put(x, 1, 0, 'minecraft:oak_wall_sign[facing=north,waterlogged=false]')
 if KIND == 'tower':
     for y in range(H):
         for x in range(W):

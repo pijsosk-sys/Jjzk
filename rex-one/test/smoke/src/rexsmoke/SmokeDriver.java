@@ -39,7 +39,7 @@ public final class SmokeDriver implements ClientModInitializer {
       "gamemode survival @a", "effect give @a minecraft:resistance infinite 255 true", "effect give @a minecraft:saturation infinite 255 true", "clear @a",
       "give @a minecraft:oak_planks 128", "give @a minecraft:stone_bricks 192", "give @a minecraft:oak_log 64", "give @a minecraft:glass 64",
       "give @a minecraft:oak_door 4", "give @a minecraft:stone_brick_stairs 64", "give @a minecraft:smooth_stone_slab 128", "give @a minecraft:lantern 4",
-      "give @a minecraft:dirt 64", "tp @a 4.5 -60 -3.5 0 20"};
+      "give @a minecraft:dirt 64", "give @a minecraft:oak_sign 16", "tp @a 4.5 -60 -3.5 0 20"};
    private final List<String> lines = new ArrayList<>();
    private final List<Object> modes = new ArrayList<>();
    private Schematic schematic;
@@ -51,6 +51,8 @@ public final class SmokeDriver implements ClientModInitializer {
    private int still;
    private volatile int[] verified;
    private final java.util.Map<String, Integer> reasons = new java.util.HashMap<>();
+   private final java.util.ArrayDeque<String> transitions = new java.util.ArrayDeque<>();
+   private String lastReason = "";
 
    @Override
    public void onInitializeClient() {
@@ -135,6 +137,13 @@ public final class SmokeDriver implements ClientModInitializer {
             AutoBuilderController builder = AutoBuilderController.get();
             this.ticks++;
             String reason = builder.reason();
+            if (!reason.equals(this.lastReason)) {
+               this.lastReason = reason;
+               this.transitions.addLast(this.ticks + " " + reason + " | player " + client.field_1724.method_24515().method_23854());
+               if (this.transitions.size() > 30) {
+                  this.transitions.removeFirst();
+               }
+            }
             int cut = reason.indexOf(" at ");
             this.reasons.merge(cut > 0 ? reason.substring(0, cut) : reason.replaceAll("[0-9]+", "#"), 1, Integer::sum);
             int confirmed = builder.confirmedBlocks();
@@ -162,6 +171,12 @@ public final class SmokeDriver implements ClientModInitializer {
             this.reasons.entrySet().stream().sorted((a, b) -> b.getValue() - a.getValue()).limit(6)
                .forEach(e -> this.log(String.format(Locale.ROOT, "    %5.1f%%  %s", e.getValue() * 100.0 / this.ticks, e.getKey())));
             this.reasons.clear();
+            if (builder.status() != AutoBuilderController.Status.COMPLETED) {
+               this.log("  last builder states:");
+               this.transitions.forEach(line -> this.log("    " + line));
+            }
+            this.transitions.clear();
+            this.lastReason = "";
             String name = "rexsmoke-" + (current == null ? "default" : current.toString().toLowerCase(Locale.ROOT)) + ".png";
             class_318.method_22690(client.field_1697, name, client.method_1522(), 1, message -> {});
             if (this.mode == this.modes.size() - 2 || this.modes.size() == 1) {

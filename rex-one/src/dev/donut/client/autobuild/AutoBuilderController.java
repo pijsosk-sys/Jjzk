@@ -19,6 +19,9 @@ import java.util.TreeSet;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.minecraft.class_1268;
+import net.minecraft.class_238;
+import net.minecraft.class_2478;
+import net.minecraft.class_7743;
 import net.minecraft.class_3965;
 import net.minecraft.class_3959.class_3960;
 import net.minecraft.class_3959;
@@ -108,6 +111,7 @@ public final class AutoBuilderController {
    private int originalSlot = -1;
    private boolean scanned;
    private boolean yielded;
+   private int signTick = Integer.MIN_VALUE / 2;
    private Target pillarFor;
    private int pillarGoal;
    private int pillarBase;
@@ -493,6 +497,10 @@ public final class AutoBuilderController {
             this.disconnect();
          } else if (FreecamController.enabled()) {
             this.pauseWith("Freecam is active. Disable it, then Resume.");
+         } else if (client.field_1755 instanceof class_7743 editor && this.placedSignRecently()) {
+            // Placing a sign opens its editor, which would pause the build: press Done for it.
+            editor.method_25419();
+            this.reason = "Closed the sign editor";
          } else if (client.field_1755 != null || client.method_1493()) {
             this.pauseWith("An open menu paused construction. Close it, then Resume.");
          } else if (!client.field_1724.method_5805() || client.field_1724.method_31481()) {
@@ -647,6 +655,9 @@ public final class AutoBuilderController {
                                  PlacementPlanner.Plan plan = PlacementPlanner.plan(
                                     client, this.current.pos, this.current.state, client.field_1724.method_6047()
                                  );
+                                 if (plan == null && !configuring) {
+                                    plan = planSampled(client, this.current);
+                                 }
                                  Target alternative;
                                  if (plan != null) {
                                     this.navigator.hold(client, shouldSneak(client, this.current, plan));
@@ -868,6 +879,89 @@ public final class AutoBuilderController {
       }
    }
 
+   /**
+    * The planner tries three points per face. Blocks whose state follows the player's look (signs,
+    * banners, skulls, stairs) can need a particular angle, so this samples a grid across every
+    * face that could hold the block and keeps the first point that predicts the wanted state.
+    */
+   private static PlacementPlanner.Plan planSampled(class_310 client, Target target) {
+      class_746 player = client.field_1724;
+      class_1799 stack = player.method_6047();
+      if (!(stack.method_7909() instanceof class_1747 item) || !client.field_1687.method_8320(target.pos).method_45474()) {
+         return null;
+      }
+
+      class_243 eye = player.method_33571();
+      double reach = player.method_55754() - 0.05;
+      float oldYaw = player.method_36454();
+      float oldPitch = player.method_36455();
+      try {
+         for (class_2350 face : class_2350.values()) {
+            class_2338 support = target.pos.method_10093(face.method_10153());
+            if (!MaterialTracker.isLoaded(client.field_1687, support)) {
+               continue;
+            }
+            class_2680 supportState = client.field_1687.method_8320(support);
+            if (supportState.method_26215() || supportState.method_45474()) {
+               continue;
+            }
+            class_265 shape = supportState.method_26218(client.field_1687, support);
+            if (shape.method_1110()) {
+               continue;
+            }
+            class_238 box = shape.method_1107();
+            for (int i = 0; i < 5; i++) {
+               for (int j = 0; j < 5; j++) {
+                  double u = 0.1 + 0.2 * i;
+                  double v = 0.1 + 0.2 * j;
+                  // Spread u and v across the two axes that lie in this face.
+                  class_2350.class_2351 axis = face.method_10166();
+                  double fx = axis == class_2350.class_2351.field_11048 ? 0.5 : u;
+                  double fy = axis == class_2350.class_2351.field_11052 ? 0.5 : (axis == class_2350.class_2351.field_11048 ? u : v);
+                  double fz = axis == class_2350.class_2351.field_11051 ? 0.5 : v;
+                  double x = box.field_1323 + (box.field_1320 - box.field_1323) * fx;
+                  double y = box.field_1322 + (box.field_1325 - box.field_1322) * fy;
+                  double z = box.field_1321 + (box.field_1324 - box.field_1321) * fz;
+                  switch (face) {
+                     case field_11036 -> y = box.field_1325;
+                     case field_11033 -> y = box.field_1322;
+                     case field_11034 -> x = box.field_1320;
+                     case field_11039 -> x = box.field_1323;
+                     case field_11035 -> z = box.field_1324;
+                     case field_11043 -> z = box.field_1321;
+                  }
+                  class_243 point = new class_243(support.method_10263() + x, support.method_10264() + y, support.method_10260() + z);
+                  if (eye.method_1025(point) > reach * reach) {
+                     continue;
+                  }
+                  class_243 inside = point.method_1020(class_243.method_24954(face.method_62675()).method_1021(0.002));
+                  class_3965 visible = client.field_1687.method_17742(new class_3959(eye, inside, class_3960.field_17559, class_242.field_1348, player));
+                  if (visible.method_17783() != class_240.field_1332 || !visible.method_17777().equals(support) || visible.method_17780() != face) {
+                     continue;
+                  }
+                  class_243 delta = point.method_1020(eye);
+                  float yaw = (float)Math.toDegrees(Math.atan2(-delta.field_1352, delta.field_1350));
+                  float pitch = (float)Math.toDegrees(Math.atan2(-delta.field_1351, Math.hypot(delta.field_1352, delta.field_1350)));
+                  player.method_36456(yaw);
+                  player.method_36457(pitch);
+                  class_3965 hit = new class_3965(point, face, support, false);
+                  class_1750 context = item.method_16356(new class_1750(player, class_1268.field_5808, stack, hit));
+                  if (context != null && context.method_8037().equals(target.pos) && context.method_7716()) {
+                     class_2680 predicted = ((BlockItemAccessor)item).donut$getPlacementState(context);
+                     if (PlacementPlanner.compatible(target.state, predicted)) {
+                        return new PlacementPlanner.Plan(hit, predicted, yaw, pitch, false);
+                     }
+                  }
+               }
+            }
+         }
+         return null;
+      } finally {
+         player.method_36456(oldYaw);
+         player.method_36457(oldPitch);
+      }
+   }
+
    private void revalidate(class_310 client, int budget) {
       for (int checked = 0; checked < Math.min(budget, this.targets.size()); checked++) {
          if (this.revalidateIndex >= this.targets.size()) {
@@ -895,6 +989,9 @@ public final class AutoBuilderController {
          PlacementPlanner.Plan plan = PlacementPlanner.plan(
             client, this.current.pos, this.current.state, client.field_1724.method_6047()
          );
+         if (plan == null && !action.plan.configure()) {
+            plan = planSampled(client, this.current);
+         }
          if (plan == null) {
             this.navigator.rejectCurrent(client);
          } else {
@@ -926,8 +1023,17 @@ public final class AutoBuilderController {
       }
    }
 
+   /** True for a few seconds after this builder placed a sign. */
+   private boolean placedSignRecently() {
+      return this.tick - this.signTick <= 100;
+   }
+
    /** Sends one placement the server already has the rotation for, and tracks it until it answers. */
    private void send(class_310 client, Target target, PlacementPlanner.Plan plan) {
+      if (target.state.method_26204() instanceof class_2478) {
+         this.signTick = this.tick;
+      }
+
       class_2680 before = client.field_1687.method_8320(target.pos);
       class_1269 result = client.field_1761.method_2896(client.field_1724, class_1268.field_5808, plan.hit());
       int sequence = ((BuilderClientLevelAccessor)client.field_1687).donut$predictionHandler().method_41942();

@@ -5,11 +5,12 @@
 set -e
 . "$(dirname "$0")/env.sh"
 REX=$(cd "$(dirname "$1")" && pwd)/$(basename "$1"); SCHEM=$(cd "$(dirname "$2")" && pwd)/$(basename "$2"); shift 2
-GAME="$RT/game"
-rm -rf "$GAME" "$RT/driver" && mkdir -p "$GAME/mods" "$GAME/saves" "$RT/driver"
-javac -nowarn -proc:none -cp "$REX:$(compile_classpath)" -d "$RT/driver" "$HERE/test/smoke/src/rexsmoke/SmokeDriver.java"
-cp "$HERE/test/smoke/fabric.mod.json" "$RT/driver/"
-(cd "$RT/driver" && zip -qr "$GAME/mods/rexsmoke.jar" .)
+GAME="${GAME_DIR:-$RT/game}"   # GAME_DIR lets two runs go side by side
+DRIVER="$GAME.driver"
+rm -rf "$GAME" "$DRIVER" && mkdir -p "$GAME/mods" "$GAME/saves" "$DRIVER"
+javac -nowarn -proc:none -cp "$REX:$(compile_classpath)" -d "$DRIVER" "$HERE/test/smoke/src/rexsmoke/SmokeDriver.java"
+cp "$HERE/test/smoke/fabric.mod.json" "$DRIVER/"
+(cd "$DRIVER" && zip -qr "$GAME/mods/rexsmoke.jar" .)
 cp "$REX" "$GAME/mods/rex-one.jar"
 cp "$RT/mods/fabric-api.jar" "$GAME/mods/"
 cp -r "$RT/world" "$GAME/saves/smoke"
