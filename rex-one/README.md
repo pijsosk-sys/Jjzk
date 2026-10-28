@@ -1,17 +1,24 @@
-# REX One: faster Auto Build and a new builder screen
+# REX One: faster Auto Build, climbing, water, a new builder screen and a shader
 
-Sources and tooling for REX One `1.0.0-one.14` (Minecraft 1.21.11, Fabric). The build takes the
-released `1.0.0-one.13` jar and replaces four classes:
+Sources and tooling for REX One `1.0.0-one.15` (Minecraft 1.21.11, Fabric). The build takes the
+released `1.0.0-one.13` jar, replaces or adds these classes, and adds the shader files:
 
 | Class | What changed |
 | --- | --- |
-| `dev.donut.client.autobuild.AutoBuilderController` | pipelined placement, settling set, real-tick timing, live stats |
+| `dev.donut.client.autobuild.AutoBuilderController` | pipelined placement, settling set, real-tick timing, pillaring, water and kelp, sign editor, live stats |
+| `dev.donut.client.autobuild.BuilderNavigator`, `BuilderPathfinder` | walks closer so it stops less |
 | `dev.donut.client.gui.AutoBuilderScreen` | redesigned builder screen |
-| `rex.BuildTempo` | Safe / Balanced / Fast / Custom presets, new pacing rows |
-| `rex.BuildPatience` | auto-resume also covers lost confirmations |
+| `dev.donut.client.render.SchematicGhosts` | ghost layer view |
+| `rex.BuildTempo` | presets, pacing, pillaring, restock and safety settings |
+| `rex.BuildPatience` | auto-resume also covers lost confirmations and players walking off |
+| `rex.Huds`, `rex.Modules` | panels stay off the builder screen; registers the new modules |
+| `rex.BuildRestock` (new) | shulker box restock |
+| `rex.BuildMemory` (new) | remembers the loaded build per server |
+| `rex.SchematicGhost` (new module) | ghost on/off (bindable) and layer view |
+| `rex.TuffShader` (new module) | the Tuff Shader |
 
-The controller and screen shipped only as bytecode, so they were decompiled first. The first
-commit on this branch holds that decompiled baseline, so `git diff` shows exactly what changed.
+Classes that shipped only as bytecode were decompiled first, and each was committed unchanged
+before being edited, so `git log -p` shows exactly what changed.
 
 ## Why Auto Build was slow
 
@@ -58,8 +65,60 @@ Each pair of runs shared a 4-core machine with software rendering, so these figu
 comparing runs with each other; real hardware will be faster. What's left is mostly walking
 between spots (about 40%).
 
-Not solved here: the walking pathfinder can't climb tall narrow builds (the compact kelp tower)
-or get out of a closed box, in either jar.
+Still hard: a player boxed inside a closed room with a planned roof over it can't pillar out
+(the test house). A standing sign that needs both height and one particular side is skipped
+after about 15 seconds and retried later.
+
+## New: finishing big builds
+
+- **Pillar Up.** When the next block is above the player and walking can't get there, it looks
+  straight down, jumps and places a pillar block under itself (dirt, cobblestone, cobbled
+  deepslate, netherrack or stone), only in open air the blueprint doesn't use. A 14-high tower
+  with no stairs now finishes on every preset; before, it stopped at 32 of 224 blocks.
+- **Water and kelp.** Water sources and bubble-column cells are filled with a water bucket. The
+  bucket is aimed so the first solid face along the look puts the water in the cell. Kelp cells
+  get their water first, then the kelp. Flowing water isn't a target, since it comes from the
+  sources. The compact kelp farm now completes 85/85.
+- **What counts as built.** Kelp at any age; redstone dust, fences, panes and walls whatever
+  sides they connect to; run-time states like `power`, `lit` and `powered` are ignored. These
+  are things the world sets by itself and the builder could never place exactly.
+- **Signs.** Placing a sign opens its editor, which used to pause the build; the builder now
+  presses Done for the signs it placed.
+- **Blocks that face the player** (signs, banners, skulls, stairs): when the usual aim points
+  give the wrong rotation, it tries a 5×5 grid on every face and takes the one that gives the
+  right block.
+- **Never builds above a gap.** A shortcut that placed a nearby block instead of an awkward one
+  could pick a higher layer. The walls rose under the player and stranded the rest of the lower
+  layer, so now the substitute is never higher than the block it replaces.
+- **Walks closer** (Fast 3, Balanced 3.25, Safe 4.25 blocks; *Walk Closer* in Custom), so more of
+  the next blocks are in reach when it stops. It falls back to the full reach where nothing closer
+  works.
+
+## New: settings in Build Tempo
+
+| Row | Default | What it does |
+| --- | --- | --- |
+| Pillar Up | on | the climbing above |
+| Shulker Restock | **off** | out of a block, and a carried shulker box has it: place the box beside you, shift-click out what the build still needs, break it, pick it up, carry on |
+| Pause On Low Health / Health / Hunger | on, 8, 6 | pause so you can heal or eat |
+| Pause Near Players / Player Radius | off, 24 | pause while someone is near; Auto Resume carries on when they leave |
+| Walk Closer | 3.25 (Custom) | see above |
+
+The loaded schematic and its position are also saved per server (`config/rex-one-build.json`) and
+loaded back when you join, ready to Start. The builder's scan then finds what's already built.
+
+## New: look and screen
+
+- **Tuff Shader** (Render module, bindable; also on the builder screen): one full-screen pass
+  through Minecraft's own post-effect pipeline that sharpens, adds vibrance, a soft contrast curve,
+  warm/cool toning and a vignette. Styles are Soft, Tuff and Vivid. It needs no Iris or OptiFine,
+  costs about what the creeper spectator effect does, and doesn't touch the HUD.
+  See `screenshots/shader-*.png`.
+- **Schematic Ghost** (Render module, bindable): shows or hides the ghost. *Layers* is All /
+  Working layer / Up to working / One layer.
+- **Builder screen:** HUD panels and pop-ups no longer draw over it, plus a Ghost toggle, Layers,
+  a Look row for the shader, and *Skipped*, which lists every skipped block and why when clicked.
+  Materials has **Copy list**, which copies what's still missing to the clipboard.
 
 ## Why it still won't mess up the build
 

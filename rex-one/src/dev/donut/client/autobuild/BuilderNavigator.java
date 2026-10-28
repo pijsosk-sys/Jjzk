@@ -33,6 +33,17 @@ public final class BuilderNavigator {
    private class_243 lastPosition;
    private class_2338 target;
    private final Set<BuilderPathfinder.Cell> rejectedGoals = new HashSet<>();
+   // How close to walk to a block before stopping. Closer than the full reach leaves more of the
+   // next blocks in reach too; if no spot that close exists the full reach is used for that block.
+   private double walkReach = 4.25;
+   private boolean fullReach;
+
+   public void walkReach(double reach) {
+      if (reach != this.walkReach) {
+         this.walkReach = reach;
+         this.replan();
+      }
+   }
 
    public void hold(class_310 client, boolean sneak) {
       if (client.field_1724 != null) {
@@ -97,6 +108,7 @@ public final class BuilderNavigator {
          if (!destination.equals(this.target)) {
             this.target = destination.method_10062();
             this.rejectedGoals.clear();
+            this.fullReach = false;
             this.replan();
          }
 
@@ -150,6 +162,10 @@ public final class BuilderNavigator {
                   feet, cell(destination), terrain, at -> this.goal(client, at, destination), 6000, 96
                );
                this.index = 0;
+               if (this.route.isEmpty() && !this.fullReach && this.walkReach < 4.25) {
+                  this.fullReach = true;
+                  this.route = BuilderPathfinder.find(feet, cell(destination), terrain, at -> this.goal(client, at, destination), 6000, 96);
+               }
                if (this.route.isEmpty()) {
                   return BuilderNavigator.Result.NO_PATH;
                }
@@ -225,7 +241,7 @@ public final class BuilderNavigator {
                }
             }
 
-            double reach = Math.min(4.25, client.field_1724.method_55754() - 0.25);
+            double reach = Math.min(this.fullReach ? 4.25 : this.walkReach, client.field_1724.method_55754() - 0.25);
             if (eye.method_1025(class_243.method_24953(destination)) > reach * reach) {
                return false;
             } else {

@@ -766,6 +766,7 @@ public final class AutoBuilderController {
                                        } else {
                                           // Walking is one decision per tick; extra steps would count stalls several times over.
                                           this.yielded = true;
+                                          this.navigator.walkReach(BuildTempo.walkReach());
                                           BuilderNavigator.Result movement = this.navigator.moveTo(client, this.current.pos);
                                           if (movement == BuilderNavigator.Result.ARRIVED) {
                                              this.navigator.rejectCurrent(client);

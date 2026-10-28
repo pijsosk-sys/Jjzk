@@ -22,19 +22,21 @@ public final class BuildTempo extends Module {
 
    public enum Preset {
       /** Waits for the server on every block. For strict servers and high packet loss. */
-      SAFE(2, 1, 60, 2, 1, 4096, 64, false, 0, 2, 1, 2),
+      SAFE(2, 1, 60, 2, 1, 4096, 64, false, 0, 2, 1, 2, 4.25),
       /** Trusts the client's prediction one tick after sending, two placements unconfirmed at most. */
-      BALANCED(3, 1, 60, 1, 2, 16384, 64, true, 1, 0, 2, 0),
+      BALANCED(3, 1, 60, 1, 2, 16384, 64, true, 1, 0, 2, 0, 3.25),
       /** One block per tick, the protocol floor for a placement that needs its own rotation. */
-      FAST(4, 0, 80, 1, 2, 16384, 96, true, 0, 0, 4, 0),
-      CUSTOM(0, 0, 0, 0, 0, 0, 0, false, 0, 0, 0, 0);
+      FAST(4, 0, 80, 1, 2, 16384, 96, true, 0, 0, 4, 0, 3.0),
+      CUSTOM(0, 0, 0, 0, 0, 0, 0, false, 0, 0, 0, 0, 0.0);
 
       final int steps, arm, ack, swap, layers, candidates, revalidate;
       final boolean trust;
       final int trustDelay, settle, inflight, interval;
+      final double walk;
 
       Preset(int steps, int arm, int ack, int swap, int layers, int candidates, int revalidate, boolean trust, int trustDelay, int settle,
-            int inflight, int interval) {
+            int inflight, int interval, double walk) {
+         this.walk = walk;
          this.steps = steps;
          this.arm = arm;
          this.ack = ack;
@@ -70,6 +72,9 @@ public final class BuildTempo extends Module {
       .describe("Ticks to wait after a block is placed before choosing the next. Was two.");
    public final NumberSetting interval = new NumberSetting("Place Interval", 0.0, 10.0, 0.0, 1.0)
       .describe("Minimum ticks between two placement packets. A hard cap on blocks per second for servers that limit it.");
+   public final NumberSetting walk = new NumberSetting("Walk Closer", 2.5, 4.25, 3.25, 0.25)
+      .describe("How close to walk to a block before stopping. The full reach is 4.25; closer leaves more of the next blocks "
+         + "in reach, so it stops less often. It falls back to the full reach where nothing closer works.");
    public final NumberSetting layers = new NumberSetting("Layer Window", 1.0, 4.0, 2.0, 1.0)
       .describe("How many blueprint layers may be placed at once. Fewer walk-backs, looser bottom-up order.");
    public final NumberSetting candidates = new NumberSetting("Candidates", 64.0, 32768.0, 16384.0, 64.0)
@@ -105,13 +110,13 @@ public final class BuildTempo extends Module {
    public BuildTempo() {
       super("Build Tempo", "Placement pacing and automatic retry for Auto Build.", -1, Category.MISC);
       for (Setting knob : new Setting[]{
-            this.steps, this.arm, this.ack, this.swap, this.settle, this.interval, this.layers, this.candidates, this.trust, this.trustDelay,
-            this.inflight, this.revalidate}) {
+            this.steps, this.arm, this.ack, this.swap, this.settle, this.interval, this.walk, this.layers, this.candidates, this.trust,
+            this.trustDelay, this.inflight, this.revalidate}) {
          knob.visibleWhen(() -> this.preset.get() == Preset.CUSTOM);
       }
       this.addSettings(
          new Setting[]{
-            this.preset, this.steps, this.arm, this.ack, this.swap, this.settle, this.interval, this.layers, this.candidates, this.trust,
+            this.preset, this.steps, this.arm, this.ack, this.swap, this.settle, this.interval, this.walk, this.layers, this.candidates, this.trust,
             this.trustDelay, this.inflight, this.revalidate, this.pillar, this.restock, this.lowHealth, this.health, this.hunger, this.nearPlayers,
             this.radius, this.resume, this.delay, this.retries
          }
@@ -211,6 +216,15 @@ public final class BuildTempo extends Module {
       }
       Preset p = fixed();
       return p != null ? p.interval : instance.interval.getInt();
+   }
+
+   /** How close to walk to a block before stopping. */
+   public static double walkReach() {
+      if (!on()) {
+         return 4.25;
+      }
+      Preset p = fixed();
+      return p != null ? p.walk : instance.walk.getDouble();
    }
 
    public static int layers() {
