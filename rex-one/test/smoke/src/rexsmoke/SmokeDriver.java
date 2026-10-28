@@ -53,6 +53,9 @@ public final class SmokeDriver implements ClientModInitializer {
    private final java.util.Map<String, Integer> reasons = new java.util.HashMap<>();
    private final java.util.ArrayDeque<String> transitions = new java.util.ArrayDeque<>();
    private String lastReason = "";
+   private static final String[] SHOTS = {"OFF", "SOFT", "TUFF", "VIVID", "OFF"};
+   private int shot;
+   private boolean shotArmed;
 
    @Override
    public void onInitializeClient() {
@@ -205,7 +208,24 @@ public final class SmokeDriver implements ClientModInitializer {
             this.phase = 1;
             this.wait = 10;
          }
-         case 4 -> this.finish(client);
+         case 4 -> {
+            if (!Boolean.getBoolean("rexsmoke.shader") || this.shot >= SHOTS.length) {
+               this.finish(client);
+               return;
+            }
+            // Same view, shader off and in each style.
+            String style = SHOTS[this.shot];
+            if (!this.shotArmed) {
+               setShader(style);
+               this.shotArmed = true;
+               this.wait = 20;
+               return;
+            }
+            class_318.method_22690(client.field_1697, "rexsmoke-shader-" + style.toLowerCase(Locale.ROOT) + ".png", client.method_1522(), 1, message -> {});
+            this.shotArmed = false;
+            this.shot++;
+            this.wait = 5;
+         }
          default -> {
          }
       }
@@ -250,6 +270,21 @@ public final class SmokeDriver implements ClientModInitializer {
       }
       this.phase = 99;
       client.method_1592();
+   }
+
+   private static void setShader(String style) throws Exception {
+      Class<?> type = Class.forName("rex.TuffShader");
+      Object module = type.getField("instance").get(null);
+      Method enable = module.getClass().getMethod("setEnabled", boolean.class);
+      if (style.equals("OFF")) {
+         enable.invoke(module, false);
+         return;
+      }
+      Object setting = type.getField("style").get(module);
+      Class<?> styles = Class.forName("rex.TuffShader$Style");
+      setting.getClass().getMethod("set", Enum.class).invoke(setting, Enum.valueOf((Class)styles, style));
+      enable.invoke(module, false);
+      enable.invoke(module, true);
    }
 
    private static boolean hasPresets() {

@@ -42,7 +42,7 @@ with zipfile.ZipFile(base) as zin, zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATE
         if name.endswith('.class') and owned(name):
             dropped += 1
             continue
-        if name in shipped:
+        if name in shipped or name.startswith('assets/rex/post_effect/') or name.startswith('assets/rex/shaders/post/'):
             continue
         data = zin.read(name)
         if name == 'fabric.mod.json':
@@ -75,6 +75,13 @@ with zipfile.ZipFile(base) as zin, zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATE
         info = zipfile.ZipInfo(name, date_time=(2026, 10, 28, 0, 0, 0))
         info.compress_type = zipfile.ZIP_DEFLATED
         zout.writestr(info, data)
+    # Assets this build adds (the Tuff Shader post effect and its fragment shader).
+    resources = Path(src).parent / 'resources'
+    for path in sorted(resources.rglob('*')):
+        if path.is_file():
+            info = zipfile.ZipInfo(path.relative_to(resources).as_posix(), date_time=(2026, 10, 28, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            zout.writestr(info, path.read_bytes())
     # Ship the sources next to the ones the jar already carries.
     for path in sorted(src.rglob('*.java')):
         info = zipfile.ZipInfo('one-client-source/src/' + path.relative_to(src).as_posix(), date_time=(2026, 10, 28, 0, 0, 0))

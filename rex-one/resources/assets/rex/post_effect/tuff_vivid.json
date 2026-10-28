@@ -1,0 +1,78 @@
+{
+  "targets": {
+    "swap": {}
+  },
+  "passes": [
+    {
+      "vertex_shader": "minecraft:core/screenquad",
+      "fragment_shader": "rex:post/tuff",
+      "inputs": [
+        {
+          "sampler_name": "In",
+          "target": "minecraft:main",
+          "bilinear": false
+        }
+      ],
+      "output": "swap",
+      "uniforms": {
+        "TuffConfig": [
+          {
+            "name": "Sharpen",
+            "type": "float",
+            "value": 0.6
+          },
+          {
+            "name": "Vibrance",
+            "type": "float",
+            "value": 0.6
+          },
+          {
+            "name": "Contrast",
+            "type": "float",
+            "value": 0.45
+          },
+          {
+            "name": "Tone",
+            "type": "float",
+            "value": 0.7
+          },
+          {
+            "name": "Vignette",
+            "type": "float",
+            "value": 0.6
+          },
+          {
+            "name": "Exposure",
+            "type": "float",
+            "value": 1.04
+          }
+        ]
+      }
+    },
+    {
+      "vertex_shader": "minecraft:core/screenquad",
+      "fragment_shader": "minecraft:post/blit",
+      "inputs": [
+        {
+          "sampler_name": "In",
+          "target": "swap"
+        }
+      ],
+      "uniforms": {
+        "BlitConfig": [
+          {
+            "name": "ColorModulate",
+            "type": "vec4",
+            "value": [
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        ]
+      },
+      "output": "minecraft:main"
+    }
+  ]
+}
