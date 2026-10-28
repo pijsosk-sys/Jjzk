@@ -19,6 +19,10 @@ import java.util.TreeSet;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.minecraft.class_1268;
+import net.minecraft.class_2310;
+import net.minecraft.class_2457;
+import net.minecraft.class_2544;
+import net.minecraft.class_2246;
 import net.minecraft.class_238;
 import net.minecraft.class_2478;
 import net.minecraft.class_7743;
@@ -85,6 +89,7 @@ public final class AutoBuilderController {
    private final BitSet correct = new BitSet();
    private final Map<class_2338, Integer> failures = new HashMap<>();
    private final Set<class_2338> deferred = new HashSet<>();
+   private final Map<class_2338, String> deferReasons = new HashMap<>();
    private final Set<class_2338> supportBlocks = new HashSet<>();
    private final Map<class_2338, Integer> unconfirmed = new HashMap<>();
    // Placed blocks that match but have not yet been stable for the gate's window, or are still awaiting the server.
@@ -111,6 +116,7 @@ public final class AutoBuilderController {
    private int originalSlot = -1;
    private boolean scanned;
    private boolean yielded;
+   private PlacementPlanner.Plan bucketPlan;
    private int signTick = Integer.MIN_VALUE / 2;
    private Target pillarFor;
    private int pillarGoal;
@@ -226,7 +232,8 @@ public final class AutoBuilderController {
          + (this.deferred.contains(pos) ? "deferred " : "")
          + (this.unconfirmed.containsKey(pos) ? "unconfirmed " : "")
          + (this.failures.containsKey(pos) ? "failures=" + this.failures.get(pos) + " " : "")
-         + (target.equals(this.current) ? "current " : "");
+         + (target.equals(this.current) ? "current " : "")
+         + (this.deferReasons.containsKey(pos) ? "| last skipped: " + this.deferReasons.get(pos) : "");
    }
 
    private void clearSettling() {
@@ -277,11 +284,16 @@ public final class AutoBuilderController {
          this.byIndex = new Target[0];
       } else {
          List<Target> values = new ArrayList<>(this.schematic.blocks().size());
+         List<Schematic.Block> blocks = this.schematic.blocks();
 
-         for (Schematic.Block block : this.schematic.blocks()) {
+         for (int index = 0; index < blocks.size(); index++) {
+            Schematic.Block block = blocks.get(index);
+            class_2680 state = this.transform.apply(block.state());
+            if (derived(state)) {
+               continue;
+            }
             class_2338 pos = this.transform.apply(block.pos());
-            int index = values.size();
-            values.add(new Target(pos, this.transform.apply(block.state()), index, false));
+            values.add(new Target(pos, state, index, false));
             this.indices.put(pos, index);
          }
 
@@ -292,7 +304,7 @@ public final class AutoBuilderController {
                )
          );
          this.targets = List.copyOf(values);
-         this.byIndex = new Target[values.size()];
+         this.byIndex = new Target[blocks.size()];
 
          for (Target target : values) {
             this.byIndex[target.index] = target;
@@ -557,7 +569,7 @@ public final class AutoBuilderController {
 
                      if (!this.unconfirmed.containsKey(target.pos)
                         && MaterialTracker.isLoaded(client.field_1687, target.pos)
-                        && MaterialTracker.matches(target.state, client.field_1687.method_8320(target.pos))) {
+                        && matches(target.state, client.field_1687.method_8320(target.pos))) {
                         this.markCorrect(target);
                      }
                   }
@@ -610,7 +622,7 @@ public final class AutoBuilderController {
                      }
                   } else {
                      class_2680 actual = client.field_1687.method_8320(this.current.pos);
-                     if (MaterialTracker.matches(this.current.state, actual)) {
+                     if (matches(this.current.state, actual)) {
                         this.markCorrect(this.current);
                         this.current = null;
                      } else if (MaterialTracker.isSecondary(this.current.state)) {
@@ -626,7 +638,9 @@ public final class AutoBuilderController {
                            MaterialTracker.Requirement requirement = MaterialTracker.requirement(
                               this.current.state
                            );
-                           if (requirement.item() == class_1802.field_8162 || !(requirement.item() instanceof class_1747)) {
+                           boolean water = needsWater(this.current.state, actual);
+                           class_1792 needed = water ? class_1802.field_8705 : requirement.item();
+                           if (!water && (requirement.item() == class_1802.field_8162 || !(requirement.item() instanceof class_1747))) {
                               this.defer(
                                  "This block requires manual placement: "
                                     + this.current.state.method_26204().method_9518().getString()
@@ -635,9 +649,9 @@ public final class AutoBuilderController {
                               );
                            } else if (this.current.state.method_26184(client.field_1687, this.current.pos) && hasNeighborSupport(client, this.current.pos)) {
                               boolean configuring = PlacementPlanner.needsConfiguration(this.current.state, actual);
-                              int slot = configuring ? client.field_1724.method_31548().method_67532() : findSlot(client, requirement.item());
+                              int slot = configuring ? client.field_1724.method_31548().method_67532() : findSlot(client, needed);
                               if (slot < 0) {
-                                 this.pauseWith("Missing " + requirement.item().method_63680().getString() + ". Add materials, then Resume.");
+                                 this.pauseWith("Missing " + needed.method_63680().getString() + ". Add materials, then Resume.");
                               } else if (slot >= 9) {
                                  int selected = client.field_1724.method_31548().method_67532();
                                  client.field_1761
@@ -652,12 +666,13 @@ public final class AutoBuilderController {
                                  this.yielded = true;
                               } else {
                                  client.field_1724.method_31548().method_61496(slot);
-                                 PlacementPlanner.Plan plan = PlacementPlanner.plan(
-                                    client, this.current.pos, this.current.state, client.field_1724.method_6047()
-                                 );
-                                 if (plan == null && !configuring) {
+                                 PlacementPlanner.Plan plan = water
+                                    ? planWater(client, this.current)
+                                    : PlacementPlanner.plan(client, this.current.pos, this.current.state, client.field_1724.method_6047());
+                                 if (plan == null && !configuring && !water) {
                                     plan = planSampled(client, this.current);
                                  }
+                                 this.bucketPlan = water ? plan : null;
                                  Target alternative;
                                  if (plan != null) {
                                     this.navigator.hold(client, shouldSneak(client, this.current, plan));
@@ -666,12 +681,14 @@ public final class AutoBuilderController {
                                        this.current, plan, this.tick + BuildTempo.arm()
                                     );
                                     this.reason = (
-                                          this.current.support ? "Placing a temporary support" : (plan.configure() ? "Setting block state" : "Placing block")
+                                          this.current.support
+                                             ? "Placing a temporary support"
+                                             : (water ? "Pouring water" : (plan.configure() ? "Setting block state" : "Placing block"))
                                        )
                                        + " at "
                                        + coordinates(this.current.pos);
                                     this.noProgress = 0;
-                                 } else if ((alternative = this.reachableAlternative(client, requirement.item())) != null) {
+                                 } else if (!water && (alternative = this.reachableAlternative(client, requirement.item())) != null) {
                                     this.current = alternative;
                                  } else {
                                     Target lateral = this.lateralSupport(client, this.current);
@@ -741,7 +758,7 @@ public final class AutoBuilderController {
                      Target targetx = this.targets.get(this.finalCheckIndex);
                      if (this.unconfirmed.containsKey(targetx.pos)
                         || !MaterialTracker.isLoaded(client.field_1687, targetx.pos)
-                        || !MaterialTracker.matches(targetx.state, client.field_1687.method_8320(targetx.pos))) {
+                        || !matches(targetx.state, client.field_1687.method_8320(targetx.pos))) {
                         this.correct.clear(targetx.index);
                         this.settling.remove(targetx.pos);
                         this.work.add(targetx);
@@ -868,7 +885,7 @@ public final class AutoBuilderController {
          class_1750 context = item.method_16356(new class_1750(player, class_1268.field_5808, stack, hit));
          if (context != null && context.method_8037().equals(target.pos) && context.method_7716()) {
             class_2680 predicted = ((BlockItemAccessor)item).donut$getPlacementState(context);
-            if (PlacementPlanner.compatible(target.state, predicted)) {
+            if (compatible(target.state, predicted)) {
                return new PlacementPlanner.Plan(hit, predicted, yaw, pitch, false);
             }
          }
@@ -948,7 +965,7 @@ public final class AutoBuilderController {
                   class_1750 context = item.method_16356(new class_1750(player, class_1268.field_5808, stack, hit));
                   if (context != null && context.method_8037().equals(target.pos) && context.method_7716()) {
                      class_2680 predicted = ((BlockItemAccessor)item).donut$getPlacementState(context);
-                     if (PlacementPlanner.compatible(target.state, predicted)) {
+                     if (compatible(target.state, predicted)) {
                         return new PlacementPlanner.Plan(hit, predicted, yaw, pitch, false);
                      }
                   }
@@ -971,7 +988,7 @@ public final class AutoBuilderController {
          Target target = this.targets.get(this.revalidateIndex++);
          if (!this.unconfirmed.containsKey(target.pos) && (this.pending == null || !this.pending.target.pos.equals(target.pos))) {
             boolean matches = MaterialTracker.isLoaded(client.field_1687, target.pos)
-               && MaterialTracker.matches(target.state, client.field_1687.method_8320(target.pos));
+               && matches(target.state, client.field_1687.method_8320(target.pos));
             if (matches) {
                this.markCorrect(target);
             } else if (this.correct.get(target.index) || this.settling.containsKey(target.pos)) {
@@ -986,12 +1003,14 @@ public final class AutoBuilderController {
       Prepared action = this.prepared;
       this.prepared = null;
       if (action.target.equals(this.current)) {
-         PlacementPlanner.Plan plan = PlacementPlanner.plan(
-            client, this.current.pos, this.current.state, client.field_1724.method_6047()
-         );
-         if (plan == null && !action.plan.configure()) {
+         boolean bucket = action.plan == this.bucketPlan;
+         PlacementPlanner.Plan plan = bucket
+            ? planWater(client, this.current)
+            : PlacementPlanner.plan(client, this.current.pos, this.current.state, client.field_1724.method_6047());
+         if (plan == null && !action.plan.configure() && !bucket) {
             plan = planSampled(client, this.current);
          }
+         this.bucketPlan = bucket ? plan : null;
          if (plan == null) {
             this.navigator.rejectCurrent(client);
          } else {
@@ -1000,6 +1019,7 @@ public final class AutoBuilderController {
             aim(client, plan);
             BuilderLocalPlayerAccessor sent = (BuilderLocalPlayerAccessor)client.field_1724;
             if (!plan.configure()
+               && !bucket
                && sent.donut$lastSentInput() != null
                && sent.donut$lastSentInput().comp_3164() == sneak
                && (Math.abs(class_3532.method_15393(sent.donut$lastSentYaw() - plan.yaw())) > 0.001F || Math.abs(sent.donut$lastSentPitch() - plan.pitch()) > 0.001F)) {
@@ -1017,10 +1037,129 @@ public final class AutoBuilderController {
                this.send(client, this.current, plan);
             } else {
                this.prepared = new Prepared(this.current, plan, this.tick + 1);
-               this.reason = "Aligning for placement at " + coordinates(this.current.pos);
+               this.reason = (bucket ? "Aligning to pour water at " : "Aligning for placement at ") + coordinates(this.current.pos);
             }
          }
       }
+   }
+
+   // ---- Fluids and kelp ----------------------------------------------------------------------
+
+   /** Flowing water and lava form on their own from a source; they are never placed. */
+   private static boolean derived(class_2680 state) {
+      return (state.method_27852(class_2246.field_10382) || state.method_27852(class_2246.field_10164)) && !state.method_26227().method_15771();
+   }
+
+   /** A water source, or a bubble column, which is a water source over soul sand or magma. */
+   private static boolean waterSource(class_2680 state) {
+      return state.method_27852(class_2246.field_10382) && state.method_26227().method_15771() || state.method_27852(class_2246.field_10422);
+   }
+
+   private static boolean kelp(class_2680 state) {
+      return state.method_27852(class_2246.field_9993) || state.method_27852(class_2246.field_10463);
+   }
+
+   /**
+    * Whether a world block satisfies a blueprint block. Exact, except where the game decides the
+    * rest: any water source fills a water or bubble-column cell, and kelp counts as built at any
+    * age, as kelp or as the kelp plant it turns into once more kelp grows on top.
+    */
+   public static boolean matches(class_2680 desired, class_2680 actual) {
+      if (MaterialTracker.matches(desired, actual)) {
+         return true;
+      } else if (waterSource(desired)) {
+         return waterSource(actual);
+      } else if (kelp(desired)) {
+         return kelp(actual);
+      } else if (desired.method_26204() != actual.method_26204()) {
+         return false;
+      }
+
+      // Same block: ignore what the world keeps changing by itself.
+      boolean connects = desired.method_26204() instanceof class_2457 || desired.method_26204() instanceof class_2310 || desired.method_26204() instanceof class_2544;
+      for (class_2769<?> property : desired.method_28501()) {
+         String name = property.method_11899();
+         if (RUNTIME.contains(name) || connects && CONNECTIONS.contains(name)) {
+            continue;
+         }
+         if (!desired.method_11654(property).equals(actual.method_11654(property))) {
+            return false;
+         }
+      }
+      return true;
+   }
+
+   /** Properties redstone, light and weather set at run time, not part of what was built. */
+   private static final Set<String> RUNTIME = Set.of("power", "powered", "lit", "locked", "in_wall", "snowy", "distance", "triggered", "enabled");
+   /** Sides that redstone dust, fences, panes, bars and walls work out from their neighbours. */
+   private static final Set<String> CONNECTIONS = Set.of("north", "east", "south", "west", "up");
+
+   private static boolean compatible(class_2680 desired, class_2680 predicted) {
+      return PlacementPlanner.compatible(desired, predicted) || predicted != null && kelp(desired) && kelp(predicted);
+   }
+
+   /** A water cell with no source yet, or a kelp cell that needs its water before the kelp. */
+   private static boolean needsWater(class_2680 desired, class_2680 actual) {
+      return waterSource(desired) && !waterSource(actual) || kelp(desired) && !waterSource(actual) && !kelp(actual);
+   }
+
+   /**
+    * Where to aim a water bucket so the water lands in the target. A bucket clicks the first solid
+    * face along the look, ignoring fluids, and fills the cell in front of it; a waterloggable block
+    * would take the water itself, so those faces are skipped.
+    */
+   private static PlacementPlanner.Plan planWater(class_310 client, Target target) {
+      class_746 player = client.field_1724;
+      class_243 eye = player.method_33571();
+      double reach = player.method_55754() - 0.05;
+      for (class_2350 face : class_2350.values()) {
+         class_2338 support = target.pos.method_10093(face.method_10153());
+         if (!MaterialTracker.isLoaded(client.field_1687, support)) {
+            continue;
+         }
+         class_2680 state = client.field_1687.method_8320(support);
+         if (state.method_26215() || state.method_45474() || state.method_28498(class_2741.field_12508)) {
+            continue;
+         }
+         class_265 shape = state.method_26218(client.field_1687, support);
+         if (shape.method_1110()) {
+            continue;
+         }
+         class_238 box = shape.method_1107();
+         for (double u : new double[]{0.5, 0.25, 0.75}) {
+            for (double v : new double[]{0.5, 0.25, 0.75}) {
+               class_2350.class_2351 axis = face.method_10166();
+               double fx = axis == class_2350.class_2351.field_11048 ? 0.5 : u;
+               double fy = axis == class_2350.class_2351.field_11052 ? 0.5 : (axis == class_2350.class_2351.field_11048 ? u : v);
+               double fz = axis == class_2350.class_2351.field_11051 ? 0.5 : v;
+               double x = box.field_1323 + (box.field_1320 - box.field_1323) * fx;
+               double y = box.field_1322 + (box.field_1325 - box.field_1322) * fy;
+               double z = box.field_1321 + (box.field_1324 - box.field_1321) * fz;
+               switch (face) {
+                  case field_11036 -> y = box.field_1325;
+                  case field_11033 -> y = box.field_1322;
+                  case field_11034 -> x = box.field_1320;
+                  case field_11039 -> x = box.field_1323;
+                  case field_11035 -> z = box.field_1324;
+                  case field_11043 -> z = box.field_1321;
+               }
+               class_243 point = new class_243(support.method_10263() + x, support.method_10264() + y, support.method_10260() + z);
+               if (eye.method_1025(point) > reach * reach) {
+                  continue;
+               }
+               class_243 inside = point.method_1020(class_243.method_24954(face.method_62675()).method_1021(0.002));
+               class_3965 seen = client.field_1687.method_17742(new class_3959(eye, inside, class_3960.field_17559, class_242.field_1348, player));
+               if (seen.method_17783() != class_240.field_1332 || !seen.method_17777().equals(support) || seen.method_17780() != face) {
+                  continue;
+               }
+               class_243 delta = point.method_1020(eye);
+               float yaw = (float)Math.toDegrees(Math.atan2(-delta.field_1352, delta.field_1350));
+               float pitch = (float)Math.toDegrees(Math.atan2(-delta.field_1351, Math.hypot(delta.field_1352, delta.field_1350)));
+               return new PlacementPlanner.Plan(new class_3965(point, face, support, false), class_2246.field_10382.method_9564(), yaw, pitch, false);
+            }
+         }
+      }
+      return null;
    }
 
    /** True for a few seconds after this builder placed a sign. */
@@ -1035,7 +1174,11 @@ public final class AutoBuilderController {
       }
 
       class_2680 before = client.field_1687.method_8320(target.pos);
-      class_1269 result = client.field_1761.method_2896(client.field_1724, class_1268.field_5808, plan.hit());
+      boolean bucket = plan == this.bucketPlan;
+      // A bucket is used, not clicked on a block: the server finds the face along the look itself.
+      class_1269 result = bucket
+         ? client.field_1761.method_2919(client.field_1724, class_1268.field_5808)
+         : client.field_1761.method_2896(client.field_1724, class_1268.field_5808, plan.hit());
       int sequence = ((BuilderClientLevelAccessor)client.field_1687).donut$predictionHandler().method_41942();
       this.unconfirmed.put(target.pos, sequence);
       class_2338 secondary = secondaryPosition(target);
@@ -1044,6 +1187,8 @@ public final class AutoBuilderController {
       }
 
       this.pending = new Pending(target, before, plan.prediction(), this.tick, sequence);
+      this.pending.bucket = bucket;
+      this.bucketPlan = null;
       this.placedTick = this.tick;
       this.placements++;
       if (result.method_23665()) {
@@ -1187,7 +1332,7 @@ public final class AutoBuilderController {
          Integer index = this.indices.get(pos);
          if (index != null) {
             class_2680 desired = this.transform.apply(this.schematic.blocks().get(index).state());
-            if (MaterialTracker.matches(desired, state)) {
+            if (matches(desired, state)) {
                this.markCorrect(this.byIndex[index]);
                this.deferred.remove(pos);
                if (predicted != null) {
@@ -1237,7 +1382,16 @@ public final class AutoBuilderController {
             changed = true;
          }
 
-         if (MaterialTracker.matches(action.target.state, actual) && changed) {
+         if (action.bucket && kelp(action.target.state) && waterSource(actual)) {
+            // The water a kelp cell needs is in; the kelp itself is the next placement.
+            this.failures.remove(action.target.pos);
+            this.current = null;
+            this.noProgress = 0;
+            this.cooldown = BuildTempo.settleDelay();
+            return;
+         }
+
+         if (matches(action.target.state, actual) && changed) {
             this.markCorrect(action.target);
             this.failures.remove(action.target.pos);
 
@@ -1289,7 +1443,17 @@ public final class AutoBuilderController {
       }
 
       class_2680 actual = client.field_1687.method_8320(action.target.pos);
-      if (actual.equals(action.before) || !MaterialTracker.matches(action.target.state, actual)) {
+      if (action.bucket && kelp(action.target.state)) {
+         if (waterSource(actual)) {
+            this.pending = null;
+            this.current = null;
+            this.noProgress = 0;
+            this.cooldown = BuildTempo.settleDelay();
+         }
+         return;
+      }
+
+      if (actual.equals(action.before) || !matches(action.target.state, actual)) {
          return;
       }
 
@@ -1388,7 +1552,7 @@ public final class AutoBuilderController {
             this.settleQueue.addLast(new Settle(target, this.tick + 1, entry.since()));
          } else {
             boolean loaded = MaterialTracker.isLoaded(client.field_1687, target.pos);
-            boolean matches = loaded && MaterialTracker.matches(target.state, client.field_1687.method_8320(target.pos));
+            boolean matches = loaded && matches(target.state, client.field_1687.method_8320(target.pos));
             if (!matches) {
                StabilityGate.invalidate(this, target.pos);
                this.unsettle(target);
@@ -1412,7 +1576,7 @@ public final class AutoBuilderController {
             target.pos,
             this.tick,
             MaterialTracker.isLoaded(this.session, target.pos),
-            MaterialTracker.matches(target.state, this.session.method_8320(target.pos))
+            matches(target.state, this.session.method_8320(target.pos))
          )) {
             this.settling.remove(target.pos);
             this.correct.set(target.index);
@@ -1425,6 +1589,9 @@ public final class AutoBuilderController {
 
    private void defer(String message) {
       this.lastFailure = message;
+      if (this.current != null) {
+         this.deferReasons.put(this.current.pos, message);
+      }
       if (this.current.support) {
          this.pauseWith(message);
          this.current = null;
@@ -1486,7 +1653,7 @@ public final class AutoBuilderController {
       if (!desired.method_28498(class_2741.field_12508)
          || !(Boolean)desired.method_11654(class_2741.field_12508)
          || desired.method_26204() == actual.method_26204() && (Boolean)actual.method_11654(class_2741.field_12508)) {
-         for (class_2769<?> property : desired.method_28501()) {
+         for (class_2769<?> property : kelp(desired) ? List.<class_2769<?>>of() : desired.method_28501()) {
             if ((property.method_11899().equals("age") || property.method_11899().equals("stage"))
                && desired.method_11654(property) instanceof Integer age
                && age > 0) {
@@ -1762,6 +1929,7 @@ public final class AutoBuilderController {
       final int sentTick;
       final int sequence;
       boolean acknowledged;
+      boolean bucket;
       class_2680 observed;
 
       Pending(Target target, class_2680 before, class_2680 predicted, int sentTick, int sequence) {

@@ -35,6 +35,7 @@ public final class SmokeDriver implements ClientModInitializer {
    private static final class_2338 ORIGIN = new class_2338(0, -60, 0);
    private static final boolean CREATIVE = Boolean.getBoolean("rexsmoke.creative");
    private static final int MAX_SECONDS = Integer.getInteger("rexsmoke.maxSeconds", 300);
+   private static final int STALL_TICKS = 20 * Integer.getInteger("rexsmoke.stallSeconds", 20);
    private static final String[] SURVIVAL = {
       "gamemode survival @a", "effect give @a minecraft:resistance infinite 255 true", "effect give @a minecraft:saturation infinite 255 true", "clear @a",
       "give @a minecraft:oak_planks 128", "give @a minecraft:stone_bricks 192", "give @a minecraft:oak_log 64", "give @a minecraft:glass 64",
@@ -156,7 +157,7 @@ public final class SmokeDriver implements ClientModInitializer {
             } else {
                this.still++;
             }
-            boolean done = builder.status() == AutoBuilderController.Status.COMPLETED || this.still > 400 || this.ticks > 20 * MAX_SECONDS;
+            boolean done = builder.status() == AutoBuilderController.Status.COMPLETED || this.still > STALL_TICKS || this.ticks > 20 * MAX_SECONDS;
             if (!done) {
                return;
             }
@@ -243,11 +244,11 @@ public final class SmokeDriver implements ClientModInitializer {
          if (actual.equals(desired)) {
             exact++;
          }
-         if (MaterialTracker.matches(desired, actual)) {
+         if (AutoBuilderController.matches(desired, actual)) {
             matching++;
          } else {
             wrong++;
-            if (wrong <= 3) {
+            if (wrong <= 8) {
                this.log("  wrong at " + pos.method_23854() + ": want " + desired + " got " + actual + " | builder: " + explain(pos));
             }
          }
