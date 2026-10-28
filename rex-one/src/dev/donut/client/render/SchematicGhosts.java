@@ -18,6 +18,7 @@ import net.minecraft.class_1923;
 import net.minecraft.class_2338;
 import net.minecraft.class_243;
 import net.minecraft.class_2680;
+import rex.SchematicGhost;
 
 @Environment(EnvType.CLIENT)
 final class SchematicGhosts {
@@ -65,9 +66,14 @@ final class SchematicGhosts {
             }
 
             columns.sort(Comparator.comparingInt(p -> (p.field_9181 - cx) * (p.field_9181 - cx) + (p.field_9180 - cz) * (p.field_9180 - cz)));
+            int[] layers = SchematicGhost.layerRange();
 
             for (class_1923 column : columns) {
                for (SchematicGhosts.Ghost ghost : this.current.columns.getOrDefault(column.method_8324(), List.of())) {
+                  int y = ghost.pos.method_10264();
+                  if (layers != null && (y < layers[0] || y > layers[1])) {
+                     continue;
+                  }
                   if (!(class_243.method_24953(ghost.pos).method_1025(camera) > 9216.0)) {
                      visible.add(ghost);
                      if (visible.size() >= 8192) {

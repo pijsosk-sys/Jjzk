@@ -173,6 +173,11 @@ public final class AutoBuilderController {
       return this.supportBlocks.size();
    }
 
+   /** The lowest layer with blocks still to place, or Integer.MIN_VALUE when there is none. */
+   public int workingLayer() {
+      return this.work.isEmpty() ? Integer.MIN_VALUE : this.work.first().pos.method_10264();
+   }
+
    public int totalBlocks() {
       return this.targets.size();
    }
@@ -190,6 +195,21 @@ public final class AutoBuilderController {
    /** Placement packets sent since the build started. */
    public int placementsSent() {
       return this.placements;
+   }
+
+   /** Every skipped block and why, for the screen's Skipped figure. */
+   public String skippedSummary() {
+      StringBuilder out = new StringBuilder(this.deferred.size() + " blocks are skipped for now. They are retried after the next block "
+         + "that places, and on Resume.\n");
+      int listed = 0;
+      for (class_2338 pos : this.deferred) {
+         if (listed++ == 40) {
+            out.append("...and ").append(this.deferred.size() - 40).append(" more.\n");
+            break;
+         }
+         out.append(coordinates(pos)).append(": ").append(this.deferReasons.getOrDefault(pos, "no reason recorded")).append('\n');
+      }
+      return out.toString();
    }
 
    public int deferredBlocks() {

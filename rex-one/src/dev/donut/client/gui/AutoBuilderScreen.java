@@ -9,6 +9,7 @@ import dev.donut.client.autobuild.CreativeBuildMode;
 import rex.BuildTempo;
 import rex.BuildMemory;
 import rex.SchematicGhost;
+import rex.TuffShader;
 import dev.donut.client.config.ClientConfig;
 import dev.donut.client.input.ModuleKeybinds;
 import java.io.IOException;
@@ -336,36 +337,36 @@ public final class AutoBuilderScreen extends class_437 {
       for (int axis = 0; axis < 3; axis++) {
          int index = axis;
          int ax = x + 12 + axis * 120;
-         UiPaint.text(g, this.field_22793, axes[axis], ax, y + 39, MUTED);
-         this.button(g, "minus" + axis, "-", ax + 12, y + 30, 18, available, false, () -> this.nudge(index, -1));
-         UiPaint.round(g, ax + 33, y + 30, 58, 24, 4, this.coordinateFocus == axis ? BORDER : INSET);
+         UiPaint.text(g, this.field_22793, axes[axis], ax, y + 37, MUTED);
+         this.button(g, "minus" + axis, "-", ax + 12, y + 28, 18, available, false, () -> this.nudge(index, -1));
+         UiPaint.round(g, ax + 33, y + 28, 58, 24, 4, this.coordinateFocus == axis ? BORDER : INSET);
          String shown = this.coordinates[axis] + (this.coordinateFocus == axis && System.currentTimeMillis() % 1000L < 500L ? "|" : "");
-         UiPaint.text(g, this.field_22793, this.ellipsize(shown, 52), ax + 37, y + 39, available ? TEXT : DIM);
+         UiPaint.text(g, this.field_22793, this.ellipsize(shown, 52), ax + 37, y + 37, available ? TEXT : DIM);
          if (available) {
-            this.hit("coordinate" + axis, ax + 33, y + 30, 58, 24, () -> {
+            this.hit("coordinate" + axis, ax + 33, y + 28, 58, 24, () -> {
                this.coordinateFocus = index;
                this.replaceText = true;
             });
          }
 
-         this.button(g, "plus" + axis, "+", ax + 94, y + 30, 18, available, false, () -> this.nudge(index, 1));
+         this.button(g, "plus" + axis, "+", ax + 94, y + 28, 18, available, false, () -> this.nudge(index, 1));
       }
 
       PlacementTransform t = this.builder.transform();
       int bw = (w - 24 - 12) / 3;
-      this.button(g, "atPlayer", "At player", x + 12, y + 64, bw, available && this.field_22787.field_1724 != null, false, () -> {
+      this.button(g, "atPlayer", "At player", x + 12, y + 58, bw, available && this.field_22787.field_1724 != null, false, () -> {
          PlacementTransform current = this.builder.transform();
          this.builder.setTransform(new PlacementTransform(this.field_22787.field_1724.method_24515(), current.quarterTurns(), current.mirrorX()));
          this.syncCoordinates();
       });
-      this.button(g, "rotate", "Rotate " + Math.floorMod(t.quarterTurns(), 4) * 90 + "°", x + 18 + bw, y + 64, bw, available, false, () -> {
+      this.button(g, "rotate", "Rotate " + Math.floorMod(t.quarterTurns(), 4) * 90 + "°", x + 18 + bw, y + 58, bw, available, false, () -> {
          if (this.commitCoordinates()) {
             PlacementTransform current = this.builder.transform();
             this.builder.setTransform(new PlacementTransform(current.origin(), current.quarterTurns() + 1, current.mirrorX()));
             this.invalidateMaterials();
          }
       });
-      this.button(g, "mirror", "Mirror " + (t.mirrorX() ? "on" : "off"), x + 24 + bw * 2, y + 64, bw, available, t.mirrorX(), () -> {
+      this.button(g, "mirror", "Mirror " + (t.mirrorX() ? "on" : "off"), x + 24 + bw * 2, y + 58, bw, available, t.mirrorX(), () -> {
          if (this.commitCoordinates()) {
             PlacementTransform current = this.builder.transform();
             this.builder.setTransform(new PlacementTransform(current.origin(), current.quarterTurns(), !current.mirrorX()));
@@ -373,29 +374,57 @@ public final class AutoBuilderScreen extends class_437 {
          }
       });
       int hw = (w - 24 - 6) / 2;
-      this.button(g, "preview", "Show in world", x + 12, y + 96, hw, available && this.field_22787.field_1687 != null, false, () -> {
+      this.button(g, "preview", "Show in world", x + 12, y + 88, hw, available && this.field_22787.field_1687 != null, false, () -> {
          if (this.commitCoordinates()) {
             SchematicGhost.set(true);
             this.field_22787.method_1507(null);
          }
       });
       boolean ghost = SchematicGhost.shown();
-      this.button(g, "ghost", ghost ? "Ghost: shown" : "Ghost: hidden", x + 18 + hw, y + 96, hw, available, ghost, () -> SchematicGhost.set(!SchematicGhost.shown()));
-      UiPaint.round(g, x + 12, y + 132, w - 24, 1, 0, BORDER);
-      UiPaint.text(g, this.field_22793, "Ghost opacity", x + 12, y + 151, DIM);
+      this.button(g, "ghost", ghost ? "Ghost: shown" : "Ghost: hidden", x + 18 + hw, y + 88, hw, available, ghost, () -> SchematicGhost.set(!SchematicGhost.shown()));
+      UiPaint.text(g, this.field_22793, "Ghost opacity", x + 12, y + 129, DIM);
       int opacity = (int)Math.round(this.config.autoBuilder.previewOpacity * 100.0);
-      this.button(g, "opacityDown", "-", x + 100, y + 142, 22, true, false, () -> this.setOpacity(-0.05));
-      UiPaint.round(g, x + 128, y + 149, 80, 4, 2, INSET);
-      UiPaint.round(g, x + 128, y + 149, (int)(80.0 * Math.clamp(opacity / 100.0, 0.0, 1.0)), 4, 2, UiPaint.alpha(this.config.accentColor, 0.9));
-      UiPaint.text(g, this.field_22793, opacity + "%", x + 214, y + 151, MUTED);
-      this.button(g, "opacityUp", "+", x + 244, y + 142, 22, true, false, () -> this.setOpacity(0.05));
+      this.button(g, "opacityDown", "-", x + 100, y + 120, 22, true, false, () -> this.setOpacity(-0.05));
+      UiPaint.round(g, x + 128, y + 127, 80, 4, 2, INSET);
+      UiPaint.round(g, x + 128, y + 127, (int)(80.0 * Math.clamp(opacity / 100.0, 0.0, 1.0)), 4, 2, UiPaint.alpha(this.config.accentColor, 0.9));
+      UiPaint.text(g, this.field_22793, opacity + "%", x + 214, y + 129, MUTED);
+      this.button(g, "opacityUp", "+", x + 244, y + 120, 22, true, false, () -> this.setOpacity(0.05));
       if (this.builder.schematic() != null && !this.builder.schematic().warnings().isEmpty()) {
          int notices = this.builder.schematic().warnings().size();
-         this.button(g, "warnings", notices + (notices == 1 ? " notice" : " notices"), x + w - 94, y + 142, 82, true, false,
+         this.button(g, "warnings", notices + (notices == 1 ? " notice" : " notices"), x + w - 94, y + 120, 82, true, false,
             () -> this.openDetails(String.join("\n", this.builder.schematic().warnings())));
       }
 
-      UiPaint.text(g, this.field_22793, "Arrows nudge after clicking a field. Enter applies.", x + 12, y + h - 22, DIM);
+      // Which layers of the ghost to draw.
+      int ly = y + 150;
+      UiPaint.text(g, this.field_22793, "Layers", x + 12, ly + 9, DIM);
+      SchematicGhost.Layers mode = SchematicGhost.mode();
+      this.button(g, "layers", mode.label, x + 100, ly, 128, available, mode != SchematicGhost.Layers.ALL, SchematicGhost::cycleMode);
+      if (mode == SchematicGhost.Layers.MANUAL) {
+         this.button(g, "layerDown", "-", x + 236, ly, 22, true, false, () -> SchematicGhost.shiftLayer(-1));
+         String shown = "Y " + (this.builder.transform().origin().method_10264() + SchematicGhost.manualLayer());
+         UiPaint.text(g, this.field_22793, shown, x + 264, ly + 9, TEXT);
+         this.button(g, "layerUp", "+", x + 316, ly, 22, true, false, () -> SchematicGhost.shiftLayer(1));
+      } else if (mode != SchematicGhost.Layers.ALL && this.builder.workingLayer() != Integer.MIN_VALUE) {
+         UiPaint.text(g, this.field_22793, "Y " + this.builder.workingLayer(), x + 236, ly + 9, MUTED);
+      }
+
+      // The world look, so it can be tried out right here.
+      int wy = y + 180;
+      UiPaint.text(g, this.field_22793, "Look", x + 12, wy + 9, DIM);
+      TuffShader shader = TuffShader.instance;
+      boolean look = shader != null && shader.enabled;
+      this.button(g, "shader", look ? "Tuff Shader: on" : "Tuff Shader: off", x + 100, wy, 128, shader != null, look, () -> shader.toggle());
+      if (shader != null) {
+         this.button(g, "shaderStyle", "Style: " + styleLabel(shader), x + 236, wy, 128, true, false, () -> {
+            shader.style.next();
+            shader.style.changed();
+            if (shader.enabled) {
+               shader.setEnabled(false);
+               shader.setEnabled(true);
+            }
+         });
+      }
    }
 
    private void drawBuild(class_332 g) {
@@ -432,7 +461,7 @@ public final class AutoBuilderScreen extends class_437 {
          {"In flight", Integer.toString(this.builder.inflightPlacements())},
          {"Settling", number(this.builder.settlingBlocks())},
          {"Supports", number(this.builder.supportsPlaced())},
-         {"Deferred", number(this.builder.deferredBlocks())}
+         {"Skipped", number(this.builder.deferredBlocks())}
       };
 
       for (int i = 0; i < stats.length; i++) {
@@ -441,6 +470,10 @@ public final class AutoBuilderScreen extends class_437 {
          UiPaint.round(g, sx, sy, 86, 28, 5, INSET);
          UiPaint.text(g, this.field_22793, stats[i][0], sx + 7, sy + 5, DIM);
          UiPaint.text(g, this.field_22793, stats[i][1], sx + 7, sy + 16, i == 5 && this.builder.deferredBlocks() > 0 ? WARN : TEXT);
+      }
+
+      if (this.builder.deferredBlocks() > 0) {
+         this.hit("skipped", x + 102, y + 136, 86, 28, () -> this.openDetails(this.builder.skippedSummary()));
       }
 
       int sy = y + 174;
@@ -537,6 +570,11 @@ public final class AutoBuilderScreen extends class_437 {
    private static String statusLabel(AutoBuilderController.Status status) {
       String name = status.name().toLowerCase(Locale.ROOT);
       return Character.toUpperCase(name.charAt(0)) + name.substring(1);
+   }
+
+   private static String styleLabel(TuffShader shader) {
+      String name = ((TuffShader.Style)shader.style.get()).name();
+      return name.charAt(0) + name.substring(1).toLowerCase(Locale.ROOT);
    }
 
    private static String presetNote(BuildTempo.Preset preset) {
