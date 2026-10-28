@@ -108,6 +108,11 @@ public final class AutoBuilderController {
    private int originalSlot = -1;
    private boolean scanned;
    private boolean yielded;
+   private Target pillarFor;
+   private int pillarGoal;
+   private int pillarBase;
+   private int pillarFails;
+   private boolean pillarPlaced;
    private String lastFailure = "";
 
    private AutoBuilderController() {
@@ -202,6 +207,22 @@ public final class AutoBuilderController {
    private void sample() {
       this.history[this.historyTicks % this.history.length] = this.correct.cardinality() + this.settling.size();
       this.historyTicks++;
+   }
+
+   /** What the builder thinks of one blueprint position, for diagnostics. */
+   public String explain(class_2338 pos) {
+      Integer index = this.indices.get(pos);
+      if (index == null) {
+         return "not in blueprint";
+      }
+      Target target = this.byIndex[index];
+      return (this.correct.get(index) ? "correct " : "")
+         + (this.work.contains(target) ? "queued " : "")
+         + (this.settling.containsKey(pos) ? "settling " : "")
+         + (this.deferred.contains(pos) ? "deferred " : "")
+         + (this.unconfirmed.containsKey(pos) ? "unconfirmed " : "")
+         + (this.failures.containsKey(pos) ? "failures=" + this.failures.get(pos) + " " : "")
+         + (target.equals(this.current) ? "current " : "");
    }
 
    private void clearSettling() {
@@ -311,6 +332,7 @@ public final class AutoBuilderController {
          this.current = null;
          this.pending = null;
          this.prepared = null;
+         this.pillarFor = null;
          this.originalSlot = client.field_1724.method_31548().method_67532();
          this.status = Status.RUNNING;
          this.previewVisible = true;
@@ -330,6 +352,7 @@ public final class AutoBuilderController {
          this.status = Status.PAUSED;
          this.reason = message;
          this.prepared = null;
+         this.pillarFor = null;
          this.navigator.release();
          this.restoreSlot();
       }
@@ -405,6 +428,7 @@ public final class AutoBuilderController {
       this.deferred.clear();
       this.clearSettling();
       this.inflight.clear();
+      this.pillarFor = null;
       this.cooldown = 0;
       this.status = this.schematic == null
          ? Status.IDLE
@@ -539,6 +563,11 @@ public final class AutoBuilderController {
 
                if (this.correct.cardinality() != this.targets.size()) {
                   this.finalCheckIndex = 0;
+                  if (this.pillarFor != null) {
+                     this.pillarStep(client);
+                     return;
+                  }
+
                   if (this.current == null && this.inflight.size() >= BuildTempo.inflight()) {
                      this.reason = "Waiting for the server (" + this.inflight.size() + " placements in flight)";
                      this.yielded = true;
@@ -649,6 +678,14 @@ public final class AutoBuilderController {
                                              this.navigator.rejectCurrent(client);
                                              this.noProgress++;
                                           } else {
+                                             boolean blocked = movement == BuilderNavigator.Result.NO_PATH
+                                                || movement == BuilderNavigator.Result.STUCK
+                                                || this.noProgress > 80;
+                                             if (blocked && this.canPillar(client, this.current)) {
+                                                this.startPillar(client, this.current);
+                                                return;
+                                             }
+
                                              if (movement == BuilderNavigator.Result.NO_PATH) {
                                                 this.defer("No walking route to " + coordinates(this.current.pos) + ". Provide a path or stairs, then Resume.");
                                                 return;
@@ -761,7 +798,10 @@ public final class AutoBuilderController {
    private Target reachableAlternative(class_310 client, class_1792 item) {
       class_1799 hand = client.field_1724.method_6047();
       for (Target candidate : this.nearby) {
+         // Never build above the block being replaced: rising walls next to the player carry it up and
+         // leave the rest of the lower layer behind and below it.
          if (candidate == this.current
+            || candidate.pos.method_10264() > this.current.pos.method_10264()
             || candidate.support
             || !this.work.contains(candidate)
             || this.unconfirmed.containsKey(candidate.pos)
@@ -877,29 +917,155 @@ public final class AutoBuilderController {
                && !(Math.abs(sent.donut$lastSentPitch() - plan.pitch()) > 0.001F)
                && sent.donut$lastSentInput() != null
                && sent.donut$lastSentInput().comp_3164() == sneak) {
-               class_2680 before = client.field_1687.method_8320(this.current.pos);
-               class_1269 result = client.field_1761.method_2896(client.field_1724, class_1268.field_5808, plan.hit());
-               int sequence = ((BuilderClientLevelAccessor)client.field_1687).donut$predictionHandler().method_41942();
-               this.unconfirmed.put(this.current.pos, sequence);
-               class_2338 secondary = secondaryPosition(this.current);
-               if (secondary != null) {
-                  this.unconfirmed.put(secondary, sequence);
-               }
-
-               this.pending = new Pending(this.current, before, plan.prediction(), this.tick, sequence);
-               this.placedTick = this.tick;
-               this.placements++;
-               if (result.method_23665()) {
-                  client.field_1724.method_6104(class_1268.field_5808);
-               }
-
-               this.reason = "Waiting for the server at " + coordinates(this.current.pos);
+               this.send(client, this.current, plan);
             } else {
                this.prepared = new Prepared(this.current, plan, this.tick + 1);
                this.reason = "Aligning for placement at " + coordinates(this.current.pos);
             }
          }
       }
+   }
+
+   /** Sends one placement the server already has the rotation for, and tracks it until it answers. */
+   private void send(class_310 client, Target target, PlacementPlanner.Plan plan) {
+      class_2680 before = client.field_1687.method_8320(target.pos);
+      class_1269 result = client.field_1761.method_2896(client.field_1724, class_1268.field_5808, plan.hit());
+      int sequence = ((BuilderClientLevelAccessor)client.field_1687).donut$predictionHandler().method_41942();
+      this.unconfirmed.put(target.pos, sequence);
+      class_2338 secondary = secondaryPosition(target);
+      if (secondary != null) {
+         this.unconfirmed.put(secondary, sequence);
+      }
+
+      this.pending = new Pending(target, before, plan.prediction(), this.tick, sequence);
+      this.placedTick = this.tick;
+      this.placements++;
+      if (result.method_23665()) {
+         client.field_1724.method_6104(class_1268.field_5808);
+      }
+
+      this.reason = "Waiting for the server at " + coordinates(target.pos);
+   }
+
+   // ---- Pillaring -------------------------------------------------------------------------------
+
+   private static final List<class_1792> PILLAR_BLOCKS = List.of(
+      class_1802.field_8831, class_1802.field_20412, class_1802.field_29025, class_1802.field_8328, class_1802.field_20391
+   );
+
+   /** The first pillar block the player has, or null. */
+   private static class_1792 pillarMaterial(class_310 client) {
+      for (class_1792 candidate : PILLAR_BLOCKS) {
+         if (findSlot(client, candidate) >= 0) {
+            return candidate;
+         }
+      }
+      return null;
+   }
+
+   /**
+    * A target too high to walk up to can be reached by pillaring straight up where the player
+    * stands, as long as that column is open air the blueprint does not use.
+    */
+   private boolean canPillar(class_310 client, Target target) {
+      if (target.support || !BuildTempo.pillar() || !client.field_1724.method_24828()) {
+         return false;
+      }
+
+      class_2338 feet = client.field_1724.method_24515();
+      int goal = pillarGoal(target, feet.method_10264());
+      if (target.pos.method_10264() <= feet.method_10264() || goal - feet.method_10264() > 40 || pillarMaterial(client) == null) {
+         return false;
+      }
+
+      for (int y = feet.method_10264(); y <= goal + 2; y++) {
+         class_2338 cell = new class_2338(feet.method_10263(), y, feet.method_10260());
+         if (!MaterialTracker.isLoaded(client.field_1687, cell) || this.indices.containsKey(cell) || !client.field_1687.method_8320(cell).method_45474()) {
+            return false;
+         }
+      }
+
+      return true;
+   }
+
+   /** Stand a block below the target, and always climb at least one block. */
+   private static int pillarGoal(Target target, int feet) {
+      return Math.max(target.pos.method_10264() - 1, feet + 1);
+   }
+
+   private void startPillar(class_310 client, Target target) {
+      this.pillarFor = target;
+      this.pillarGoal = pillarGoal(target, client.field_1724.method_24515().method_10264());
+      this.pillarFails = 0;
+      this.pillarBase = client.field_1724.method_24515().method_10264();
+      this.navigator.reset();
+      this.noProgress = 0;
+      this.reason = "Pillaring up to " + coordinates(target.pos);
+   }
+
+   /**
+    * One tick of pillaring: look straight down, jump, and once the feet clear the block below,
+    * place a pillar block there along the rotation the server already has.
+    */
+   private void pillarStep(class_310 client) {
+      this.yielded = true;
+      class_746 player = client.field_1724;
+      int feet = player.method_24515().method_10264();
+      // Height only counts standing on the pillar: at the top of a hop the feet are already a block up.
+      if (player.method_24828() && feet >= this.pillarGoal || this.pillarFails > 6) {
+         if (feet < this.pillarGoal) {
+            this.lastFailure = "Could not pillar up at " + coordinates(player.method_24515());
+         }
+         this.pillarFor = null;
+         this.current = null;
+         this.navigator.reset();
+         return;
+      }
+
+      class_1792 material = pillarMaterial(client);
+      if (material == null) {
+         this.pillarFor = null;
+         this.pauseWith("Out of pillar blocks. Carry dirt, cobblestone, cobbled deepslate, netherrack or stone, then Resume.");
+         return;
+      }
+
+      int slot = findSlot(client, material);
+      if (slot >= 9) {
+         int selected = player.method_31548().method_67532();
+         client.field_1761.method_2906(player.field_7498.field_7763, slot, selected, class_1713.field_7791, player);
+         this.cooldown = BuildTempo.swap();
+         return;
+      }
+
+      player.method_31548().method_61496(slot);
+      this.navigator.hold(client, false);
+      player.method_36457(90.0F);
+      BuilderLocalPlayerAccessor sent = (BuilderLocalPlayerAccessor)player;
+      this.reason = "Pillaring up to " + coordinates(this.pillarFor.pos) + " (" + Math.max(0, this.pillarGoal - feet) + " to go)";
+      if (player.method_24828()) {
+         this.pillarBase = feet;
+         this.pillarPlaced = false;
+         if (sent.donut$lastSentPitch() > 89.0F && client.field_1687.method_8320(player.method_24515().method_10086(2)).method_45474()) {
+            player.method_6043();
+         }
+         return;
+      }
+
+      class_2338 cell = new class_2338(player.method_24515().method_10263(), this.pillarBase, player.method_24515().method_10260());
+      if (this.pillarPlaced || player.method_23318() < this.pillarBase + 1.0 || !client.field_1687.method_8320(cell).method_45474()) {
+         return;
+      }
+
+      class_1747 item = (class_1747)material;
+      Target support = new Target(cell, item.method_7711().method_9564(), -1, true);
+      PlacementPlanner.Plan plan = planAlongSent(client, support, sent.donut$lastSentYaw(), sent.donut$lastSentPitch());
+      this.pillarPlaced = true;
+      if (plan == null) {
+         this.pillarFails++;
+         return;
+      }
+
+      this.send(client, support, plan);
    }
 
    private static void aim(class_310 client, PlacementPlanner.Plan plan) {

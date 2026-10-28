@@ -8,6 +8,10 @@ public final class Huds {
    }
 
    public static void overlay(class_332 graphics, float delta) {
+      // The Auto Build screen shows the same figures itself; panels on top of it only cover it.
+      if (net.minecraft.class_310.method_1551().field_1755 instanceof dev.donut.client.gui.AutoBuilderScreen) {
+         return;
+      }
       try {
          DuperHud.overlay(graphics, delta);
       } catch (Throwable escaped) {

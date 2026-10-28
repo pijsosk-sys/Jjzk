@@ -83,6 +83,9 @@ public final class BuildTempo extends Module {
       .describe("Predicted placements the server may leave unanswered before the builder waits for it.");
    public final NumberSetting revalidate = new NumberSetting("Revalidate", 0.0, 512.0, 64.0, 16.0)
       .describe("Blueprint positions re-checked against the world each tick.");
+   public final BooleanSetting pillar = new BooleanSetting("Pillar Up", true)
+      .describe("When a block is too high to walk up to, jump and place dirt, cobblestone, cobbled deepslate, netherrack or "
+         + "stone under yourself until it is in reach. The pillar stays unless Remove Supports is on.");
    public final BooleanSetting resume = new BooleanSetting("Auto Resume", true)
       .describe("Resumes after unloaded chunks, lost routes and deferred blocks.");
    public final NumberSetting delay = new NumberSetting("Retry Delay", 10.0, 200.0, 40.0, 10.0);
@@ -99,7 +102,7 @@ public final class BuildTempo extends Module {
       this.addSettings(
          new Setting[]{
             this.preset, this.steps, this.arm, this.ack, this.swap, this.settle, this.interval, this.layers, this.candidates, this.trust,
-            this.trustDelay, this.inflight, this.revalidate, this.resume, this.delay, this.retries
+            this.trustDelay, this.inflight, this.revalidate, this.pillar, this.resume, this.delay, this.retries
          }
       );
       this.enabled = true;
@@ -139,6 +142,12 @@ public final class BuildTempo extends Module {
    /** Called once per client tick before the controller runs. */
    public static void before(Object controller) {
       BuildPatience.tick(controller);
+      if (controller instanceof dev.donut.client.autobuild.AutoBuilderController builder) {
+         try {
+            SchematicGhost.sync(builder);
+         } catch (LinkageError | RuntimeException ignored) {
+         }
+      }
       DonutFeature.syncAll();
    }
 
@@ -223,6 +232,11 @@ public final class BuildTempo extends Module {
       }
       Preset p = fixed();
       return Math.max(1, p != null ? p.inflight : instance.inflight.getInt());
+   }
+
+   /** Pillaring is the one climbing method; off restores the original walk-only builder. */
+   public static boolean pillar() {
+      return on() && instance.pillar.get();
    }
 
    public static boolean autoResume() {

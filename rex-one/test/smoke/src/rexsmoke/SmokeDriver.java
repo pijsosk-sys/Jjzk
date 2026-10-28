@@ -213,11 +213,19 @@ public final class SmokeDriver implements ClientModInitializer {
          } else {
             wrong++;
             if (wrong <= 3) {
-               this.log("  wrong at " + pos.method_23854() + ": want " + desired + " got " + actual);
+               this.log("  wrong at " + pos.method_23854() + ": want " + desired + " got " + actual + " | builder: " + explain(pos));
             }
          }
       }
       return new int[]{exact, matching, wrong};
+   }
+
+   private static String explain(class_2338 pos) {
+      try {
+         return String.valueOf(AutoBuilderController.class.getMethod("explain", class_2338.class).invoke(AutoBuilderController.get(), pos));
+      } catch (ReflectiveOperationException none) {
+         return "n/a";
+      }
    }
 
    private void finish(class_310 client) {

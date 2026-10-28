@@ -18,7 +18,20 @@ public final class Modules {
    private static int registered;
    private static Method register;
 
+   /** This build's own modules, registered after the last row the generated registerAll names. */
+   private static final String[] EXTRAS = {"rex.SchematicGhost", "rex.TuffShader"};
+   private static final String LAST = "rex.BuildHud";
+
    public static void add(ModuleManager manager, String className) {
+      addOne(manager, className);
+      if (LAST.equals(className)) {
+         for (String extra : EXTRAS) {
+            addOne(manager, extra);
+         }
+      }
+   }
+
+   private static void addOne(ModuleManager manager, String className) {
       try {
          Constructor<?> constructor = Class.forName(className).getDeclaredConstructor();
          constructor.setAccessible(true);

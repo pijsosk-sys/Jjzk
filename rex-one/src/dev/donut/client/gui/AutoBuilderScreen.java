@@ -7,6 +7,7 @@ import dev.donut.client.autobuild.Schematic;
 import dev.donut.client.autobuild.UnifiedSchematics;
 import dev.donut.client.autobuild.CreativeBuildMode;
 import rex.BuildTempo;
+import rex.SchematicGhost;
 import dev.donut.client.config.ClientConfig;
 import dev.donut.client.input.ModuleKeybinds;
 import java.io.IOException;
@@ -107,6 +108,8 @@ public final class AutoBuilderScreen extends class_437 {
       this.scale = Math.max(0.1F, Math.min(1.0F, Math.min((this.field_22789 - 16.0F) / 840.0F, (this.field_22790 - 16.0F) / 510.0F)));
       this.originX = (this.field_22789 - 840.0F * this.scale) / 2.0F;
       this.originY = (this.field_22790 - 510.0F * this.scale) / 2.0F;
+      // Pop-ups such as tutorial hints draw over every screen; this one has no room for them.
+      this.field_22787.method_1566().method_2000();
       if (!this.initialized) {
          this.initialized = true;
          this.folder = this.field_22787.field_1697.toPath().resolve("schematics").resolve("donut");
@@ -370,11 +373,12 @@ public final class AutoBuilderScreen extends class_437 {
       int hw = (w - 24 - 6) / 2;
       this.button(g, "preview", "Show in world", x + 12, y + 96, hw, available && this.field_22787.field_1687 != null, false, () -> {
          if (this.commitCoordinates()) {
-            this.builder.setPreviewVisible(true);
+            SchematicGhost.set(true);
             this.field_22787.method_1507(null);
          }
       });
-      this.button(g, "cancelPreview", "Hide preview", x + 18 + hw, y + 96, hw, this.builder.previewVisible(), false, () -> this.builder.setPreviewVisible(false));
+      boolean ghost = SchematicGhost.shown();
+      this.button(g, "ghost", ghost ? "Ghost: shown" : "Ghost: hidden", x + 18 + hw, y + 96, hw, available, ghost, () -> SchematicGhost.set(!SchematicGhost.shown()));
       UiPaint.round(g, x + 12, y + 132, w - 24, 1, 0, BORDER);
       UiPaint.text(g, this.field_22793, "Ghost opacity", x + 12, y + 151, DIM);
       int opacity = (int)Math.round(this.config.autoBuilder.previewOpacity * 100.0);
