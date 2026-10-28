@@ -1,0 +1,1135 @@
+package dev.donut.client.autobuild;
+
+import dev.donut.client.freecam.FreecamController;
+import dev.donut.client.mixin.BuilderClientLevelAccessor;
+import dev.donut.client.mixin.BuilderLocalPlayerAccessor;
+import java.util.ArrayList;
+import java.util.BitSet;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.NavigableSet;
+import java.util.Objects;
+import java.util.Set;
+import java.util.TreeSet;
+import net.fabricmc.api.EnvType;
+import net.fabricmc.api.Environment;
+import net.minecraft.class_1268;
+import net.minecraft.class_1269;
+import net.minecraft.class_1713;
+import net.minecraft.class_1747;
+import net.minecraft.class_1792;
+import net.minecraft.class_1799;
+import net.minecraft.class_1802;
+import net.minecraft.class_2244;
+import net.minecraft.class_2320;
+import net.minecraft.class_2323;
+import net.minecraft.class_2338;
+import net.minecraft.class_2346;
+import net.minecraft.class_2350;
+import net.minecraft.class_2397;
+import net.minecraft.class_243;
+import net.minecraft.class_2482;
+import net.minecraft.class_2510;
+import net.minecraft.class_265;
+import net.minecraft.class_2680;
+import net.minecraft.class_2741;
+import net.minecraft.class_2742;
+import net.minecraft.class_2756;
+import net.minecraft.class_2760;
+import net.minecraft.class_2769;
+import net.minecraft.class_2771;
+import net.minecraft.class_304;
+import net.minecraft.class_310;
+import net.minecraft.class_3532;
+import net.minecraft.class_5544;
+import net.minecraft.class_638;
+import net.minecraft.class_746;
+import net.minecraft.class_2350.class_2353;
+import rex.BuildTempo;
+import rex.UnifiedAutoBuild;
+
+@Environment(EnvType.CLIENT)
+public final class AutoBuilderController {
+   private static final AutoBuilderController INSTANCE = new AutoBuilderController();
+   private final BuilderNavigator navigator = new BuilderNavigator();
+   private Schematic schematic;
+   private PlacementTransform transform = new PlacementTransform(class_2338.field_10980, 0, false);
+   private boolean previewVisible;
+   private Status status = Status.IDLE;
+   private String reason = "Choose a schematic.";
+   private class_638 session;
+   private List<Target> targets = List.of();
+   private Target[] byIndex = new Target[0];
+   private final NavigableSet<Target> work = new TreeSet<>(
+      Comparator.<Target>comparingInt(t -> t.pos.method_10264())
+         .thenComparingInt(Target::index)
+   );
+   private final Map<class_2338, Integer> indices = new HashMap<>();
+   private final BitSet correct = new BitSet();
+   private final Map<class_2338, Integer> failures = new HashMap<>();
+   private final Set<class_2338> deferred = new HashSet<>();
+   private final Set<class_2338> supportBlocks = new HashSet<>();
+   private final Map<class_2338, Integer> unconfirmed = new HashMap<>();
+   private class_638 predictionLevel;
+   private Target current;
+   private Prepared prepared;
+   private Pending pending;
+   private int tick;
+   private int scanIndex;
+   private int cooldown;
+   private int noProgress;
+   private int revalidateIndex;
+   private int finalCheckIndex;
+   private int originalSlot = -1;
+   private boolean scanned;
+   private String lastFailure = "";
+
+   private AutoBuilderController() {
+   }
+
+   public static AutoBuilderController get() {
+      return INSTANCE;
+   }
+
+   public Schematic schematic() {
+      return this.schematic;
+   }
+
+   public PlacementTransform transform() {
+      return this.transform;
+   }
+
+   public boolean previewVisible() {
+      return this.previewVisible;
+   }
+
+   public void setPreviewVisible(boolean value) {
+      this.previewVisible = value && this.schematic != null;
+   }
+
+   public Status status() {
+      return this.status;
+   }
+
+   public String reason() {
+      return this.reason;
+   }
+
+   public boolean isRunning() {
+      return this.status == Status.RUNNING;
+   }
+
+   public int confirmedBlocks() {
+      return this.correct.cardinality();
+   }
+
+   public double progress() {
+      return this.targets.isEmpty() ? 0.0 : (double)this.correct.cardinality() / this.targets.size();
+   }
+
+   public int supportsPlaced() {
+      return this.supportBlocks.size();
+   }
+
+   public void setSchematic(Schematic value) {
+      StabilityGate.clear(this);
+      this.cancel();
+      this.schematic = value;
+      this.rebuildTargets();
+      this.previewVisible = value != null;
+      this.status = value == null
+         ? Status.IDLE
+         : Status.READY;
+      this.reason = value == null ? "Choose a schematic." : "Position the preview, then Start.";
+   }
+
+   public void setTransform(PlacementTransform value) {
+      StabilityGate.clear(this);
+      if (!this.transform.equals(value)) {
+         this.cancel();
+         this.transform = Objects.requireNonNull(value);
+         this.rebuildTargets();
+         this.status = this.schematic == null
+            ? Status.IDLE
+            : Status.READY;
+         this.reason = "Position updated.";
+      }
+   }
+
+   private void rebuildTargets() {
+      this.indices.clear();
+      this.correct.clear();
+      this.failures.clear();
+      this.deferred.clear();
+      this.supportBlocks.clear();
+      this.scanIndex = 0;
+      this.scanned = false;
+      this.work.clear();
+      this.revalidateIndex = 0;
+      this.finalCheckIndex = 0;
+      if (this.schematic == null) {
+         this.targets = List.of();
+         this.byIndex = new Target[0];
+      } else {
+         List<Target> values = new ArrayList<>(this.schematic.blocks().size());
+
+         for (Schematic.Block block : this.schematic.blocks()) {
+            class_2338 pos = this.transform.apply(block.pos());
+            int index = values.size();
+            values.add(new Target(pos, this.transform.apply(block.state()), index, false));
+            this.indices.put(pos, index);
+         }
+
+         values.sort(
+            Comparator.<Target>comparingInt(t -> t.pos.method_10264())
+               .thenComparingInt(
+                  t -> MaterialTracker.isSecondary(t.state) ? 2 : (t.state.method_26204() instanceof class_2346 ? 1 : 0)
+               )
+         );
+         this.targets = List.copyOf(values);
+         this.byIndex = new Target[values.size()];
+
+         for (Target target : values) {
+            this.byIndex[target.index] = target;
+         }
+
+         this.work.addAll(values);
+      }
+   }
+
+   public void start() {
+      UnifiedAutoBuild.acquire();
+      StabilityGate.clear(this);
+      class_310 client = class_310.method_1551();
+      if (this.schematic == null || this.targets.isEmpty()) {
+         this.reason = "Load a schematic containing blocks.";
+      } else if (this.canRun(client)) {
+         if (this.predictionLevel != client.field_1687) {
+            this.unconfirmed.clear();
+            this.predictionLevel = client.field_1687;
+         }
+
+         this.correct.clear();
+         this.failures.clear();
+         this.deferred.clear();
+         this.scanIndex = 0;
+         this.scanned = false;
+         this.work.clear();
+         this.work.addAll(this.targets);
+         this.revalidateIndex = 0;
+         this.finalCheckIndex = 0;
+         this.session = client.field_1687;
+         this.tick = 0;
+         this.noProgress = 0;
+         this.lastFailure = "";
+         this.current = null;
+         this.pending = null;
+         this.prepared = null;
+         this.originalSlot = client.field_1724.method_31548().method_67532();
+         this.status = Status.RUNNING;
+         this.previewVisible = true;
+         this.reason = "Checking loaded blocks...";
+      }
+   }
+
+   public void pause() {
+      this.pauseWith("Paused by you.");
+   }
+
+   private void pauseWith(String message) {
+      if (this.status != Status.RUNNING
+         && this.status != Status.PAUSED) {
+         this.reason = message;
+      } else {
+         this.status = Status.PAUSED;
+         this.reason = message;
+         this.prepared = null;
+         this.navigator.release();
+         this.restoreSlot();
+      }
+   }
+
+   public void resume() {
+      UnifiedAutoBuild.acquire();
+      if (this.status != Status.PAUSED) {
+         this.start();
+      } else {
+         class_310 client = class_310.method_1551();
+         if (this.canRun(client)) {
+            if (this.session != client.field_1687) {
+               this.start();
+            } else {
+               this.failures.clear();
+               this.deferred.clear();
+               this.lastFailure = "";
+               this.noProgress = 0;
+               this.current = null;
+               this.prepared = null;
+               this.navigator.reset();
+               this.work.clear();
+
+               for (Target target : this.targets) {
+                  if (!this.correct.get(target.index)) {
+                     this.work.add(target);
+                  }
+               }
+
+               this.originalSlot = client.field_1724.method_31548().method_67532();
+               this.status = Status.RUNNING;
+               this.reason = "Resuming...";
+            }
+         }
+      }
+   }
+
+   private boolean canRun(class_310 client) {
+      if (client.field_1687 == null || client.field_1724 == null || client.field_1761 == null) {
+         this.reason = "Join a world before starting.";
+         return false;
+      } else if (FreecamController.enabled()) {
+         this.reason = "Disable Freecam before resuming AutoBuilder.";
+         return false;
+      } else if (client.field_1761.method_2928()) {
+         this.reason = "Spectator mode cannot place blocks.";
+         return false;
+      } else if (client.field_1724.method_5765()) {
+         this.reason = "Leave the vehicle before starting AutoBuilder.";
+         return false;
+      } else if (client.field_1755 != null) {
+         this.reason = "Close the open menu before resuming.";
+         return false;
+      } else {
+         return true;
+      }
+   }
+
+   public void cancel() {
+      StabilityGate.clear(this);
+      this.navigator.reset();
+      this.restoreSlot();
+      this.current = null;
+      this.prepared = null;
+      this.pending = null;
+      this.session = null;
+      this.failures.clear();
+      this.deferred.clear();
+      this.cooldown = 0;
+      this.status = this.schematic == null
+         ? Status.IDLE
+         : Status.READY;
+      this.reason = "Build cancelled.";
+   }
+
+   public void disconnect() {
+      StabilityGate.clear(this);
+      if (this.isRunning() || this.status == Status.PAUSED) {
+         this.pauseWith("Disconnected. Rejoin, check the position, then Resume.");
+      }
+
+      this.navigator.reset();
+      this.restoreSlot();
+      this.session = null;
+      this.pending = null;
+      this.prepared = null;
+      this.current = null;
+      this.correct.clear();
+      this.scanIndex = 0;
+      this.scanned = false;
+      this.unconfirmed.clear();
+      this.predictionLevel = null;
+      this.previewVisible = false;
+   }
+
+   private void restoreSlot() {
+      class_746 player = class_310.method_1551().field_1724;
+      if (player != null && this.originalSlot >= 0) {
+         player.method_31548().method_61496(this.originalSlot);
+      }
+
+      this.originalSlot = -1;
+   }
+
+   public void rex$tickOnce(class_310 client) {
+      if (this.isRunning()) {
+         this.tick++;
+
+         for (class_304 key : List.of(client.field_1690.field_1886, client.field_1690.field_1904, client.field_1690.field_1869, client.field_1690.field_1831)) {
+            key.method_23481(false);
+
+            while (key.method_1436()) {
+            }
+         }
+
+         if (client.field_1687 == null || client.field_1724 == null || client.field_1761 == null || client.field_1687 != this.session) {
+            this.disconnect();
+         } else if (FreecamController.enabled()) {
+            this.pauseWith("Freecam is active. Disable it, then Resume.");
+         } else if (client.field_1755 != null || client.method_1493()) {
+            this.pauseWith("An open menu paused construction. Close it, then Resume.");
+         } else if (!client.field_1724.method_5805() || client.field_1724.method_31481()) {
+            this.pauseWith("Player unavailable. Resume after respawning.");
+         } else if (client.field_1724.method_5765()) {
+            this.pauseWith("Leave the vehicle, then Resume.");
+         } else if (client.field_1724.method_6115()) {
+            this.pauseWith("Finish using the held item, then Resume.");
+         } else {
+            if (this.scanned) {
+               this.revalidate(client, BuildTempo.revalidate());
+            }
+
+            if (this.pending != null) {
+               this.navigator.hold(client, false);
+               if (BuildTempo.earlyFinish(this.rex$waited()) || this.pending.acknowledged || this.tick - this.pending.sentTick > BuildTempo.ack()) {
+                  this.finishPending(client);
+               }
+            } else if (this.prepared != null) {
+               this.navigator.hold(client, shouldSneak(client, this.prepared.target, this.prepared.plan));
+               aim(client, this.prepared.plan);
+               if (this.tick >= this.prepared.readyTick) {
+                  this.sendPrepared(client);
+               }
+            } else if (this.cooldown > 0) {
+               this.cooldown--;
+            } else {
+               if (!this.scanned) {
+                  for (int end = Math.min(this.targets.size(), this.scanIndex + 2048); this.scanIndex < end; this.scanIndex++) {
+                     Target target = this.targets.get(this.scanIndex);
+                     if (client.field_1687.method_31606(target.pos)) {
+                        this.pauseWith("Outside world build height at " + coordinates(target.pos) + ". Reposition the schematic.");
+                        return;
+                     }
+
+                     if (!client.field_1687.method_8621().method_11952(target.pos)) {
+                        this.pauseWith("Outside the world border at " + coordinates(target.pos) + ". Reposition the schematic.");
+                        return;
+                     }
+
+                     if (!this.unconfirmed.containsKey(target.pos)
+                        && MaterialTracker.isLoaded(client.field_1687, target.pos)
+                        && MaterialTracker.matches(target.state, client.field_1687.method_8320(target.pos))) {
+                        this.markCorrect(target);
+                     }
+                  }
+
+                  if (this.scanIndex < this.targets.size()) {
+                     return;
+                  }
+
+                  this.scanned = true;
+               }
+
+               if (this.correct.cardinality() != this.targets.size()) {
+                  this.finalCheckIndex = 0;
+                  if (this.current == null) {
+                     this.current = this.chooseTarget(client);
+                  }
+
+                  if (this.current == null) {
+                     this.pauseWith(
+                        this.lastFailure.isEmpty() ? "No placeable blocks remain. Check unloaded areas, supports and occupied positions." : this.lastFailure
+                     );
+                  } else if (client.field_1687.method_31606(this.current.pos)) {
+                     this.pauseWith("Outside world build height at " + coordinates(this.current.pos) + ". Reposition the schematic.");
+                  } else if (!client.field_1687.method_8621().method_11952(this.current.pos)) {
+                     this.pauseWith("Outside the world border at " + coordinates(this.current.pos) + ". Reposition the schematic.");
+                  } else if (!MaterialTracker.isLoaded(client.field_1687, this.current.pos)) {
+                     this.defer("Area is unloaded at " + coordinates(this.current.pos) + ". Move closer, then Resume.");
+                  } else if (this.unconfirmed.containsKey(this.current.pos)) {
+                     this.pauseWith("Still waiting for server confirmation at " + coordinates(this.current.pos) + ". Resume after the connection recovers.");
+                  } else {
+                     class_2680 actual = client.field_1687.method_8320(this.current.pos);
+                     if (MaterialTracker.matches(this.current.state, actual)) {
+                        this.markCorrect(this.current);
+                        this.current = null;
+                     } else if (MaterialTracker.isSecondary(this.current.state)) {
+                        this.defer("Paired block is missing at " + coordinates(this.current.pos) + ". Check its door, bed or plant base.");
+                     } else {
+                        String manual = manualStateReason(this.current.state, actual);
+                        if (manual != null) {
+                           this.defer(manual + " at " + coordinates(this.current.pos) + ". Complete it manually, then Resume.");
+                        } else if (!PlacementPlanner.canAdd(this.current.state, actual)
+                           && !PlacementPlanner.needsConfiguration(this.current.state, actual)) {
+                           this.defer("Occupied or incorrect block at " + coordinates(this.current.pos) + ". Correct it manually, then Resume.");
+                        } else {
+                           MaterialTracker.Requirement requirement = MaterialTracker.requirement(
+                              this.current.state
+                           );
+                           if (requirement.item() == class_1802.field_8162 || !(requirement.item() instanceof class_1747)) {
+                              this.defer(
+                                 "This block requires manual placement: "
+                                    + this.current.state.method_26204().method_9518().getString()
+                                    + " at "
+                                    + coordinates(this.current.pos)
+                              );
+                           } else if (this.current.state.method_26184(client.field_1687, this.current.pos) && hasNeighborSupport(client, this.current.pos)) {
+                              boolean configuring = PlacementPlanner.needsConfiguration(this.current.state, actual);
+                              int slot = configuring ? client.field_1724.method_31548().method_67532() : findSlot(client, requirement.item());
+                              if (slot < 0) {
+                                 this.pauseWith("Missing " + requirement.item().method_63680().getString() + ". Add materials, then Resume.");
+                              } else if (slot >= 9) {
+                                 int selected = client.field_1724.method_31548().method_67532();
+                                 client.field_1761
+                                    .method_2906(client.field_1724.field_7498.field_7763, slot, selected, class_1713.field_7791, client.field_1724);
+                                 this.cooldown = BuildTempo.swap();
+                                 this.reason = "Moving material into the hotbar...";
+                              } else {
+                                 client.field_1724.method_31548().method_61496(slot);
+                                 PlacementPlanner.Plan plan = PlacementPlanner.plan(
+                                    client, this.current.pos, this.current.state, client.field_1724.method_6047()
+                                 );
+                                 if (plan != null) {
+                                    this.navigator.hold(client, shouldSneak(client, this.current, plan));
+                                    aim(client, plan);
+                                    this.prepared = new Prepared(
+                                       this.current, plan, this.tick + BuildTempo.arm()
+                                    );
+                                    this.reason = (
+                                          this.current.support ? "Placing a temporary support" : (plan.configure() ? "Setting block state" : "Placing block")
+                                       )
+                                       + " at "
+                                       + coordinates(this.current.pos);
+                                    this.noProgress = 0;
+                                 } else {
+                                    Target lateral = this.lateralSupport(client, this.current);
+                                    if (lateral != null) {
+                                       this.current = lateral;
+                                    } else {
+                                       Target access = this.accessSupport(client, this.current);
+                                       if (access != null) {
+                                          this.current = access;
+                                       } else {
+                                          BuilderNavigator.Result movement = this.navigator.moveTo(client, this.current.pos);
+                                          if (movement == BuilderNavigator.Result.ARRIVED) {
+                                             this.navigator.rejectCurrent(client);
+                                             this.noProgress++;
+                                          } else {
+                                             if (movement == BuilderNavigator.Result.NO_PATH) {
+                                                this.defer("No walking route to " + coordinates(this.current.pos) + ". Provide a path or stairs, then Resume.");
+                                                return;
+                                             }
+
+                                             if (movement == BuilderNavigator.Result.STUCK) {
+                                                this.noProgress += 30;
+                                             } else {
+                                                this.noProgress++;
+                                             }
+                                          }
+
+                                          this.reason = "Walking to " + coordinates(this.current.pos) + " / " + this.navigator.routeLength() + " steps";
+                                          if (this.noProgress > 300) {
+                                             this.defer(
+                                                "Cannot reach a valid placement face or orientation at "
+                                                   + coordinates(this.current.pos)
+                                                   + ". Provide access, then Resume."
+                                             );
+                                          }
+                                       }
+                                    }
+                                 }
+                              }
+                           } else {
+                              Target support = this.necessarySupport(client, this.current);
+                              if (support != null) {
+                                 this.current = support;
+                              } else {
+                                 this.defer("Missing support at " + coordinates(this.current.pos) + ". Provide solid supports or access, then Resume.");
+                              }
+                           }
+                        }
+                     }
+                  }
+               } else {
+                  this.navigator.release();
+                  this.reason = "Verifying the completed structure...";
+
+                  for (int end = Math.min(this.targets.size(), this.finalCheckIndex + 2048); this.finalCheckIndex < end; this.finalCheckIndex++) {
+                     Target targetx = this.targets.get(this.finalCheckIndex);
+                     if (this.unconfirmed.containsKey(targetx.pos)
+                        || !MaterialTracker.isLoaded(client.field_1687, targetx.pos)
+                        || !MaterialTracker.matches(targetx.state, client.field_1687.method_8320(targetx.pos))) {
+                        this.correct.clear(targetx.index);
+                        this.work.add(targetx);
+                        this.finalCheckIndex = 0;
+                        return;
+                     }
+                  }
+
+                  if (this.finalCheckIndex == this.targets.size()) {
+                     this.complete();
+                  }
+               }
+            }
+         }
+      }
+   }
+
+   private Target chooseTarget(class_310 client) {
+      Target best = null;
+      double bestScore = Double.POSITIVE_INFINITY;
+      if (this.work.isEmpty()) {
+         return null;
+      } else {
+         int minimumY = this.work.first().pos.method_10264();
+         int examined = 0;
+
+         for (Target target : this.work) {
+            if (++examined > BuildTempo.candidates() || target.pos.method_10264() > minimumY + BuildTempo.layers()) {
+               break;
+            }
+
+            double score = client.field_1724.method_73189().method_1025(class_243.method_24953(target.pos))
+               + (target.pos.method_10264() - minimumY) * 64
+               + (MaterialTracker.isSecondary(target.state) ? 512 : 0);
+            if (score < bestScore) {
+               bestScore = score;
+               best = target;
+            }
+         }
+
+         return best;
+      }
+   }
+
+   private void revalidate(class_310 client, int budget) {
+      for (int checked = 0; checked < Math.min(budget, this.targets.size()); checked++) {
+         if (this.revalidateIndex >= this.targets.size()) {
+            this.revalidateIndex = 0;
+         }
+
+         Target target = this.targets.get(this.revalidateIndex++);
+         if (!this.unconfirmed.containsKey(target.pos) && (this.pending == null || !this.pending.target.pos.equals(target.pos))) {
+            boolean matches = MaterialTracker.isLoaded(client.field_1687, target.pos)
+               && MaterialTracker.matches(target.state, client.field_1687.method_8320(target.pos));
+            if (matches) {
+               this.markCorrect(target);
+            } else if (this.correct.get(target.index)) {
+               this.correct.clear(target.index);
+               if (!this.deferred.contains(target.pos)) {
+                  this.work.add(target);
+               }
+            }
+         }
+      }
+   }
+
+   private void sendPrepared(class_310 client) {
+      Prepared action = this.prepared;
+      this.prepared = null;
+      if (action.target.equals(this.current)) {
+         PlacementPlanner.Plan plan = PlacementPlanner.plan(
+            client, this.current.pos, this.current.state, client.field_1724.method_6047()
+         );
+         if (plan == null) {
+            this.navigator.rejectCurrent(client);
+         } else {
+            boolean sneak = shouldSneak(client, this.current, plan);
+            this.navigator.hold(client, sneak);
+            aim(client, plan);
+            BuilderLocalPlayerAccessor sent = (BuilderLocalPlayerAccessor)client.field_1724;
+            if (!(Math.abs(class_3532.method_15393(sent.donut$lastSentYaw() - plan.yaw())) > 0.001F)
+               && !(Math.abs(sent.donut$lastSentPitch() - plan.pitch()) > 0.001F)
+               && sent.donut$lastSentInput() != null
+               && sent.donut$lastSentInput().comp_3164() == sneak) {
+               class_2680 before = client.field_1687.method_8320(this.current.pos);
+               class_1269 result = client.field_1761.method_2896(client.field_1724, class_1268.field_5808, plan.hit());
+               int sequence = ((BuilderClientLevelAccessor)client.field_1687).donut$predictionHandler().method_41942();
+               this.unconfirmed.put(this.current.pos, sequence);
+               class_2338 secondary = secondaryPosition(this.current);
+               if (secondary != null) {
+                  this.unconfirmed.put(secondary, sequence);
+               }
+
+               this.pending = new Pending(this.current, before, plan.prediction(), this.tick, sequence);
+               if (result.method_23665()) {
+                  client.field_1724.method_6104(class_1268.field_5808);
+               }
+
+               this.reason = "Waiting for the server at " + coordinates(this.current.pos);
+            } else {
+               this.prepared = new Prepared(this.current, plan, this.tick + 1);
+               this.reason = "Aligning for placement at " + coordinates(this.current.pos);
+            }
+         }
+      }
+   }
+
+   private static void aim(class_310 client, PlacementPlanner.Plan plan) {
+      client.field_1724.method_36456(plan.yaw());
+      client.field_1724.method_36457(plan.pitch());
+   }
+
+   public void serverBlockUpdate(class_2338 pos, class_2680 state) {
+      StabilityGate.invalidate(this, pos);
+      this.unconfirmed.remove(pos);
+      if (this.session != null) {
+         Integer index = this.indices.get(pos);
+         if (index != null) {
+            class_2680 desired = this.transform.apply(this.schematic.blocks().get(index).state());
+            if (MaterialTracker.matches(desired, state)) {
+               this.markCorrect(this.byIndex[index]);
+               this.deferred.remove(pos);
+            } else {
+               this.correct.clear(index);
+               if (!this.deferred.contains(pos)) {
+                  this.work.add(this.byIndex[index]);
+               }
+
+               this.finalCheckIndex = 0;
+            }
+         }
+
+         if (this.pending != null && this.pending.target.pos.equals(pos)) {
+            this.pending.observed = state;
+         }
+      }
+   }
+
+   public void serverAcknowledged(int sequence) {
+      this.unconfirmed.entrySet().removeIf(entry -> entry.getValue() <= sequence);
+      if (this.pending != null && sequence >= this.pending.sequence) {
+         this.pending.acknowledged = true;
+      }
+   }
+
+   public void positionCorrected() {
+      if (this.isRunning()) {
+         this.navigator.replan();
+         this.prepared = null;
+         this.reason = "Server corrected the position. Replanning...";
+      }
+   }
+
+   private void finishPending(class_310 client) {
+      Pending action = this.pending;
+      if (!action.acknowledged && action.observed == null) {
+         this.pauseWith("No server confirmation at " + coordinates(action.target.pos) + ". Check the connection, then Resume.");
+      } else {
+         this.pending = null;
+         class_2680 actual = action.observed == null ? client.field_1687.method_8320(action.target.pos) : action.observed;
+         boolean changed = action.acknowledged && !actual.equals(action.before);
+         if (action.observed != null && !action.observed.equals(action.before)) {
+            changed = true;
+         }
+
+         if (MaterialTracker.matches(action.target.state, actual) && changed) {
+            this.markCorrect(action.target);
+            this.failures.remove(action.target.pos);
+
+            for (class_2338 pos : this.deferred) {
+               Integer index = this.indices.get(pos);
+               if (index != null && !this.correct.get(index)) {
+                  this.work.add(this.byIndex[index]);
+               }
+            }
+
+            this.deferred.clear();
+            this.current = null;
+            this.noProgress = 0;
+            this.cooldown = 2;
+         } else if (!changed
+            || actual.method_26204() != action.target.state.method_26204()
+            || !PlacementPlanner.canAdd(action.target.state, actual)
+               && !PlacementPlanner.needsConfiguration(action.target.state, actual)) {
+            int attempts = this.failures.merge(action.target.pos, 1, Integer::sum);
+            this.navigator.rejectCurrent(client);
+            this.cooldown = 4;
+            this.reason = "Server rejected placement at " + coordinates(action.target.pos) + " (" + attempts + "/3). Replanning...";
+            if (attempts >= 3) {
+               this.pauseWith(
+                  "Server rejected or changed the requested state at "
+                     + coordinates(action.target.pos)
+                     + ". Check build permissions, supports and state compatibility, then Resume."
+               );
+            }
+         } else {
+            this.failures.remove(action.target.pos);
+            this.cooldown = 2;
+         }
+      }
+   }
+
+   private void markCorrect(Target target) {
+      if (target.support
+         || StabilityGate.confirm(
+            this,
+            target.pos,
+            this.tick,
+            MaterialTracker.isLoaded(this.session, target.pos),
+            MaterialTracker.matches(target.state, this.session.method_8320(target.pos))
+         )) {
+         if (target.support) {
+            this.supportBlocks.add(target.pos);
+         } else {
+            this.correct.set(target.index);
+            this.work.remove(target);
+         }
+      }
+   }
+
+   private void defer(String message) {
+      this.lastFailure = message;
+      if (this.current.support) {
+         this.pauseWith(message);
+         this.current = null;
+      } else {
+         this.deferred.add(this.current.pos);
+         this.work.remove(this.current);
+         this.current = null;
+         this.noProgress = 0;
+         this.navigator.reset();
+      }
+   }
+
+   private void complete() {
+      this.status = Status.COMPLETED;
+      this.navigator.reset();
+      this.restoreSlot();
+      this.current = null;
+      this.reason = "Complete: "
+         + this.correct.cardinality()
+         + " blocks confirmed."
+         + (this.supportBlocks.isEmpty() ? "" : " " + this.supportBlocks.size() + " temporary supports remain.");
+      if (this.schematic.blocks().stream().anyMatch(block -> block.blockEntity() != null)) {
+         this.reason = this.reason + " Stored block-entity data needs server support.";
+      }
+   }
+
+   private static String coordinates(class_2338 pos) {
+      return pos.method_10263() + ", " + pos.method_10264() + ", " + pos.method_10260();
+   }
+
+   private static int donut$findInventorySlot(class_310 client, class_1792 item) {
+      for (int i = 0; i < 36; i++) {
+         if (client.field_1724.method_31548().method_5438(i).method_31574(item)) {
+            return i;
+         }
+      }
+
+      return -1;
+   }
+
+   private static class_2338 secondaryPosition(Target target) {
+      if ((target.state.method_26204() instanceof class_2323 || target.state.method_26204() instanceof class_2320)
+         && target.state.method_11654(class_2741.field_12533) == class_2756.field_12607) {
+         return target.pos.method_10084();
+      } else {
+         return target.state.method_26204() instanceof class_2244 && target.state.method_11654(class_2244.field_9967) == class_2742.field_12557
+            ? target.pos.method_10093((class_2350)target.state.method_11654(class_2244.field_11177))
+            : null;
+      }
+   }
+
+   private static boolean shouldSneak(
+      class_310 client, Target target, PlacementPlanner.Plan plan
+   ) {
+      return !plan.configure() && client.field_1687.method_8320(target.pos).method_26204() != target.state.method_26204();
+   }
+
+   private static String manualStateReason(class_2680 desired, class_2680 actual) {
+      if (!desired.method_28498(class_2741.field_12508)
+         || !(Boolean)desired.method_11654(class_2741.field_12508)
+         || desired.method_26204() == actual.method_26204() && (Boolean)actual.method_11654(class_2741.field_12508)) {
+         for (class_2769<?> property : desired.method_28501()) {
+            if ((property.method_11899().equals("age") || property.method_11899().equals("stage"))
+               && desired.method_11654(property) instanceof Integer age
+               && age > 0) {
+               return "This grown block state requires growth or server support";
+            }
+         }
+
+         if (desired.method_26204() instanceof class_5544 && (Boolean)desired.method_11654(class_2741.field_12548)) {
+            return "Lit candles require ignition";
+         } else {
+            return desired.method_26204() instanceof class_2397 && !desired.method_11654(class_2741.field_12514)
+               ? "Natural leaf persistence requires server state support"
+               : null;
+         }
+      } else {
+         return "Waterlogged blocks require water placement";
+      }
+   }
+
+   private static boolean hasNeighborSupport(class_310 client, class_2338 pos) {
+      class_2680 actual = client.field_1687.method_8320(pos);
+      if (!actual.method_26215()) {
+         return true;
+      } else {
+         for (class_2350 direction : class_2350.values()) {
+            class_2338 neighbor = pos.method_10093(direction);
+            if (MaterialTracker.isLoaded(client.field_1687, neighbor)) {
+               class_2680 state = client.field_1687.method_8320(neighbor);
+               if (!state.method_45474() && !state.method_26220(client.field_1687, neighbor).method_1110()) {
+                  return true;
+               }
+            }
+         }
+
+         return false;
+      }
+   }
+
+   private Target necessarySupport(
+      class_310 client, Target target
+   ) {
+      class_2338 below = target.pos.method_10074();
+      if (this.indices.containsKey(below)) {
+         return null;
+      } else {
+         class_1792 material = null;
+
+         for (class_1792 candidate : List.of(class_1802.field_8831, class_1802.field_20412, class_1802.field_20391, class_1802.field_8328)) {
+            if (findSlot(client, candidate) >= 0) {
+               material = candidate;
+               break;
+            }
+         }
+
+         if (!(material instanceof class_1747 item)) {
+            return null;
+         } else {
+            class_2338 var10 = below;
+
+            for (int depth = 0; depth < 12; var10 = var10.method_10074()) {
+               if (!MaterialTracker.isLoaded(client.field_1687, var10)
+                  || this.indices.containsKey(var10)
+                  || !client.field_1687.method_8320(var10).method_45474()) {
+                  return null;
+               }
+
+               class_2338 foundation = var10.method_10074();
+               if (!MaterialTracker.isLoaded(client.field_1687, foundation)) {
+                  return null;
+               }
+
+               if (client.field_1687.method_8320(foundation).method_26234(client.field_1687, foundation)) {
+                  return new Target(var10, item.method_7711().method_9564(), -1, true);
+               }
+
+               depth++;
+            }
+
+            return null;
+         }
+      }
+   }
+
+   private Target lateralSupport(
+      class_310 client, Target target
+   ) {
+      boolean topSlab = target.state.method_26204() instanceof class_2482 && target.state.method_11654(class_2482.field_11501) == class_2771.field_12679;
+      boolean topStair = target.state.method_26204() instanceof class_2510 && target.state.method_11654(class_2510.field_11572) == class_2760.field_12619;
+      if (!target.support && (topSlab || topStair)) {
+         List<class_2350> directions = new ArrayList<>();
+         if (topStair) {
+            class_2350 facing = (class_2350)target.state.method_11654(class_2510.field_11571);
+            directions.add(facing);
+            directions.add(facing.method_10170());
+            directions.add(facing.method_10160());
+         } else {
+            for (class_2350 direction : class_2353.field_11062) {
+               directions.add(direction);
+            }
+
+            directions.sort(
+               Comparator.comparingDouble(
+                  directionx -> -client.field_1724.method_73189().method_1025(class_243.method_24953(target.pos.method_10093(directionx)))
+               )
+            );
+         }
+
+         for (class_2350 direction : directions) {
+            class_2338 neighbor = target.pos.method_10093(direction);
+            if (MaterialTracker.isLoaded(client.field_1687, neighbor)) {
+               class_2680 state = client.field_1687.method_8320(neighbor);
+               class_265 shape = state.method_26220(client.field_1687, neighbor);
+               if (!state.method_45474() && !shape.method_1110() && shape.method_1107().field_1325 > 0.65) {
+                  return null;
+               }
+            }
+         }
+
+         class_1792 material = null;
+
+         for (class_1792 candidate : List.of(class_1802.field_8831, class_1802.field_20412, class_1802.field_20391, class_1802.field_8328)) {
+            if (findSlot(client, candidate) >= 0) {
+               material = candidate;
+               break;
+            }
+         }
+
+         if (material instanceof class_1747 item) {
+            for (class_2350 directionx : directions) {
+               class_2338 neighbor = target.pos.method_10093(directionx);
+               if (!this.indices.containsKey(neighbor)
+                  && MaterialTracker.isLoaded(client.field_1687, neighbor)
+                  && MaterialTracker.isLoaded(client.field_1687, neighbor.method_10074())
+                  && client.field_1687.method_8320(neighbor).method_45474()
+                  && client.field_1687.method_8320(neighbor.method_10074()).method_26234(client.field_1687, neighbor.method_10074())) {
+                  return new Target(neighbor, item.method_7711().method_9564(), -1, true);
+               }
+            }
+
+            return null;
+         } else {
+            return null;
+         }
+      } else {
+         return null;
+      }
+   }
+
+   private Target accessSupport(
+      class_310 client, Target target
+   ) {
+      if (!target.support && !(target.pos.method_10264() - client.field_1724.method_23318() < 1.6)) {
+         class_1792 material = null;
+
+         for (class_1792 candidate : List.of(class_1802.field_8831, class_1802.field_20412, class_1802.field_20391, class_1802.field_8328)) {
+            if (findSlot(client, candidate) >= 0) {
+               material = candidate;
+               break;
+            }
+         }
+
+         if (material instanceof class_1747 item) {
+            Target var14 = null;
+            double distance = Double.POSITIVE_INFINITY;
+
+            for (class_2350 direction : class_2353.field_11062) {
+               class_2338 step = target.pos.method_10087(2).method_10093(direction);
+               if (MaterialTracker.isLoaded(client.field_1687, step)
+                  && client.field_1687.method_8320(step).method_26234(client.field_1687, step)) {
+                  return null;
+               }
+            }
+
+            for (class_2350 directionx : class_2353.field_11062) {
+               class_2338 step = target.pos.method_10087(2).method_10093(directionx);
+               if (!this.indices.containsKey(step)
+                  && MaterialTracker.isLoaded(client.field_1687, step)
+                  && client.field_1687.method_8320(step).method_45474()
+                  && client.field_1687.method_8320(step.method_10074()).method_26234(client.field_1687, step.method_10074())) {
+                  double candidatex = client.field_1724.method_73189().method_1025(class_243.method_24953(step));
+                  if (candidatex < distance) {
+                     distance = candidatex;
+                     var14 = new Target(step, item.method_7711().method_9564(), -1, true);
+                  }
+               }
+            }
+
+            return var14;
+         } else {
+            return null;
+         }
+      } else {
+         return null;
+      }
+   }
+
+   public void getMaterials(class_310 client) {
+      if (this.schematic != null && client.field_1724 != null && client.field_1687 != null && client.field_1761 != null) {
+         if (client.field_1724.method_31549().field_7477 && client.field_1761.method_2920().method_8386()) {
+            if (client.field_1724.field_7512 != client.field_1724.field_7498) {
+               this.reason = "Close the container before getting materials.";
+            } else {
+               MaterialTracker.Snapshot snapshot = MaterialTracker.snapshot(
+                  client, this.schematic, this.transform
+               );
+               int added = 0;
+               int omitted = 0;
+
+               for (MaterialTracker.Row row : snapshot.rows()) {
+                  if (row.item() != class_1802.field_8162) {
+                     int need = Math.max(0, row.remaining() - row.hotbar() - row.inventory());
+
+                     for (int slot = 0; slot < 36 && need > 0; slot++) {
+                        class_1799 existing = client.field_1724.method_31548().method_5438(slot);
+                        if (existing.method_7960() || existing.method_31574(row.item())) {
+                           int room = row.item().method_7854().method_7914() - (existing.method_7960() ? 0 : existing.method_7947());
+                           if (room > 0) {
+                              int count = Math.min(room, need);
+                              class_1799 stack = existing.method_7960()
+                                 ? new class_1799(row.item(), count)
+                                 : existing.method_46651(existing.method_7947() + count);
+                              client.field_1724.method_31548().method_5447(slot, stack);
+                              client.field_1761.method_2909(stack, slot < 9 ? slot + 36 : slot);
+                              need -= count;
+                              added += count;
+                           }
+                        }
+                     }
+
+                     omitted += need;
+                  }
+               }
+
+               this.reason = "Added " + added + " items." + (omitted > 0 ? " Inventory full: " + omitted + " items still missing." : "");
+            }
+         } else {
+            this.reason = "Get Materials requires Creative access.";
+         }
+      }
+   }
+
+   private static int findSlot(class_310 var0, class_1792 var1) {
+      return CreativeBuildMode.ensureSlot(var0, var1, donut$findInventorySlot(var0, var1));
+   }
+
+   public boolean rex$idle() {
+      return this.pending == null && this.prepared == null;
+   }
+
+   public void tick(class_310 var1) {
+      BuildTempo.before(this);
+      int var2 = BuildTempo.steps();
+      int var3 = 0;
+
+      do {
+         this.rex$tickOnce(var1);
+         var3++;
+      } while (var3 < var2 && this.isRunning() && this.rex$idle());
+   }
+
+   public int rex$waited() {
+      return this.pending == null ? 0 : this.tick - this.pending.sentTick;
+   }
+
+   @Environment(EnvType.CLIENT)
+   private static final class Pending {
+      final Target target;
+      final class_2680 before;
+      final class_2680 predicted;
+      final int sentTick;
+      final int sequence;
+      boolean acknowledged;
+      class_2680 observed;
+
+      Pending(Target target, class_2680 before, class_2680 predicted, int sentTick, int sequence) {
+         this.target = target;
+         this.before = before;
+         this.predicted = predicted;
+         this.sentTick = sentTick;
+         this.sequence = sequence;
+      }
+   }
+
+   @Environment(EnvType.CLIENT)
+   private record Prepared(Target target, PlacementPlanner.Plan plan, int readyTick) {
+   }
+
+   @Environment(EnvType.CLIENT)
+   public static enum Status {
+      IDLE,
+      READY,
+      RUNNING,
+      PAUSED,
+      COMPLETED;
+   }
+
+   @Environment(EnvType.CLIENT)
+   private record Target(class_2338 pos, class_2680 state, int index, boolean support) {
+   }
+}
