@@ -125,6 +125,47 @@ public final class BuildTempo extends Module {
       instance = this;
    }
 
+   /** The rows Custom uses, in the order the builder screen's Custom editor lists them. */
+   public Setting[] customRows() {
+      return new Setting[]{
+         this.steps, this.arm, this.ack, this.swap, this.settle, this.interval, this.walk, this.layers, this.candidates, this.trust,
+         this.trustDelay, this.inflight, this.revalidate
+      };
+   }
+
+   /** The switches that apply on every preset, for the same editor. */
+   public BooleanSetting[] behaviourRows() {
+      return new BooleanSetting[]{this.pillar, this.restock, this.lowHealth, this.nearPlayers, this.resume};
+   }
+
+   /** Copies a fixed preset's numbers into the Custom rows, as a starting point for editing. */
+   public void copyToCustom(Preset from) {
+      if (from == Preset.CUSTOM) {
+         return;
+      }
+      this.steps.set(from.steps);
+      this.arm.set(from.arm);
+      this.ack.set(from.ack);
+      this.swap.set(from.swap);
+      this.settle.set(from.settle);
+      this.interval.set(from.interval);
+      this.walk.set(from.walk);
+      this.layers.set(from.layers);
+      this.candidates.set(from.candidates);
+      this.trust.set(from.trust);
+      this.trustDelay.set(from.trustDelay);
+      this.inflight.set(from.inflight);
+      this.revalidate.set(from.revalidate);
+   }
+
+   /** Puts every Custom row back to its default. */
+   public void resetCustom() {
+      for (Setting row : this.customRows()) {
+         row.reset();
+         row.changed();
+      }
+   }
+
    private Preset chosen() {
       return (Preset)this.preset.get();
    }

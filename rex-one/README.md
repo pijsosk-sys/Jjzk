@@ -1,6 +1,6 @@
 # REX One: faster Auto Build, climbing, water, a new builder screen and a shader
 
-Sources and tooling for REX One `1.0.0-one.15` (Minecraft 1.21.11, Fabric). The build takes the
+Sources and tooling for REX One `1.0.0-one.16` (Minecraft 1.21.11, Fabric). The build takes the
 released `1.0.0-one.13` jar, replaces or adds these classes, and adds the shader files:
 
 | Class | What changed |
@@ -11,7 +11,7 @@ released `1.0.0-one.13` jar, replaces or adds these classes, and adds the shader
 | `dev.donut.client.render.SchematicGhosts` | ghost layer view |
 | `rex.BuildTempo` | presets, pacing, pillaring, restock and safety settings |
 | `rex.BuildPatience` | auto-resume also covers lost confirmations and players walking off |
-| `rex.Huds`, `rex.Modules` | panels stay off the builder screen; registers the new modules |
+| `rex.Huds`, `rex.Modules` | panels stay off the builder screen; registers the new modules near the top of Render |
 | `rex.BuildRestock` (new) | shulker box restock |
 | `rex.BuildMemory` (new) | remembers the loaded build per server |
 | `rex.SchematicGhost` (new module) | ghost on/off (bindable) and layer view |
@@ -109,15 +109,16 @@ loaded back when you join, ready to Start. The builder's scan then finds what's 
 
 ## New: look and screen
 
-- **Tuff Graphics** (Render module, bindable; also on the builder screen): one full-screen pass
+- **Tuff Graphics** (Render module, bindable): one full-screen pass
   through Minecraft's own post-effect pipeline that sharpens, adds vibrance, a soft contrast curve,
   warm/cool toning and a vignette. Styles are Soft, Tuff and Vivid. It needs no Iris or OptiFine,
   costs about what the creeper spectator effect does, and doesn't touch the HUD.
-  See `screenshots/shader-*.png`.
+  See `screenshots/shader-*.png`. Since one.16 it is a plain module only: second row of the
+  Render panel (it used to sit below the bottom of that panel), and no longer on the builder screen.
 - **Schematic Ghost** (Render module, bindable): shows or hides the ghost. *Layers* is All /
   Working layer / Up to working / One layer.
 - **Builder screen:** HUD panels and pop-ups no longer draw over it, plus a Ghost toggle, Layers,
-  a Look row for the shader, and *Skipped*, which lists every skipped block and why when clicked.
+  and *Skipped*, which lists every skipped block and why when clicked.
   Materials has **Copy list**, which copies what's still missing to the clipboard.
 
 ## Why it still won't mess up the build
@@ -139,10 +140,18 @@ These hold in every preset:
 | Safe | every block | 1 | ~5 blocks/s |
 | Balanced (default) | no, 1 tick after sending | 2 | ~10 blocks/s |
 | Fast | no, same tick | 4 | ~20 blocks/s (one per tick) |
-| Custom | the rows in Build Tempo | | |
+| Custom | your own numbers (Custom speed editor) | | |
 
 You can pick a preset from the Speed buttons on the builder screen, or with the *Preset* row of
 the Build Tempo module (Misc). Turning the Build Tempo module off restores the original cadence.
+
+**Custom speed editor (one.16).** Clicking *Custom* on the builder screen opens an editor with
+every pacing number Custom uses: a bar to click or drag and -/+ buttons per row, Trust Prediction
+as a switch, *Start from* Safe / Balanced / Fast to copy a preset's numbers in, *Reset to
+defaults*, and the switches that apply on every preset (Pillar Up, Shulker Restock, the two
+safety pauses, Auto Resume). Pointing at a row explains it; changes apply at once, even mid-build.
+While Custom is selected, *Edit custom speed...* under the Speed buttons reopens it.
+See `screenshots/custom-speed.png`.
 
 ## New builder screen
 

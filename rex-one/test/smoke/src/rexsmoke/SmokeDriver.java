@@ -98,8 +98,53 @@ public final class SmokeDriver implements ClientModInitializer {
             if (hasPresets() && (System.getProperty("rexsmoke.presets", "").isEmpty() || System.getProperty("rexsmoke.presets").toUpperCase(Locale.ROOT).contains("OFF"))) {
                this.modes.add("OFF");
             }
-            this.phase = 1;
+            this.phase = Boolean.getBoolean("rexsmoke.ui") ? 20 : 1;
             this.wait = 60;
+         }
+         case 20 -> {
+            // -Drexsmoke.ui=true: the module menu and the Custom speed editor, screenshotted, then quit.
+            Object krypton = Class.forName("dev.krypton.client.KryptonClient").getField("instance").get(null);
+            Object manager = krypton.getClass().getField("moduleManager").get(krypton);
+            for (Object module : (List<?>)manager.getClass().getMethod("all").invoke(manager)) {
+               Object category = module.getClass().getMethod("getCategory").invoke(module);
+               if (String.valueOf(category).equals("RENDER")) {
+                  this.log("render module: " + module.getClass().getMethod("getName").invoke(module));
+               }
+            }
+            client.method_1507((net.minecraft.class_437)Class.forName("dev.krypton.gui.ClickGuiScreen").getConstructor().newInstance());
+            this.phase = 21;
+            this.wait = 60;
+         }
+         case 21 -> {
+            class_318.method_22690(client.field_1697, "rexsmoke-menu.png", client.method_1522(), 1, message -> {});
+            AutoBuilderController.get().setSchematic(this.schematic);
+            AutoBuilderController.get().setTransform(new PlacementTransform(ORIGIN, 0, false));
+            choose(Class.forName("rex.BuildTempo$Preset").getField("FAST").get(null));
+            client.method_1507(new AutoBuilderScreen(null, new ClientConfig(), () -> {}));
+            this.phase = 22;
+            this.wait = 60;
+         }
+         case 22 -> {
+            class_318.method_22690(client.field_1697, "rexsmoke-builder-screen.png", client.method_1522(), 1, message -> {});
+            choose(Class.forName("rex.BuildTempo$Preset").getField("CUSTOM").get(null));
+            Method open = AutoBuilderScreen.class.getDeclaredMethod("openTempo");
+            open.setAccessible(true);
+            open.invoke(client.field_1755);
+            this.phase = 23;
+            this.wait = 60;
+         }
+         case 23 -> {
+            class_318.method_22690(client.field_1697, "rexsmoke-custom.png", client.method_1522(), 1, message -> {});
+            Field progress = AutoBuilderScreen.class.getDeclaredField("modalClosing");
+            progress.setAccessible(true);
+            progress.set(client.field_1755, true);
+            this.phase = 24;
+            this.wait = 40;
+         }
+         case 24 -> {
+            class_318.method_22690(client.field_1697, "rexsmoke-builder-custom.png", client.method_1522(), 1, message -> {});
+            this.log("tempo: " + Class.forName("rex.BuildTempo").getMethod("describe").invoke(null));
+            this.finish(client);
          }
          case 1 -> {
             if (++this.mode >= this.modes.size()) {

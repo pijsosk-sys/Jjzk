@@ -7,7 +7,7 @@ Build Tempo (Misc)
               sending, with at most two placements the server has not answered yet. Ten a second.
     Fast      moves on in the same tick it places, four unanswered at most: one block per client
               tick, the floor for a placement that needs its own rotation. Twenty a second.
-    Custom    the rows below.
+    Custom    the rows below. Clicking Custom on the builder screen opens an editor for them.
   Whatever the preset, a placement is only sent once the server has the rotation it was aimed
   with, a placed block only counts once the server agrees and it has stayed put for the four-tick
   stability window, a block the server refuses goes straight back in the queue (three refusals at
@@ -75,5 +75,5 @@ Look (one.15)
   Tuff Graphics (Render)    one-pass colour grade: sharpen, vibrance, contrast, toning, vignette.
                             Soft, Tuff or Vivid. No shader mod needed; the HUD is untouched.
   Schematic Ghost (Render)  ghost on/off, bindable; Layers: all, working, up to working, one.
-  The builder screen hides HUD panels, and has Ghost, Layers, Look, Skipped (why each block was
+  The builder screen hides HUD panels, and has Ghost, Layers, Skipped (why each block was
   skipped) and Copy list in Materials.

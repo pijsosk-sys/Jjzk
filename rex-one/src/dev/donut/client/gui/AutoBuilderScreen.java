@@ -9,9 +9,11 @@ import dev.donut.client.autobuild.CreativeBuildMode;
 import rex.BuildTempo;
 import rex.BuildMemory;
 import rex.SchematicGhost;
-import rex.TuffShader;
 import dev.donut.client.config.ClientConfig;
 import dev.donut.client.input.ModuleKeybinds;
+import dev.krypton.core.setting.BooleanSetting;
+import dev.krypton.core.setting.NumberSetting;
+import dev.krypton.core.setting.Setting;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -73,6 +75,9 @@ public final class AutoBuilderScreen extends class_437 {
    private boolean initialized;
    private boolean closing;
    private boolean materialsOpen;
+   private boolean tempoOpen;
+   private Runnable dragKnob;
+   private String dragId;
    private boolean modalClosing;
    private boolean draggingPreview;
    private boolean replaceText;
@@ -129,7 +134,7 @@ public final class AutoBuilderScreen extends class_437 {
       this.lastFrame = now;
       this.progress = Math.clamp(this.progress + this.seconds / (this.closing ? -0.16 : 0.2), 0.0, 1.0);
       this.modalProgress = Math.clamp(
-         this.modalProgress + this.seconds / ((this.materialsOpen || !this.details.isEmpty()) && !this.modalClosing ? 0.18 : -0.14), 0.0, 1.0
+         this.modalProgress + this.seconds / ((this.materialsOpen || this.tempoOpen || !this.details.isEmpty()) && !this.modalClosing ? 0.18 : -0.14), 0.0, 1.0
       );
       this.shownProgress += (this.builder.progress() - this.shownProgress) * (1.0 - Math.exp(-this.seconds * 8.0));
       this.mouseX = (mx - this.originX) / this.scale;
@@ -151,7 +156,7 @@ public final class AutoBuilderScreen extends class_437 {
             this.drawPreview(g);
             this.drawPositioning(g);
             this.drawBuild(g);
-            if (this.materialsOpen || !this.details.isEmpty()) {
+            if (this.materialsOpen || this.tempoOpen || !this.details.isEmpty()) {
                this.hits.clear();
                double modalOpacity = UiPaint.pushOpacity(smooth(this.modalProgress));
 
@@ -159,6 +164,8 @@ public final class AutoBuilderScreen extends class_437 {
                   g.method_25294(0, 0, W, H, UiPaint.withOpacity(-1341781745));
                   if (this.materialsOpen) {
                      this.drawMaterials(g);
+                  } else if (this.tempoOpen) {
+                     this.drawTempo(g);
                   } else {
                      this.drawDetails(g);
                   }
@@ -408,23 +415,6 @@ public final class AutoBuilderScreen extends class_437 {
       } else if (mode != SchematicGhost.Layers.ALL && this.builder.workingLayer() != Integer.MIN_VALUE) {
          UiPaint.text(g, this.field_22793, "Y " + this.builder.workingLayer(), x + 236, ly + 9, MUTED);
       }
-
-      // The world look, so it can be tried out right here.
-      int wy = y + 180;
-      UiPaint.text(g, this.field_22793, "Look", x + 12, wy + 9, DIM);
-      TuffShader shader = TuffShader.instance;
-      boolean look = shader != null && shader.enabled;
-      this.button(g, "shader", look ? "Tuff Graphics: on" : "Tuff Graphics: off", x + 100, wy, 128, shader != null, look, () -> shader.toggle());
-      if (shader != null) {
-         this.button(g, "shaderStyle", "Style: " + styleLabel(shader), x + 236, wy, 128, true, false, () -> {
-            shader.style.next();
-            shader.style.changed();
-            if (shader.enabled) {
-               shader.setEnabled(false);
-               shader.setEnabled(true);
-            }
-         });
-      }
    }
 
    private void drawBuild(class_332 g) {
@@ -498,13 +488,22 @@ public final class AutoBuilderScreen extends class_437 {
          String label = preset.label();
          UiPaint.text(g, this.field_22793, label, px + (cell - UiPaint.width(this.field_22793, label)) / 2, py + 7, selected ? TEXT : (tempo ? MUTED : DIM));
          if (tempo) {
-            this.hit(id, px, py, cell, 20, () -> BuildTempo.choose(preset));
+            this.hit(id, px, py, cell, 20, () -> {
+               BuildTempo.choose(preset);
+               if (preset == BuildTempo.Preset.CUSTOM) {
+                  this.openTempo();
+               }
+            });
          }
       }
 
       String ceiling = !tempo ? "Build Tempo is unavailable" : String.format(Locale.ROOT, "Up to %.0f blocks/s", BuildTempo.ceiling());
-      UiPaint.text(g, this.field_22793, ceiling, x + 12, sy + 64, MUTED);
-      UiPaint.text(g, this.field_22793, presetNote(current), x + 12, sy + 77, DIM);
+      UiPaint.text(g, this.field_22793, ceiling, x + 12, sy + (current == BuildTempo.Preset.CUSTOM ? 60 : 64), MUTED);
+      if (current == BuildTempo.Preset.CUSTOM) {
+         this.button(g, "editCustom", "Edit custom speed...", x + 12, sy + 73, w - 24, 17, true, false, this::openTempo);
+      } else {
+         UiPaint.text(g, this.field_22793, presetNote(current), x + 12, sy + 77, DIM);
+      }
       int ay = y + 268;
       String action = this.builder.status() == AutoBuilderController.Status.PAUSED ? "Resume" : (this.builder.isRunning() ? "Pause" : "Start building");
       this.button(g, "start", action, x + 12, ay, w - 24, 28, available && this.field_22787.field_1687 != null, true, () -> {
@@ -572,11 +571,6 @@ public final class AutoBuilderScreen extends class_437 {
       return Character.toUpperCase(name.charAt(0)) + name.substring(1);
    }
 
-   private static String styleLabel(TuffShader shader) {
-      String name = ((TuffShader.Style)shader.style.get()).name();
-      return name.charAt(0) + name.substring(1).toLowerCase(Locale.ROOT);
-   }
-
    private static String presetNote(BuildTempo.Preset preset) {
       if (preset == null) {
          return "Build Tempo module is off";
@@ -586,7 +580,7 @@ public final class AutoBuilderScreen extends class_437 {
          case SAFE -> "Waits for the server each block";
          case BALANCED -> "Prediction, 2 unconfirmed";
          case FAST -> "One block per tick";
-         case CUSTOM -> "Rows in Build Tempo";
+         case CUSTOM -> "Your own numbers";
       };
    }
 
@@ -728,6 +722,121 @@ public final class AutoBuilderScreen extends class_437 {
          UiPaint.text(g, this.field_22793, lower, x + 20, y + 365, this.materials.conflicts() > 0 ? -14741 : -9671552);
          UiPaint.text(g, this.field_22793, this.ellipsize(this.builder.reason(), 738), x + 20, y + 391, -6052942);
       }
+   }
+
+   /** The Custom speed editor: every number Custom uses, plus the switches that apply on every preset. */
+   private void drawTempo(class_332 g) {
+      int x = 29;
+      int y = 43;
+      int w = 782;
+      int h = 418;
+      UiPaint.round(g, x - 1, y - 1, w + 2, h + 2, 11, BORDER);
+      UiPaint.round(g, x, y, w, h, 10, PANEL);
+      UiPaint.strong(g, this.field_22793, "Custom speed", x + 20, y + 18, TEXT);
+      this.button(g, "closeTempo", "Done", x + w - 78, y + 12, 59, true, true, this::closeModal);
+      BuildTempo tempo = BuildTempo.instance;
+      if (tempo == null) {
+         UiPaint.text(g, this.field_22793, "Build Tempo is unavailable.", x + 20, y + 51, MUTED);
+         return;
+      }
+
+      String summary = BuildTempo.current() == BuildTempo.Preset.CUSTOM
+         ? String.format(Locale.ROOT, "Up to %.0f blocks/s with these numbers", BuildTempo.ceiling())
+         : "Pick Custom to use these numbers";
+      UiPaint.text(g, this.field_22793, summary, x + 124, y + 19, MUTED);
+      String hovered = null;
+      UiPaint.text(g, this.field_22793, "PACING", x + 20, y + 46, DIM);
+      Setting[] rows = tempo.customRows();
+
+      for (int i = 0; i < rows.length; i++) {
+         Setting row = rows[i];
+         int ry = y + 60 + i * 26;
+         if (this.inside(x + 16, ry - 2, 452, 24)) {
+            hovered = row.getDescription();
+            UiPaint.round(g, x + 16, ry - 2, 452, 24, 4, CARD);
+         }
+
+         UiPaint.text(g, this.field_22793, row.getName(), x + 24, ry + 7, TEXT);
+         String id = "knob" + i;
+         if (row instanceof BooleanSetting toggle) {
+            boolean on = toggle.get();
+            this.button(g, id, on ? "On" : "Off", x + 196, ry, 248, 20, true, on, () -> toggle.set(!toggle.get()));
+         } else if (row instanceof NumberSetting knob) {
+            this.knob(g, id, knob, x + 196, ry);
+         }
+      }
+
+      int rx = x + 492;
+      int rw = w - 512;
+      UiPaint.text(g, this.field_22793, "START FROM", rx, y + 46, DIM);
+      BuildTempo.Preset[] fixed = {BuildTempo.Preset.SAFE, BuildTempo.Preset.BALANCED, BuildTempo.Preset.FAST};
+      int third = (rw - 8) / 3;
+
+      for (int i = 0; i < fixed.length; i++) {
+         BuildTempo.Preset from = fixed[i];
+         int bx = rx + i * (third + 4);
+         if (this.inside(bx, y + 60, third, 20)) {
+            hovered = "Copies the " + from.label() + " numbers into the rows on the left, then edit from there.";
+         }
+         this.button(g, "from" + i, from.label(), bx, y + 60, third, 20, true, false, () -> tempo.copyToCustom(from));
+      }
+
+      if (this.inside(rx, y + 86, rw, 20)) {
+         hovered = "Puts every pacing row back to its default.";
+      }
+      this.button(g, "resetCustom", "Reset to defaults", rx, y + 86, rw, 20, true, false, tempo::resetCustom);
+      UiPaint.text(g, this.field_22793, "ON EVERY PRESET", rx, y + 124, DIM);
+      BooleanSetting[] switches = tempo.behaviourRows();
+
+      for (int i = 0; i < switches.length; i++) {
+         BooleanSetting toggle = switches[i];
+         int ry = y + 138 + i * 26;
+         if (this.inside(rx, ry, rw, 20)) {
+            hovered = toggle.getDescription();
+         }
+         UiPaint.text(g, this.field_22793, toggle.getName(), rx + 4, ry + 7, TEXT);
+         boolean on = toggle.get();
+         this.button(g, "switch" + i, on ? "On" : "Off", rx + rw - 56, ry, 56, 20, true, on, () -> toggle.set(!toggle.get()));
+      }
+
+      int dy = y + 278;
+      UiPaint.round(g, rx, dy, rw, 122, 6, INSET);
+      String help = hovered == null || hovered.isEmpty() ? "Point at a row to see what it does. Changes apply right away, even mid-build." : hovered;
+      List<String> lines = this.wrap(help, rw - 20);
+
+      for (int i = 0; i < Math.min(8, lines.size()); i++) {
+         UiPaint.text(g, this.field_22793, lines.get(i), rx + 10, dy + 9 + i * 13, hovered == null ? DIM : MUTED);
+      }
+   }
+
+   /** One number row: a bar to click or drag, the value, and - / + buttons. */
+   private void knob(class_332 g, String id, NumberSetting knob, int x, int y) {
+      int bar = 150;
+      double span = knob.getMax() - knob.getMin();
+      double fill = span <= 0.0 ? 0.0 : Math.clamp((knob.getDouble() - knob.getMin()) / span, 0.0, 1.0);
+      boolean hover = this.inside(x, y, bar, 20) || this.dragKnob != null && id.equals(this.dragId);
+      UiPaint.round(g, x, y + 8, bar, 4, 2, INSET);
+      UiPaint.round(g, x, y + 8, Math.max(4, (int)Math.round(bar * fill)), 4, 2, UiPaint.alpha(this.config.accentColor, hover ? 1.0 : 0.8));
+      UiPaint.round(g, x + (int)Math.round((bar - 8) * fill), y + 5, 8, 10, 3, hover ? TEXT : MUTED);
+      Runnable fromMouse = () -> knob.set(knob.getMin() + Math.clamp((this.mouseX - x) / bar, 0.0, 1.0) * span);
+      this.hit(id, x, y, bar, 20, () -> {
+         fromMouse.run();
+         this.dragKnob = fromMouse;
+         this.dragId = id;
+      });
+      String value = knob.getStep() < 1.0 ? String.format(Locale.ROOT, "%.2f", knob.getDouble()) : number(knob.getInt());
+      UiPaint.right(g, this.field_22793, value, x + bar + 50, y + 7, TEXT);
+      // Wide ranges (Candidates) step by about a thirty-second of the range, so +/- stays useful.
+      double step = Math.max(knob.getStep(), Math.round(span / 32.0 / knob.getStep()) * knob.getStep());
+      this.button(g, id + "-", "-", x + bar + 56, y, 20, 20, knob.getDouble() > knob.getMin(), false, () -> knob.set(knob.getDouble() - step));
+      this.button(g, id + "+", "+", x + bar + 78, y, 20, 20, knob.getDouble() < knob.getMax(), false, () -> knob.set(knob.getDouble() + step));
+   }
+
+   private void openTempo() {
+      this.tempoOpen = true;
+      this.modalClosing = false;
+      this.modalProgress = 0.0;
+      this.keyboardFocus = -1;
    }
 
    private void drawDetails(class_332 g) {
@@ -1058,7 +1167,11 @@ public final class AutoBuilderScreen extends class_437 {
    }
 
    public boolean method_25403(class_11909 event, double dx, double dy) {
-      if (this.draggingPreview && !this.materialsOpen && this.details.isEmpty()) {
+      if (this.dragKnob != null && this.tempoOpen) {
+         this.mouseX = (event.comp_4798() - this.originX) / this.scale;
+         this.dragKnob.run();
+         return true;
+      } else if (this.draggingPreview && !this.materialsOpen && !this.tempoOpen && this.details.isEmpty()) {
          this.model.rotate(dx / this.scale, dy / this.scale);
          return true;
       } else {
@@ -1068,6 +1181,7 @@ public final class AutoBuilderScreen extends class_437 {
 
    public boolean method_25406(class_11909 event) {
       this.draggingPreview = false;
+      this.dragKnob = null;
       return true;
    }
 
@@ -1077,6 +1191,8 @@ public final class AutoBuilderScreen extends class_437 {
          double ly = (y - this.originY) / this.scale;
          if (this.materialsOpen) {
             this.materialScroll = Math.clamp((long)(this.materialScroll - (int)(vertical * 28.0)), 0, Math.max(0, this.filteredRows().size() * 28 - 192));
+         } else if (this.tempoOpen) {
+            // nothing scrolls in the Custom editor
          } else if (!this.details.isEmpty()) {
             this.materialScroll = Math.clamp(
                (long)(this.materialScroll - (int)(vertical * 25.0)), 0, Math.max(0, this.wrap(this.details, 525).size() * 17 - 181)
@@ -1103,7 +1219,7 @@ public final class AutoBuilderScreen extends class_437 {
                this.syncCoordinates();
             } else if (this.libraryFocused) {
                this.libraryFocused = false;
-            } else if (!this.materialsOpen && this.details.isEmpty()) {
+            } else if (!this.materialsOpen && !this.tempoOpen && this.details.isEmpty()) {
                this.method_25419();
             } else {
                this.closeModal();
@@ -1242,6 +1358,8 @@ public final class AutoBuilderScreen extends class_437 {
 
       if (this.modalClosing && this.modalProgress == 0.0) {
          this.materialsOpen = false;
+         this.tempoOpen = false;
+         this.dragKnob = null;
          this.details = "";
          this.modalClosing = false;
          this.materialScroll = 0;

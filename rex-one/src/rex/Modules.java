@@ -18,16 +18,18 @@ public final class Modules {
    private static int registered;
    private static Method register;
 
-   /** This build's own modules, registered after the last row the generated registerAll names. */
-   private static final String[] EXTRAS = {"rex.SchematicGhost", "rex.TuffShader"};
-   private static final String LAST = "rex.BuildHud";
+   /**
+    * This build's own modules, each registered right after a row the generated registerAll names. A
+    * menu panel lists its modules in registration order, and the Render panel is longer than the
+    * screen, so these go near its top (after Fantasy World) instead of after the last row, where
+    * they sat below the bottom edge of the menu.
+    */
+   private static final Map<String, String[]> EXTRAS = Map.of("rex.FantasyWorld", new String[]{"rex.TuffShader", "rex.SchematicGhost"});
 
    public static void add(ModuleManager manager, String className) {
       addOne(manager, className);
-      if (LAST.equals(className)) {
-         for (String extra : EXTRAS) {
-            addOne(manager, extra);
-         }
+      for (String extra : EXTRAS.getOrDefault(className, new String[0])) {
+         addOne(manager, extra);
       }
    }
 
