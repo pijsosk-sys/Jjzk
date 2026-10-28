@@ -15,6 +15,7 @@ public final class BuildPatience {
       "No walking route",
       "Cannot reach",
       "Still waiting for server confirmation",
+      "No server confirmation",
       "Paired block",
       "Missing support",
       "Occupied or incorrect"

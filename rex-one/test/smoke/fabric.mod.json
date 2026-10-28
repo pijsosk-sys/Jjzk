@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "rexsmoke",
+  "version": "1.0.0",
+  "name": "REX One Auto Build smoke test",
+  "environment": "client",
+  "entrypoints": {
+    "client": ["rexsmoke.SmokeDriver"]
+  },
+  "depends": {
+    "fabric-lifecycle-events-v1": "*",
+    "krypton": "*"
+  }
+}

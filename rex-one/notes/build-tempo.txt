@@ -1,0 +1,49 @@
+Build Tempo (Misc)
+  Pacing for the unified builder, on by default; switch it off for the original cadence. Pick a
+  Preset, here or with the Speed buttons on the builder screen:
+    Safe      waits for the server's acknowledgement on every block, two ticks between blocks.
+              For strict servers and lossy connections. About five blocks a second.
+    Balanced  the default. Moves on once the client has predicted the placement, one tick after
+              sending, with at most two placements the server has not answered yet. Ten a second.
+    Fast      moves on in the same tick it places, four unanswered at most: one block per client
+              tick, the floor for a placement that needs its own rotation. Twenty a second.
+    Custom    the rows below.
+  Whatever the preset, a placement is only sent once the server has the rotation it was aimed
+  with, a placed block only counts once the server agrees and it has stayed put for the four-tick
+  stability window, a block the server refuses goes straight back in the queue (three refusals at
+  one spot pause the build), anything unanswered for the Ack Window pauses it, and the final pass
+  re-checks the whole structure before it reports Complete.
+
+  What made it slow, and what changed
+    The block it had just placed stayed in the work set until the stability window passed, so the
+    builder spent the next few ticks choosing that same block again and doing nothing. Placed
+    blocks now wait in a settling set that is re-checked each tick, and selection moves on.
+    Trust Prediction used to pause the build ("No server confirmation") instead of speeding it up;
+    it now finishes on the prediction, keeps the position unconfirmed until the server answers,
+    and re-queues it if the answer is a different block. Max In Flight bounds how far ahead it runs.
+    Every delay is now in real client ticks. Before, extra Steps Per Tick also burned through
+    cooldowns and counted walking stalls several times per tick, so "Cannot reach" fired about
+    three times too early.
+
+    Steps Per Tick   decisions per client tick while nothing is armed, in flight or cooling down.
+    Arm Delay        extra ticks between aiming and the packet.
+    Ack Window       ticks to wait for the server before a placement counts as unanswered.
+    Swap Cooldown    ticks after pulling material into the hotbar.
+    Place Delay      ticks after a block before choosing the next (was two).
+    Place Interval   minimum ticks between placement packets: a hard blocks-per-second cap.
+    Layer Window     blueprint layers eligible at once.
+    Candidates       targets examined when choosing the next block.
+    Trust Prediction, Prediction Delay, Max In Flight   the pipelining described above.
+    Revalidate       blueprint positions re-checked against the world each tick.
+    Auto Resume      re-queues deferred blocks after unloaded chunks, lost routes, missing supports,
+                     occupied positions and lost confirmations, with Retry Delay between tries,
+                     backing off every eight, and Max Retries without progress before it stops. A
+                     pause you have to clear yourself is never resumed.
+
+Auto Build screen
+  Rebuilt around three columns. Library: search box, file type tags, Open Folder and Refresh.
+  Centre: the 3D preview and a Placement card (X/Y/Z with arrow-key nudging, Shift for ten, At
+  player, Rotate, Mirror, Show in world, ghost opacity). Build: percentage and progress bar, live
+  rate, time left, placements in flight, blocks settling, supports and deferred blocks, the four
+  speed presets with the rate each allows, Start/Pause/Resume, Materials, Cancel, the builder's
+  current reason (click for the full text) and the creative-mode switch.

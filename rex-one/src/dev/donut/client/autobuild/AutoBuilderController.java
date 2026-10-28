@@ -3,6 +3,7 @@ package dev.donut.client.autobuild;
 import dev.donut.client.freecam.FreecamController;
 import dev.donut.client.mixin.BuilderClientLevelAccessor;
 import dev.donut.client.mixin.BuilderLocalPlayerAccessor;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.Comparator;
@@ -73,6 +74,17 @@ public final class AutoBuilderController {
    private final Set<class_2338> deferred = new HashSet<>();
    private final Set<class_2338> supportBlocks = new HashSet<>();
    private final Map<class_2338, Integer> unconfirmed = new HashMap<>();
+   // Placed blocks that match but have not yet been stable for the gate's window, or are still awaiting the server.
+   // They leave the work set so target selection moves on instead of re-picking the block it just placed.
+   private final Map<class_2338, Target> settling = new HashMap<>();
+   private final ArrayDeque<Settle> settleQueue = new ArrayDeque<>();
+   // Placements finished on the client's prediction, by position, with the tick they were sent.
+   private final Map<class_2338, Integer> inflight = new HashMap<>();
+   private int placedTick = Integer.MIN_VALUE / 2;
+   // Confirmed-plus-settling counts for the last five seconds of running ticks, for the rate figure.
+   private final int[] history = new int[101];
+   private int historyTicks;
+   private int placements;
    private class_638 predictionLevel;
    private Target current;
    private Prepared prepared;
@@ -85,6 +97,7 @@ public final class AutoBuilderController {
    private int finalCheckIndex;
    private int originalSlot = -1;
    private boolean scanned;
+   private boolean yielded;
    private String lastFailure = "";
 
    private AutoBuilderController() {
@@ -134,6 +147,58 @@ public final class AutoBuilderController {
       return this.supportBlocks.size();
    }
 
+   public int totalBlocks() {
+      return this.targets.size();
+   }
+
+   /** Placed blocks that match the blueprint and are waiting out the stability window or the server. */
+   public int settlingBlocks() {
+      return this.settling.size();
+   }
+
+   /** Placements finished on prediction that the server has not acknowledged yet. */
+   public int inflightPlacements() {
+      return this.inflight.size() + (this.pending == null ? 0 : 1);
+   }
+
+   /** Placement packets sent since the build started. */
+   public int placementsSent() {
+      return this.placements;
+   }
+
+   public int deferredBlocks() {
+      return this.deferred.size();
+   }
+
+   /** Blocks per second over the last five seconds of building, counting blocks still settling. */
+   public double blocksPerSecond() {
+      int span = Math.min(this.historyTicks - 1, this.history.length - 1);
+      if (span < 20) {
+         return 0.0;
+      }
+
+      int now = this.history[(this.historyTicks - 1) % this.history.length];
+      int then = this.history[(this.historyTicks - 1 - span) % this.history.length];
+      return Math.max(0, now - then) * 20.0 / span;
+   }
+
+   /** Seconds left at the current rate, or -1 when there is no rate to go by. */
+   public int secondsRemaining() {
+      double rate = this.blocksPerSecond();
+      int left = this.targets.size() - this.correct.cardinality() - this.settling.size();
+      return rate <= 0.05 ? -1 : (int)Math.ceil(Math.max(0, left) / rate);
+   }
+
+   private void sample() {
+      this.history[this.historyTicks % this.history.length] = this.correct.cardinality() + this.settling.size();
+      this.historyTicks++;
+   }
+
+   private void clearSettling() {
+      this.settling.clear();
+      this.settleQueue.clear();
+   }
+
    public void setSchematic(Schematic value) {
       StabilityGate.clear(this);
       this.cancel();
@@ -165,6 +230,8 @@ public final class AutoBuilderController {
       this.failures.clear();
       this.deferred.clear();
       this.supportBlocks.clear();
+      this.clearSettling();
+      this.inflight.clear();
       this.scanIndex = 0;
       this.scanned = false;
       this.work.clear();
@@ -215,6 +282,8 @@ public final class AutoBuilderController {
          this.correct.clear();
          this.failures.clear();
          this.deferred.clear();
+         this.clearSettling();
+         this.inflight.clear();
          this.scanIndex = 0;
          this.scanned = false;
          this.work.clear();
@@ -223,6 +292,10 @@ public final class AutoBuilderController {
          this.finalCheckIndex = 0;
          this.session = client.field_1687;
          this.tick = 0;
+         this.cooldown = 0;
+         this.placements = 0;
+         this.historyTicks = 0;
+         this.placedTick = Integer.MIN_VALUE / 2;
          this.noProgress = 0;
          this.lastFailure = "";
          this.current = null;
@@ -270,6 +343,10 @@ public final class AutoBuilderController {
                this.prepared = null;
                this.navigator.reset();
                this.work.clear();
+               this.clearSettling();
+               this.inflight.clear();
+               this.cooldown = 0;
+               this.historyTicks = 0;
 
                for (Target target : this.targets) {
                   if (!this.correct.get(target.index)) {
@@ -316,6 +393,8 @@ public final class AutoBuilderController {
       this.session = null;
       this.failures.clear();
       this.deferred.clear();
+      this.clearSettling();
+      this.inflight.clear();
       this.cooldown = 0;
       this.status = this.schematic == null
          ? Status.IDLE
@@ -336,6 +415,8 @@ public final class AutoBuilderController {
       this.prepared = null;
       this.current = null;
       this.correct.clear();
+      this.clearSettling();
+      this.inflight.clear();
       this.scanIndex = 0;
       this.scanned = false;
       this.unconfirmed.clear();
@@ -352,14 +433,25 @@ public final class AutoBuilderController {
       this.originalSlot = -1;
    }
 
-   public void rex$tickOnce(class_310 client) {
+   /**
+    * One pipeline step. The first step of a client tick advances the clock and does the per-tick
+    * bookkeeping; later steps in the same tick only make further decisions while nothing is armed,
+    * in flight or cooling down, so every delay below is measured in real client ticks.
+    */
+   private void step(class_310 client, boolean first) {
       if (this.isRunning()) {
-         this.tick++;
+         if (first) {
+            this.tick++;
+            this.sample();
+            if (this.cooldown > 0) {
+               this.cooldown--;
+            }
 
-         for (class_304 key : List.of(client.field_1690.field_1886, client.field_1690.field_1904, client.field_1690.field_1869, client.field_1690.field_1831)) {
-            key.method_23481(false);
+            for (class_304 key : List.of(client.field_1690.field_1886, client.field_1690.field_1904, client.field_1690.field_1869, client.field_1690.field_1831)) {
+               key.method_23481(false);
 
-            while (key.method_1436()) {
+               while (key.method_1436()) {
+               }
             }
          }
 
@@ -376,23 +468,37 @@ public final class AutoBuilderController {
          } else if (client.field_1724.method_6115()) {
             this.pauseWith("Finish using the held item, then Resume.");
          } else {
-            if (this.scanned) {
-               this.revalidate(client, BuildTempo.revalidate());
+            if (first) {
+               if (this.scanned) {
+                  this.revalidate(client, BuildTempo.revalidate());
+               }
+
+               this.settle(client);
+               if (!this.isRunning() || !this.checkInflight()) {
+                  return;
+               }
             }
 
             if (this.pending != null) {
                this.navigator.hold(client, false);
-               if (BuildTempo.earlyFinish(this.rex$waited()) || this.pending.acknowledged || this.tick - this.pending.sentTick > BuildTempo.ack()) {
+               if (this.pending.acknowledged || this.tick - this.pending.sentTick > BuildTempo.ack()) {
                   this.finishPending(client);
+               } else if (BuildTempo.earlyFinish(this.waited())) {
+                  this.finishPredicted(client);
                }
             } else if (this.prepared != null) {
                this.navigator.hold(client, shouldSneak(client, this.prepared.target, this.prepared.plan));
                aim(client, this.prepared.plan);
-               if (this.tick >= this.prepared.readyTick) {
+               if (this.tick >= this.prepared.readyTick && this.tick - this.placedTick >= BuildTempo.interval()) {
                   this.sendPrepared(client);
+                  if (this.pending != null && BuildTempo.earlyFinish(0)) {
+                     // The client applied its prediction inside the interaction call, so with no
+                     // prediction delay the next block can be aimed this same tick.
+                     this.finishPredicted(client);
+                  }
                }
             } else if (this.cooldown > 0) {
-               this.cooldown--;
+               this.yielded = true;
             } else {
                if (!this.scanned) {
                   for (int end = Math.min(this.targets.size(), this.scanIndex + 2048); this.scanIndex < end; this.scanIndex++) {
@@ -423,11 +529,20 @@ public final class AutoBuilderController {
 
                if (this.correct.cardinality() != this.targets.size()) {
                   this.finalCheckIndex = 0;
+                  if (this.current == null && this.inflight.size() >= BuildTempo.inflight()) {
+                     this.reason = "Waiting for the server (" + this.inflight.size() + " placements in flight)";
+                     this.yielded = true;
+                     return;
+                  }
+
                   if (this.current == null) {
                      this.current = this.chooseTarget(client);
                   }
 
-                  if (this.current == null) {
+                  if (this.current == null && (!this.settling.isEmpty() || !this.inflight.isEmpty())) {
+                     this.reason = "Confirming " + (this.settling.size() + this.inflight.size()) + " placed blocks...";
+                     this.yielded = true;
+                  } else if (this.current == null) {
                      this.pauseWith(
                         this.lastFailure.isEmpty() ? "No placeable blocks remain. Check unloaded areas, supports and occupied positions." : this.lastFailure
                      );
@@ -438,7 +553,14 @@ public final class AutoBuilderController {
                   } else if (!MaterialTracker.isLoaded(client.field_1687, this.current.pos)) {
                      this.defer("Area is unloaded at " + coordinates(this.current.pos) + ". Move closer, then Resume.");
                   } else if (this.unconfirmed.containsKey(this.current.pos)) {
-                     this.pauseWith("Still waiting for server confirmation at " + coordinates(this.current.pos) + ". Resume after the connection recovers.");
+                     // A paired half or an earlier predicted placement: let it settle instead of pausing on it.
+                     if (this.current.support) {
+                        this.current = null;
+                        this.yielded = true;
+                     } else {
+                        this.park(this.current);
+                        this.current = null;
+                     }
                   } else {
                      class_2680 actual = client.field_1687.method_8320(this.current.pos);
                      if (MaterialTracker.matches(this.current.state, actual)) {
@@ -475,6 +597,12 @@ public final class AutoBuilderController {
                                     .method_2906(client.field_1724.field_7498.field_7763, slot, selected, class_1713.field_7791, client.field_1724);
                                  this.cooldown = BuildTempo.swap();
                                  this.reason = "Moving material into the hotbar...";
+                              } else if (!client.field_1724.method_24828() && !client.field_1724.method_31549().field_7479 && this.navigator.routeLength() > 0) {
+                                 // Mid-step: the target can come into reach at the top of a jump, but holding
+                                 // still there drops the player back out of reach, so it walked, jumped and
+                                 // re-armed forever. Let the step finish and plan from solid ground.
+                                 this.reason = "Walking to " + coordinates(this.current.pos) + " / " + this.navigator.routeLength() + " steps";
+                                 this.yielded = true;
                               } else {
                                  client.field_1724.method_31548().method_61496(slot);
                                  PlacementPlanner.Plan plan = PlacementPlanner.plan(
@@ -501,6 +629,8 @@ public final class AutoBuilderController {
                                        if (access != null) {
                                           this.current = access;
                                        } else {
+                                          // Walking is one decision per tick; extra steps would count stalls several times over.
+                                          this.yielded = true;
                                           BuilderNavigator.Result movement = this.navigator.moveTo(client, this.current.pos);
                                           if (movement == BuilderNavigator.Result.ARRIVED) {
                                              this.navigator.rejectCurrent(client);
@@ -544,6 +674,7 @@ public final class AutoBuilderController {
                } else {
                   this.navigator.release();
                   this.reason = "Verifying the completed structure...";
+                  this.yielded = true;
 
                   for (int end = Math.min(this.targets.size(), this.finalCheckIndex + 2048); this.finalCheckIndex < end; this.finalCheckIndex++) {
                      Target targetx = this.targets.get(this.finalCheckIndex);
@@ -551,6 +682,7 @@ public final class AutoBuilderController {
                         || !MaterialTracker.isLoaded(client.field_1687, targetx.pos)
                         || !MaterialTracker.matches(targetx.state, client.field_1687.method_8320(targetx.pos))) {
                         this.correct.clear(targetx.index);
+                        this.settling.remove(targetx.pos);
                         this.work.add(targetx);
                         this.finalCheckIndex = 0;
                         return;
@@ -605,11 +737,9 @@ public final class AutoBuilderController {
                && MaterialTracker.matches(target.state, client.field_1687.method_8320(target.pos));
             if (matches) {
                this.markCorrect(target);
-            } else if (this.correct.get(target.index)) {
+            } else if (this.correct.get(target.index) || this.settling.containsKey(target.pos)) {
                this.correct.clear(target.index);
-               if (!this.deferred.contains(target.pos)) {
-                  this.work.add(target);
-               }
+               this.unsettle(target);
             }
          }
       }
@@ -643,6 +773,8 @@ public final class AutoBuilderController {
                }
 
                this.pending = new Pending(this.current, before, plan.prediction(), this.tick, sequence);
+               this.placedTick = this.tick;
+               this.placements++;
                if (result.method_23665()) {
                   client.field_1724.method_6104(class_1268.field_5808);
                }
@@ -664,6 +796,7 @@ public final class AutoBuilderController {
    public void serverBlockUpdate(class_2338 pos, class_2680 state) {
       StabilityGate.invalidate(this, pos);
       this.unconfirmed.remove(pos);
+      Integer predicted = this.inflight.remove(pos);
       if (this.session != null) {
          Integer index = this.indices.get(pos);
          if (index != null) {
@@ -671,13 +804,16 @@ public final class AutoBuilderController {
             if (MaterialTracker.matches(desired, state)) {
                this.markCorrect(this.byIndex[index]);
                this.deferred.remove(pos);
+               if (predicted != null) {
+                  this.failures.remove(pos);
+               }
             } else {
                this.correct.clear(index);
-               if (!this.deferred.contains(pos)) {
-                  this.work.add(this.byIndex[index]);
-               }
-
+               this.unsettle(this.byIndex[index]);
                this.finalCheckIndex = 0;
+               if (predicted != null) {
+                  this.predictionRefused(pos);
+               }
             }
          }
 
@@ -689,6 +825,7 @@ public final class AutoBuilderController {
 
    public void serverAcknowledged(int sequence) {
       this.unconfirmed.entrySet().removeIf(entry -> entry.getValue() <= sequence);
+      this.inflight.keySet().retainAll(this.unconfirmed.keySet());
       if (this.pending != null && sequence >= this.pending.sequence) {
          this.pending.acknowledged = true;
       }
@@ -728,7 +865,7 @@ public final class AutoBuilderController {
             this.deferred.clear();
             this.current = null;
             this.noProgress = 0;
-            this.cooldown = 2;
+            this.cooldown = BuildTempo.settleDelay();
          } else if (!changed
             || actual.method_26204() != action.target.state.method_26204()
             || !PlacementPlanner.canAdd(action.target.state, actual)
@@ -746,25 +883,156 @@ public final class AutoBuilderController {
             }
          } else {
             this.failures.remove(action.target.pos);
-            this.cooldown = 2;
+            this.cooldown = BuildTempo.settleDelay();
+         }
+      }
+   }
+
+   /**
+    * Finishes the placement in flight on the client's own prediction. The position stays
+    * unconfirmed until the server acknowledges it, the block waits in the settling set rather
+    * than counting as built, and a refusal from the server puts it straight back in the queue.
+    * If the client did not even predict a change there is nothing to trust, so it keeps waiting
+    * for the server as before.
+    */
+   private void finishPredicted(class_310 client) {
+      Pending action = this.pending;
+      if (action.acknowledged || action.observed != null) {
+         this.finishPending(client);
+         return;
+      }
+
+      class_2680 actual = client.field_1687.method_8320(action.target.pos);
+      if (actual.equals(action.before) || !MaterialTracker.matches(action.target.state, actual)) {
+         return;
+      }
+
+      this.pending = null;
+      if (action.target.support) {
+         this.supportBlocks.add(action.target.pos);
+      } else {
+         this.inflight.put(action.target.pos, action.sentTick);
+         this.markCorrect(action.target);
+      }
+
+      for (class_2338 pos : this.deferred) {
+         Integer index = this.indices.get(pos);
+         if (index != null && !this.correct.get(index)) {
+            this.work.add(this.byIndex[index]);
+         }
+      }
+
+      this.deferred.clear();
+      this.current = null;
+      this.noProgress = 0;
+      this.cooldown = BuildTempo.settleDelay();
+   }
+
+   /** The server answered a predicted placement with a different block. */
+   private void predictionRefused(class_2338 pos) {
+      int attempts = this.failures.merge(pos, 1, Integer::sum);
+      if (this.isRunning()) {
+         this.prepared = null;
+         this.cooldown = Math.max(this.cooldown, 4);
+         this.reason = "Server rejected placement at " + coordinates(pos) + " (" + attempts + "/3). Replanning...";
+         if (attempts >= 3) {
+            this.pauseWith(
+               "Server rejected or changed the requested state at "
+                  + coordinates(pos)
+                  + ". Check build permissions, supports and state compatibility, then Resume."
+            );
+         }
+      }
+   }
+
+   /**
+    * Predicted placements the server never answers would otherwise sit in flight forever. This
+    * pauses the build the same way an unacknowledged placement always has.
+    */
+   private boolean checkInflight() {
+      int window = BuildTempo.ack();
+      for (Map.Entry<class_2338, Integer> entry : this.inflight.entrySet()) {
+         if (this.tick - entry.getValue() > window) {
+            class_2338 pos = entry.getKey();
+            this.inflight.clear();
+            this.pauseWith("No server confirmation at " + coordinates(pos) + ". Check the connection, then Resume.");
+            return false;
+         }
+      }
+
+      return true;
+   }
+
+   /** Takes a matching block out of the work set until it has proven stable. */
+   private void park(Target target) {
+      if (this.settling.putIfAbsent(target.pos, target) == null) {
+         this.settleQueue.addLast(new Settle(target, this.tick + 1, this.tick));
+      }
+
+      this.work.remove(target);
+   }
+
+   /** Returns a block that stopped matching to the work set. */
+   private void unsettle(Target target) {
+      this.settling.remove(target.pos);
+      if (!this.deferred.contains(target.pos)) {
+         this.work.add(target);
+      }
+   }
+
+   /** Re-checks settling blocks that are due; they become correct once the stability gate agrees. */
+   private void settle(class_310 client) {
+      int budget = 4096;
+      while (budget-- > 0 && !this.settleQueue.isEmpty() && this.settleQueue.peekFirst().due() <= this.tick) {
+         Settle entry = this.settleQueue.pollFirst();
+         Target target = entry.target();
+         if (this.settling.get(target.pos) != target) {
+            continue;
+         }
+
+         if (this.correct.get(target.index)) {
+            this.settling.remove(target.pos);
+         } else if (this.unconfirmed.containsKey(target.pos)) {
+            if (this.tick - entry.since() > BuildTempo.ack() * 2) {
+               // The same pause the builder always made for a position the server never confirmed.
+               this.pauseWith("Still waiting for server confirmation at " + coordinates(target.pos) + ". Resume after the connection recovers.");
+               return;
+            }
+
+            this.settleQueue.addLast(new Settle(target, this.tick + 1, entry.since()));
+         } else {
+            boolean loaded = MaterialTracker.isLoaded(client.field_1687, target.pos);
+            boolean matches = loaded && MaterialTracker.matches(target.state, client.field_1687.method_8320(target.pos));
+            if (!matches) {
+               StabilityGate.invalidate(this, target.pos);
+               this.unsettle(target);
+            } else if (StabilityGate.confirm(this, target.pos, this.tick, true, true)) {
+               this.settling.remove(target.pos);
+               this.correct.set(target.index);
+               this.work.remove(target);
+            } else {
+               this.settleQueue.addLast(new Settle(target, this.tick + 1, entry.since()));
+            }
          }
       }
    }
 
    private void markCorrect(Target target) {
-      if (target.support
-         || StabilityGate.confirm(
+      if (target.support) {
+         this.supportBlocks.add(target.pos);
+      } else if (!this.correct.get(target.index)) {
+         if (StabilityGate.confirm(
             this,
             target.pos,
             this.tick,
             MaterialTracker.isLoaded(this.session, target.pos),
             MaterialTracker.matches(target.state, this.session.method_8320(target.pos))
          )) {
-         if (target.support) {
-            this.supportBlocks.add(target.pos);
-         } else {
+            this.settling.remove(target.pos);
             this.correct.set(target.index);
             this.work.remove(target);
+         } else {
+            this.park(target);
          }
       }
    }
@@ -1078,22 +1346,25 @@ public final class AutoBuilderController {
       return CreativeBuildMode.ensureSlot(var0, var1, donut$findInventorySlot(var0, var1));
    }
 
-   public boolean rex$idle() {
-      return this.pending == null && this.prepared == null;
+   /** True while nothing is armed, in flight or cooling down, and the last step did not use up the tick. */
+   private boolean idle() {
+      return this.pending == null && this.prepared == null && this.cooldown == 0 && !this.yielded;
    }
 
-   public void tick(class_310 var1) {
+   /** The client tick entry point: the retry check, then as many pipeline steps as the tempo allows. */
+   public void tick(class_310 client) {
       BuildTempo.before(this);
-      int var2 = BuildTempo.steps();
-      int var3 = 0;
+      int steps = BuildTempo.steps();
+      this.yielded = false;
+      this.step(client, true);
 
-      do {
-         this.rex$tickOnce(var1);
-         var3++;
-      } while (var3 < var2 && this.isRunning() && this.rex$idle());
+      for (int done = 1; done < steps && this.isRunning() && this.idle(); done++) {
+         this.step(client, false);
+      }
    }
 
-   public int rex$waited() {
+   /** Ticks since the placement in flight was sent, or zero when nothing is in flight. */
+   private int waited() {
       return this.pending == null ? 0 : this.tick - this.pending.sentTick;
    }
 
@@ -1127,6 +1398,10 @@ public final class AutoBuilderController {
       RUNNING,
       PAUSED,
       COMPLETED;
+   }
+
+   @Environment(EnvType.CLIENT)
+   private record Settle(Target target, int due, int since) {
    }
 
    @Environment(EnvType.CLIENT)

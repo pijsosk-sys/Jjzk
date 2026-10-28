@@ -6,6 +6,7 @@ import dev.donut.client.autobuild.PlacementTransform;
 import dev.donut.client.autobuild.Schematic;
 import dev.donut.client.autobuild.UnifiedSchematics;
 import dev.donut.client.autobuild.CreativeBuildMode;
+import rex.BuildTempo;
 import dev.donut.client.config.ClientConfig;
 import dev.donut.client.input.ModuleKeybinds;
 import java.io.IOException;
@@ -41,6 +42,12 @@ public final class AutoBuilderScreen extends class_437 {
    private static final int PANEL = -15724265;
    private static final int CARD = -15657700;
    private static final int BORDER = -14079434;
+   private static final int INSET = -16184044;
+   private static final int GOOD = 0xFF5BD68A;
+   private static final int WARN = -14741;
+   private static final int ROW = 30;
+   private static final int LIST_TOP = 150;
+   private static final int LIST_BOTTOM = 488;
    private final class_437 parent;
    private final ClientConfig config;
    private final Runnable save;
@@ -85,6 +92,9 @@ public final class AutoBuilderScreen extends class_437 {
    private String searchQuery = "";
    private String details = "";
    private boolean searchFocused;
+   private boolean libraryFocused;
+   private String libraryQuery = "";
+   private double shownProgress;
 
    public AutoBuilderScreen(class_437 parent, ClientConfig config, Runnable save) {
       super(class_2561.method_43470("AutoBuilder"));
@@ -115,6 +125,7 @@ public final class AutoBuilderScreen extends class_437 {
       this.modalProgress = Math.clamp(
          this.modalProgress + this.seconds / ((this.materialsOpen || !this.details.isEmpty()) && !this.modalClosing ? 0.18 : -0.14), 0.0, 1.0
       );
+      this.shownProgress += (this.builder.progress() - this.shownProgress) * (1.0 - Math.exp(-this.seconds * 8.0));
       this.mouseX = (mx - this.originX) / this.scale;
       this.mouseY = (my - this.originY) / this.scale;
       this.hits.clear();
@@ -124,24 +135,22 @@ public final class AutoBuilderScreen extends class_437 {
 
          try {
             g.method_25294(0, 0, this.field_22789, this.field_22790, UiPaint.withOpacity(2013595921));
-            g.method_51448().translate(this.originX, this.originY);
+            g.method_51448().translate(this.originX, this.originY + (float)((1.0 - smooth(this.progress)) * 10.0));
             g.method_51448().scale(this.scale, this.scale);
-            UiPaint.shadow(g, 0, 0, 840, 510, 12, Integer.MIN_VALUE);
-            UiPaint.round(g, 0, 0, 840, 510, 12, -14079434);
-            UiPaint.round(g, 1, 1, 838, 508, 11, -15724265);
-            UiPaint.strong(g, this.field_22793, "AutoBuilder", 21, 20, -1250061);
-            UiPaint.text(g, this.field_22793, "DONUT + REX LIBRARY", 21, 39, -9671552);
-            this.button(g, "close", "Close", 765, 16, 56, true, false, this::method_25419);
+            UiPaint.shadow(g, 0, 0, W, H, 14, Integer.MIN_VALUE);
+            UiPaint.round(g, 0, 0, W, H, 14, BORDER);
+            UiPaint.round(g, 1, 1, W - 2, H - 2, 13, PANEL);
+            this.drawHeader(g);
             this.drawLibrary(g);
             this.drawPreview(g);
             this.drawPositioning(g);
-            this.drawActions(g);
+            this.drawBuild(g);
             if (this.materialsOpen || !this.details.isEmpty()) {
                this.hits.clear();
                double modalOpacity = UiPaint.pushOpacity(smooth(this.modalProgress));
 
                try {
-                  g.method_25294(0, 0, 840, 510, UiPaint.withOpacity(-1341781745));
+                  g.method_25294(0, 0, W, H, UiPaint.withOpacity(-1341781745));
                   if (this.materialsOpen) {
                      this.drawMaterials(g);
                   } else {
@@ -163,222 +172,303 @@ public final class AutoBuilderScreen extends class_437 {
       }
    }
 
+   private void drawHeader(class_332 g) {
+      UiPaint.round(g, 1, 1, W - 2, 51, 13, UiPaint.blend(PANEL, this.config.accentColor, 0.06));
+      UiPaint.round(g, 1, 40, W - 2, 12, 0, UiPaint.blend(PANEL, this.config.accentColor, 0.06));
+      UiPaint.cube(g, 22, 16, 17, UiPaint.alpha(this.config.accentColor, 1.0), 0.95, 0.25);
+      UiPaint.strong(g, this.field_22793, "Auto Build", 52, 15, TEXT);
+      UiPaint.text(g, this.field_22793, "REX One  /  schematics/donut", 52, 31, DIM);
+      String status = statusLabel(this.builder.status());
+      int pillWidth = UiPaint.width(this.field_22793, status) + 26;
+      int pillX = 52 + UiPaint.width(this.field_22793, "Auto Build") + 12;
+      int color = this.statusColor();
+      UiPaint.round(g, pillX, 12, pillWidth, 16, 8, UiPaint.blend(CARD, color, 0.22));
+      UiPaint.round(g, pillX + 7, 18, 4, 4, 2, color);
+      UiPaint.text(g, this.field_22793, status, pillX + 16, 16, color);
+      BuildTempo.Preset preset = BuildTempo.current();
+      String tempo = preset == null ? "Original pacing" : preset.label() + " tempo";
+      UiPaint.right(g, this.field_22793, tempo, 750, 21, MUTED);
+      this.button(g, "close", "Close", 764, 14, 60, true, false, this::method_25419);
+      UiPaint.round(g, 1, 52, W - 2, 1, 0, BORDER);
+   }
+
    private void drawLibrary(class_332 g) {
-      UiPaint.round(g, 14, 62, 218, 382, 8, UiPaint.blend(-15724265, this.config.accentColor, 0.07));
-      UiPaint.text(g, this.field_22793, "schematics/donut/", 25, 76, -6052942);
-      this.button(g, "folder", "Open Folder", 24, 96, 116, true, false, () -> {
+      int x = 14;
+      int y = 64;
+      int w = 216;
+      int h = 432;
+      this.card(g, x, y, w, h);
+      UiPaint.text(g, this.field_22793, "LIBRARY", x + 12, y + 12, DIM);
+      List<Path> shown = this.filteredFiles();
+      String count = shown.size() == this.files.size()
+         ? this.files.size() + (this.files.size() == 1 ? " file" : " files")
+         : shown.size() + " of " + this.files.size();
+      UiPaint.right(g, this.field_22793, count, x + w - 12, y + 12, DIM);
+      UiPaint.round(g, x + 10, y + 28, w - 20, 22, 5, this.libraryFocused ? BORDER : INSET);
+      UiPaint.search(g, x + 18, y + 34, MUTED);
+      String query = this.libraryQuery.isEmpty() && !this.libraryFocused
+         ? "Search schematics..."
+         : this.libraryQuery + (this.libraryFocused && System.currentTimeMillis() % 1000L < 500L ? "|" : "");
+      UiPaint.text(g, this.field_22793, this.ellipsize(query, w - 50), x + 34, y + 35, this.libraryQuery.isEmpty() ? DIM : TEXT);
+      this.hit("librarySearch", x + 10, y + 28, w - 20, 22, () -> {
+         this.libraryFocused = true;
+         this.replaceText = false;
+      });
+      this.button(g, "folder", "Open Folder", x + 10, y + 56, 118, true, false, () -> {
          try {
             Files.createDirectories(this.folder);
             class_156.method_668().method_60932(this.folder);
-         } catch (Exception var2x) {
-            this.message = "Cannot open folder: " + errorMessage(var2x);
+         } catch (Exception error) {
+            this.message = "Cannot open folder: " + errorMessage(error);
          }
       });
-      this.button(g, "refresh", this.refreshing ? "..." : "Refresh", 148, 96, 73, !this.refreshing, false, this::refreshFiles);
-      UiPaint.text(g, this.field_22793, this.files.size() + " schematic" + (this.files.size() == 1 ? "" : "s"), 25, 132, -9671552);
-      g.method_44379(24, 151, 222, 423);
+      this.button(g, "refresh", this.refreshing ? "..." : "Refresh", x + 134, y + 56, w - 144, !this.refreshing, false, this::refreshFiles);
+      int top = LIST_TOP;
+      int bottom = LIST_BOTTOM;
+      g.method_44379(x + 8, top, x + w - 8, bottom);
 
       try {
          if (this.files.isEmpty()) {
-            UiPaint.text(g, this.field_22793, "Add .schem or .litematic files here.", 27, 167, -6052942);
-            UiPaint.text(g, this.field_22793, "Then choose Refresh.", 27, 184, -9671552);
+            UiPaint.text(g, this.field_22793, "Add .schem or .litematic", x + 16, top + 14, MUTED);
+            UiPaint.text(g, this.field_22793, "files, then Refresh.", x + 16, top + 30, DIM);
+         } else if (shown.isEmpty()) {
+            UiPaint.text(g, this.field_22793, "No schematic matches.", x + 16, top + 14, MUTED);
          }
 
-         for (int i = 0; i < this.files.size(); i++) {
-            int y = 151 + i * 31 - this.fileScroll;
-            if (y + 28 >= 151 && y <= 423) {
-               Path file = this.files.get(i);
+         for (int i = 0; i < shown.size(); i++) {
+            int ry = top + i * ROW - this.fileScroll;
+            if (ry + ROW - 3 >= top && ry <= bottom) {
+               Path file = shown.get(i);
                boolean selected = file.equals(this.selectedFile);
-               UiPaint.round(
-                  g,
-                  24,
-                  y,
-                  198,
-                  28,
-                  5,
-                  UiPaint.blend(-15657700, this.config.accentColor, selected ? 0.25 : (this.inside(24, y, 198, 28) ? 0.1 : 0.0))
-               );
-               UiPaint.text(
-                  g, this.field_22793, this.ellipsize(file.getFileName().toString(), 176), 33, y + 10, selected ? -1250061 : -6052942
-               );
-               this.hit("file" + i, 24, Math.max(151, y), 198, Math.min(423, y + 28) - Math.max(151, y), () -> this.load(file));
+               boolean hover = this.inside(x + 10, ry, w - 22, ROW - 3) && this.mouseY >= top && this.mouseY < bottom;
+               UiPaint.round(g, x + 10, ry, w - 22, ROW - 3, 5, UiPaint.blend(CARD, this.config.accentColor, selected ? 0.26 : (hover ? 0.1 : 0.0)));
+               if (selected) {
+                  UiPaint.round(g, x + 10, ry + 5, 3, ROW - 13, 1, UiPaint.alpha(this.config.accentColor, 1.0));
+               }
+
+               String name = file.getFileName().toString();
+               int dot = name.lastIndexOf('.');
+               String base = dot > 0 ? name.substring(0, dot) : name;
+               String kind = dot > 0 ? name.substring(dot + 1).toUpperCase(Locale.ROOT) : "";
+               UiPaint.text(g, this.field_22793, this.ellipsize(base, w - 78), x + 20, ry + 9, selected ? TEXT : MUTED);
+               UiPaint.right(g, this.field_22793, this.ellipsize(kind, 44), x + w - 18, ry + 9, DIM);
+               this.hit("file" + i, x + 10, Math.max(top, ry), w - 22, Math.min(bottom, ry + ROW - 3) - Math.max(top, ry), () -> this.load(file));
             }
          }
       } finally {
          g.method_44380();
       }
 
-      this.scrollbar(g, 226, 151, 271, this.files.size() * 31, this.fileScroll);
+      this.scrollbar(g, x + w - 9, top, bottom - top, shown.size() * ROW, this.fileScroll);
    }
 
    private void drawPreview(class_332 g) {
+      int x = 240;
+      int y = 64;
+      int w = 376;
+      int h = 214;
+      this.card(g, x, y, w, h);
       Schematic schematic = this.builder.schematic();
-      String title = this.loading ? "Loading and validating..." : (schematic == null ? "Choose a schematic" : schematic.name());
-      UiPaint.strong(g, this.field_22793, this.ellipsize(title, 380), 250, 67, -1250061);
-      this.button(g, "previous", "<", 745, 62, 32, !this.files.isEmpty() && !this.loading, false, () -> this.nextFile(-1));
-      this.button(g, "next", ">", 785, 62, 32, !this.files.isEmpty() && !this.loading, false, () -> this.nextFile(1));
-      UiPaint.round(g, 246, 95, 576, 171, 8, -16184044);
-      UiPaint.outline(g, 246, 95, 576, 171, 8, -14079434);
-      g.method_44379(250, 100, 818, 259);
+      String title = this.loading ? "Loading and validating..." : (schematic == null ? "No schematic loaded" : schematic.name());
+      UiPaint.strong(g, this.field_22793, this.ellipsize(title, w - 100), x + 12, y + 12, TEXT);
+      this.button(g, "previous", "<", x + w - 76, y + 7, 30, !this.files.isEmpty() && !this.loading, false, () -> this.nextFile(-1));
+      this.button(g, "next", ">", x + w - 42, y + 7, 30, !this.files.isEmpty() && !this.loading, false, () -> this.nextFile(1));
+      int vx = x + 10;
+      int vy = y + 36;
+      int vw = w - 20;
+      int vh = 148;
+      UiPaint.round(g, vx, vy, vw, vh, 7, INSET);
+      g.method_44379(vx + 2, vy + 2, vx + vw - 2, vy + vh - 2);
 
       try {
-         for (int x = 252; x < 818; x += 24) {
-            UiPaint.line(g, x, 99, x, 263, 338642013);
+         for (int gx = vx + 12; gx < vx + vw; gx += 24) {
+            UiPaint.line(g, gx, vy + 2, gx, vy + vh - 2, 338642013);
          }
 
-         for (int y = 99; y < 263; y += 24) {
-            UiPaint.line(g, 250, y, 818, y, 338642013);
+         for (int gy = vy + 12; gy < vy + vh; gy += 24) {
+            UiPaint.line(g, vx + 2, gy, vx + vw - 2, gy, 338642013);
          }
 
          this.model.setSchematic(schematic);
-         this.model.render(g, 252, 102, 564, 154);
+         this.model.render(g, vx + 4, vy + 4, vw - 8, vh - 8);
          if (schematic == null) {
-            UiPaint.text(g, this.field_22793, "Your 3D preview will appear here", 405, 166, -6052942);
-            UiPaint.text(g, this.field_22793, "Sponge .schem and multi-region .litematic support", 373, 185, -9671552);
+            UiPaint.text(g, this.field_22793, "Pick a schematic from the library", vx + (vw - UiPaint.width(this.field_22793, "Pick a schematic from the library")) / 2, vy + 62, MUTED);
+            String formats = "Sponge .schem and multi-region .litematic";
+            UiPaint.text(g, this.field_22793, formats, vx + (vw - UiPaint.width(this.field_22793, formats)) / 2, vy + 80, DIM);
          }
       } finally {
          g.method_44380();
       }
 
-      this.hit("model", 246, 95, 576, 171, () -> this.draggingPreview = true);
+      this.hit("model", vx, vy, vw, vh, () -> this.draggingPreview = true);
       if (schematic != null) {
          class_2338 d = schematic.dimensions();
          UiPaint.text(
             g,
             this.field_22793,
-            d.method_10263()
-               + " x "
-               + d.method_10264()
-               + " x "
-               + d.method_10260()
-               + " blocks  /  "
-               + number(schematic.blocks().size())
-               + " blocks  /  "
-               + schematic.regionCount()
-               + " regions",
-            253,
-            276,
-            -6052942
+            d.method_10263() + " x " + d.method_10264() + " x " + d.method_10260() + "  /  " + number(schematic.blocks().size()) + " blocks  /  "
+               + schematic.regionCount() + (schematic.regionCount() == 1 ? " region" : " regions"),
+            x + 12,
+            y + h - 20,
+            MUTED
          );
-         UiPaint.text(
-            g,
-            this.field_22793,
-            this.model.sampled() ? "Drag to rotate / Scroll to zoom / Surface sampled" : "Drag to rotate / Scroll to zoom",
-            253,
-            294,
-            -9671552
-         );
-         this.button(g, "resetView", "Reset view", 728, 273, 89, true, false, this.model::reset);
+         this.button(g, "resetView", "Reset view", x + w - 92, y + h - 27, 80, true, false, this.model::reset);
+      } else {
+         UiPaint.text(g, this.field_22793, "Drag to rotate, scroll to zoom", x + 12, y + h - 20, DIM);
       }
    }
 
    private void drawPositioning(class_332 g) {
+      int x = 240;
+      int y = 286;
+      int w = 376;
+      int h = 210;
+      this.card(g, x, y, w, h);
       boolean available = this.builder.schematic() != null && !this.loading;
-      UiPaint.text(g, this.field_22793, "WORLD POSITION", 251, 322, -9671552);
+      UiPaint.text(g, this.field_22793, "PLACEMENT", x + 12, y + 12, DIM);
+      String[] axes = {"X", "Y", "Z"};
 
       for (int axis = 0; axis < 3; axis++) {
          int index = axis;
-         int x = 251 + axis * 191;
-         UiPaint.text(g, this.field_22793, new String[]{"X", "Y", "Z"}[axis], x, 347, -6052942);
-         this.button(g, "minus" + axis, "-", x + 17, 338, 24, available, false, () -> this.nudge(index, -1));
-         UiPaint.round(g, x + 44, 338, 100, 24, 4, this.coordinateFocus == axis ? -14079434 : -16184044);
+         int ax = x + 12 + axis * 120;
+         UiPaint.text(g, this.field_22793, axes[axis], ax, y + 39, MUTED);
+         this.button(g, "minus" + axis, "-", ax + 12, y + 30, 18, available, false, () -> this.nudge(index, -1));
+         UiPaint.round(g, ax + 33, y + 30, 58, 24, 4, this.coordinateFocus == axis ? BORDER : INSET);
          String shown = this.coordinates[axis] + (this.coordinateFocus == axis && System.currentTimeMillis() % 1000L < 500L ? "|" : "");
-         UiPaint.text(g, this.field_22793, this.ellipsize(shown, 90), x + 50, 347, available ? -1250061 : -9671552);
+         UiPaint.text(g, this.field_22793, this.ellipsize(shown, 52), ax + 37, y + 39, available ? TEXT : DIM);
          if (available) {
-            this.hit("coordinate" + axis, x + 44, 338, 100, 24, () -> {
+            this.hit("coordinate" + axis, ax + 33, y + 30, 58, 24, () -> {
                this.coordinateFocus = index;
                this.replaceText = true;
             });
          }
 
-         this.button(g, "plus" + axis, "+", x + 147, 338, 24, available, false, () -> this.nudge(index, 1));
+         this.button(g, "plus" + axis, "+", ax + 94, y + 30, 18, available, false, () -> this.nudge(index, 1));
       }
 
       PlacementTransform t = this.builder.transform();
-      this.button(
-         g,
-         "atPlayer",
-         "At player",
-         251,
-         376,
-         92,
-         available && this.field_22787.field_1724 != null,
-         false,
-         () -> {
-            PlacementTransform current = this.builder.transform();
-            this.builder
-               .setTransform(
-                  new PlacementTransform(this.field_22787.field_1724.method_24515(), current.quarterTurns(), current.mirrorX())
-               );
-            this.syncCoordinates();
-         }
-      );
-      this.button(g, "rotate", "Rotate " + Math.floorMod(t.quarterTurns(), 4) * 90 + " deg", 351, 376, 114, available, false, () -> {
+      int bw = (w - 24 - 12) / 3;
+      this.button(g, "atPlayer", "At player", x + 12, y + 64, bw, available && this.field_22787.field_1724 != null, false, () -> {
+         PlacementTransform current = this.builder.transform();
+         this.builder.setTransform(new PlacementTransform(this.field_22787.field_1724.method_24515(), current.quarterTurns(), current.mirrorX()));
+         this.syncCoordinates();
+      });
+      this.button(g, "rotate", "Rotate " + Math.floorMod(t.quarterTurns(), 4) * 90 + "°", x + 18 + bw, y + 64, bw, available, false, () -> {
          if (this.commitCoordinates()) {
             PlacementTransform current = this.builder.transform();
             this.builder.setTransform(new PlacementTransform(current.origin(), current.quarterTurns() + 1, current.mirrorX()));
             this.invalidateMaterials();
          }
       });
-      this.button(g, "mirror", "Mirror X: " + (t.mirrorX() ? "On" : "Off"), 473, 376, 119, available, t.mirrorX(), () -> {
+      this.button(g, "mirror", "Mirror " + (t.mirrorX() ? "on" : "off"), x + 24 + bw * 2, y + 64, bw, available, t.mirrorX(), () -> {
          if (this.commitCoordinates()) {
             PlacementTransform current = this.builder.transform();
             this.builder.setTransform(new PlacementTransform(current.origin(), current.quarterTurns(), !current.mirrorX()));
             this.invalidateMaterials();
          }
       });
-      this.button(g, "preview", "Show in world", 600, 376, 113, available && this.field_22787.field_1687 != null, false, () -> {
+      int hw = (w - 24 - 6) / 2;
+      this.button(g, "preview", "Show in world", x + 12, y + 96, hw, available && this.field_22787.field_1687 != null, false, () -> {
          if (this.commitCoordinates()) {
             this.builder.setPreviewVisible(true);
             this.field_22787.method_1507(null);
          }
       });
-      this.button(g, "cancelPreview", "Cancel Preview", 721, 376, 96, this.builder.previewVisible(), false, () -> this.builder.setPreviewVisible(false));
-      UiPaint.text(g, this.field_22793, "Ghost opacity", 253, 415, -9671552);
-      this.button(g, "opacityDown", "-", 347, 406, 24, true, false, () -> this.setOpacity(-0.05));
-      UiPaint.text(g, this.field_22793, Math.round(this.config.autoBuilder.previewOpacity * 100.0) + "%", 380, 415, -6052942);
-      this.button(g, "opacityUp", "+", 421, 406, 24, true, false, () -> this.setOpacity(0.05));
+      this.button(g, "cancelPreview", "Hide preview", x + 18 + hw, y + 96, hw, this.builder.previewVisible(), false, () -> this.builder.setPreviewVisible(false));
+      UiPaint.round(g, x + 12, y + 132, w - 24, 1, 0, BORDER);
+      UiPaint.text(g, this.field_22793, "Ghost opacity", x + 12, y + 151, DIM);
+      int opacity = (int)Math.round(this.config.autoBuilder.previewOpacity * 100.0);
+      this.button(g, "opacityDown", "-", x + 100, y + 142, 22, true, false, () -> this.setOpacity(-0.05));
+      UiPaint.round(g, x + 128, y + 149, 80, 4, 2, INSET);
+      UiPaint.round(g, x + 128, y + 149, (int)(80.0 * Math.clamp(opacity / 100.0, 0.0, 1.0)), 4, 2, UiPaint.alpha(this.config.accentColor, 0.9));
+      UiPaint.text(g, this.field_22793, opacity + "%", x + 214, y + 151, MUTED);
+      this.button(g, "opacityUp", "+", x + 244, y + 142, 22, true, false, () -> this.setOpacity(0.05));
       if (this.builder.schematic() != null && !this.builder.schematic().warnings().isEmpty()) {
-         this.button(
-            g,
-            "warnings",
-            this.builder.schematic().warnings().size() + " file notices",
-            668,
-            406,
-            149,
-            true,
-            false,
-            () -> this.openDetails(String.join("\n", this.builder.schematic().warnings()))
-         );
+         int notices = this.builder.schematic().warnings().size();
+         this.button(g, "warnings", notices + (notices == 1 ? " notice" : " notices"), x + w - 94, y + 142, 82, true, false,
+            () -> this.openDetails(String.join("\n", this.builder.schematic().warnings())));
       }
+
+      UiPaint.text(g, this.field_22793, "Arrows nudge after clicking a field. Enter applies.", x + 12, y + h - 22, DIM);
    }
 
-   private void drawActions(class_332 g) {
-      UiPaint.round(g, 16, 450, 808, 1, 0, -14079434);
+   private void drawBuild(class_332 g) {
+      int x = 626;
+      int y = 64;
+      int w = 200;
+      int h = 432;
+      this.card(g, x, y, w, h);
       boolean available = this.builder.schematic() != null && !this.loading;
-      String status = this.builder.status().name().toLowerCase(Locale.ROOT);
-      status = Character.toUpperCase(status.charAt(0)) + status.substring(1);
-      UiPaint.text(g, this.field_22793, status + "  " + Math.round(this.builder.progress() * 100.0) + "%", 24, 464, -1250061);
-      UiPaint.round(g, 24, 482, 203, 4, 2, -14079434);
-      UiPaint.round(
-         g, 24, 482, (int)(203.0 * this.builder.progress()), 4, 2, UiPaint.alpha(this.config.accentColor, 1.0)
-      );
-      this.button(g, "materials", "Materials", 251, 459, 103, available, false, () -> {
-         if (this.commitCoordinates()) {
-            this.materialsOpen = true;
-            this.modalClosing = false;
-            this.modalProgress = 0.0;
-            this.materialScroll = 0;
-            this.searchFocused = false;
-            this.keyboardFocus = -1;
-            this.invalidateMaterials();
-            this.refreshMaterials();
+      UiPaint.text(g, this.field_22793, "BUILD", x + 12, y + 12, DIM);
+      int percent = (int)Math.floor(this.builder.progress() * 100.0);
+      g.method_51448().pushMatrix();
+
+      try {
+         g.method_51448().translate(x + 12, y + 28);
+         g.method_51448().scale(2.0F, 2.0F);
+         UiPaint.strong(g, this.field_22793, percent + "%", 0, 0, TEXT);
+      } finally {
+         g.method_51448().popMatrix();
+      }
+
+      UiPaint.right(g, this.field_22793, number(this.builder.confirmedBlocks()) + " / " + number(this.builder.totalBlocks()), x + w - 12, y + 40, MUTED);
+      UiPaint.round(g, x + 12, y + 56, w - 24, 6, 3, INSET);
+      int filled = (int)Math.round((w - 24) * Math.clamp(this.shownProgress, 0.0, 1.0));
+      if (filled > 0) {
+         UiPaint.round(g, x + 12, y + 56, Math.max(6, filled), 6, 3, UiPaint.alpha(this.statusColor(), 1.0));
+      }
+
+      double rate = this.builder.blocksPerSecond();
+      int eta = this.builder.secondsRemaining();
+      String[][] stats = {
+         {"Rate", rate > 0.0 ? String.format(Locale.ROOT, "%.1f/s", rate) : "-"},
+         {"Time left", eta < 0 ? "-" : duration(eta)},
+         {"In flight", Integer.toString(this.builder.inflightPlacements())},
+         {"Settling", number(this.builder.settlingBlocks())},
+         {"Supports", number(this.builder.supportsPlaced())},
+         {"Deferred", number(this.builder.deferredBlocks())}
+      };
+
+      for (int i = 0; i < stats.length; i++) {
+         int sx = x + 12 + (i % 2) * 90;
+         int sy = y + 72 + (i / 2) * 32;
+         UiPaint.round(g, sx, sy, 86, 28, 5, INSET);
+         UiPaint.text(g, this.field_22793, stats[i][0], sx + 7, sy + 5, DIM);
+         UiPaint.text(g, this.field_22793, stats[i][1], sx + 7, sy + 16, i == 5 && this.builder.deferredBlocks() > 0 ? WARN : TEXT);
+      }
+
+      int sy = y + 174;
+      UiPaint.text(g, this.field_22793, "SPEED", x + 12, sy, DIM);
+      BuildTempo.Preset current = BuildTempo.current();
+      boolean tempo = BuildTempo.instance != null;
+      BuildTempo.Preset[] presets = BuildTempo.Preset.values();
+      int cell = (w - 24 - 4) / 2;
+
+      for (int i = 0; i < presets.length; i++) {
+         BuildTempo.Preset preset = presets[i];
+         int px = x + 12 + (i % 2) * (cell + 4);
+         int py = sy + 13 + (i / 2) * 24;
+         boolean selected = preset == current;
+         String id = "preset" + i;
+         double hover = this.animate(id, tempo && this.inside(px, py, cell, 20));
+         UiPaint.round(g, px, py, cell, 20, 5, UiPaint.blend(INSET, this.config.accentColor, selected ? 0.6 : hover * 0.2));
+         if (selected) {
+            UiPaint.outline(g, px, py, cell, 20, 5, UiPaint.alpha(this.config.accentColor, 0.9));
          }
-      });
-      String action = this.builder.status() == AutoBuilderController.Status.PAUSED
-         ? "Resume"
-         : (this.builder.isRunning() ? "Pause" : "Start");
-      this.button(g, "start", action, 364, 459, 99, available && this.field_22787.field_1687 != null, true, () -> {
+
+         String label = preset.label();
+         UiPaint.text(g, this.field_22793, label, px + (cell - UiPaint.width(this.field_22793, label)) / 2, py + 7, selected ? TEXT : (tempo ? MUTED : DIM));
+         if (tempo) {
+            this.hit(id, px, py, cell, 20, () -> BuildTempo.choose(preset));
+         }
+      }
+
+      String ceiling = !tempo ? "Build Tempo is unavailable" : String.format(Locale.ROOT, "Up to %.0f blocks/s", BuildTempo.ceiling());
+      UiPaint.text(g, this.field_22793, ceiling, x + 12, sy + 64, MUTED);
+      UiPaint.text(g, this.field_22793, presetNote(current), x + 12, sy + 77, DIM);
+      int ay = y + 268;
+      String action = this.builder.status() == AutoBuilderController.Status.PAUSED ? "Resume" : (this.builder.isRunning() ? "Pause" : "Start building");
+      this.button(g, "start", action, x + 12, ay, w - 24, 28, available && this.field_22787.field_1687 != null, true, () -> {
          if (this.commitCoordinates()) {
             if (this.builder.isRunning()) {
                this.builder.pause();
@@ -392,15 +482,92 @@ public final class AutoBuilderScreen extends class_437 {
             }
          }
       });
-      this.button(g, "cancel", "Cancel", 473, 459, 89, available, false, this.builder::cancel);
+      int half = (w - 24 - 6) / 2;
+      this.button(g, "materials", "Materials", x + 12, ay + 34, half, available, false, () -> {
+         if (this.commitCoordinates()) {
+            this.materialsOpen = true;
+            this.modalClosing = false;
+            this.modalProgress = 0.0;
+            this.materialScroll = 0;
+            this.searchFocused = false;
+            this.keyboardFocus = -1;
+            this.invalidateMaterials();
+            this.refreshMaterials();
+         }
+      });
+      this.button(g, "cancel", "Cancel", x + 18 + half, ay + 34, half, available, false, this.builder::cancel);
+      int ry = ay + 66;
       String reason = this.message.isEmpty() ? this.builder.reason() : this.message;
-      UiPaint.text(g, this.field_22793, this.ellipsize(reason, 238), 579, 469, this.message.isEmpty() ? -6052942 : -14741);
-      if (!reason.isEmpty()) {
-         this.hit("reason", 575, 459, 242, 26, () -> this.openDetails(reason));
+      UiPaint.round(g, x + 12, ry, w - 24, 60, 5, INSET);
+      List<String> lines = this.wrap(reason, w - 40);
+
+      for (int i = 0; i < Math.min(4, lines.size()); i++) {
+         String line = i == 3 && lines.size() > 4 ? this.ellipsize(lines.get(i) + " ...", w - 40) : lines.get(i);
+         UiPaint.text(g, this.field_22793, line, x + 20, ry + 7 + i * 13, this.message.isEmpty() ? MUTED : WARN);
       }
 
-      UiPaint.text(g, this.field_22793, "Exact states / Server confirmation / REX stability checks", 251, 493, -9671552);
-      this.donut$drawCreativeMode(g);
+      if (!reason.isEmpty()) {
+         this.hit("reason", x + 12, ry, w - 24, 60, () -> this.openDetails(reason));
+      }
+
+      this.donut$drawCreativeMode(g, x + 12, y + h - 28, w - 24);
+   }
+
+   private void card(class_332 g, int x, int y, int w, int h) {
+      UiPaint.round(g, x, y, w, h, 9, BORDER);
+      UiPaint.round(g, x + 1, y + 1, w - 2, h - 2, 8, UiPaint.blend(CARD, this.config.accentColor, 0.035));
+   }
+
+   private int statusColor() {
+      return switch (this.builder.status()) {
+         case RUNNING -> GOOD;
+         case PAUSED -> WARN;
+         case COMPLETED -> UiPaint.alpha(this.config.accentColor, 1.0);
+         case READY -> TEXT;
+         default -> DIM;
+      };
+   }
+
+   private static String statusLabel(AutoBuilderController.Status status) {
+      String name = status.name().toLowerCase(Locale.ROOT);
+      return Character.toUpperCase(name.charAt(0)) + name.substring(1);
+   }
+
+   private static String presetNote(BuildTempo.Preset preset) {
+      if (preset == null) {
+         return "Build Tempo module is off";
+      }
+
+      return switch (preset) {
+         case SAFE -> "Waits for the server each block";
+         case BALANCED -> "Prediction, 2 unconfirmed";
+         case FAST -> "One block per tick";
+         case CUSTOM -> "Rows in Build Tempo";
+      };
+   }
+
+   private static String duration(int seconds) {
+      if (seconds >= 3600) {
+         return seconds / 3600 + "h " + seconds % 3600 / 60 + "m";
+      } else {
+         return seconds >= 60 ? seconds / 60 + "m " + seconds % 60 + "s" : seconds + "s";
+      }
+   }
+
+   private List<Path> filteredFiles() {
+      String query = this.libraryQuery.toLowerCase(Locale.ROOT).trim();
+      if (query.isEmpty()) {
+         return this.files;
+      } else {
+         return this.files.stream().filter(file -> file.getFileName().toString().toLowerCase(Locale.ROOT).contains(query)).toList();
+      }
+   }
+
+   private double animate(String id, boolean active) {
+      double value = this.hoverAnimations.getOrDefault(id, 0.0);
+      value += ((active ? 1 : 0) - value) * (1.0 - Math.exp(-this.seconds * 18.0));
+      this.hoverAnimations.put(id, value);
+      return value;
    }
 
    private void drawMaterials(class_332 g) {
@@ -517,7 +684,7 @@ public final class AutoBuilderScreen extends class_437 {
    private void drawDetails(class_332 g) {
       UiPaint.round(g, 135, 114, 570, 280, 10, -15724265);
       UiPaint.outline(g, 135, 114, 570, 280, 10, -14079434);
-      UiPaint.strong(g, this.field_22793, "AutoBuilder notice", 154, 134, -1250061);
+      UiPaint.strong(g, this.field_22793, "Auto Build notice", 154, 134, -1250061);
       List<String> lines = this.wrap(this.details, 525);
       g.method_44379(152, 160, 686, 343);
 
@@ -585,9 +752,10 @@ public final class AutoBuilderScreen extends class_437 {
    }
 
    private void nextFile(int direction) {
-      if (!this.files.isEmpty()) {
-         int index = this.files.indexOf(this.selectedFile);
-         this.load(this.files.get(Math.floorMod(index < 0 ? 0 : index + direction, this.files.size())));
+      List<Path> shown = this.filteredFiles().isEmpty() ? this.files : this.filteredFiles();
+      if (!shown.isEmpty()) {
+         int index = shown.indexOf(this.selectedFile);
+         this.load(shown.get(Math.floorMod(index < 0 ? 0 : index + direction, shown.size())));
       }
    }
 
@@ -698,21 +866,17 @@ public final class AutoBuilderScreen extends class_437 {
    }
 
    private void button(class_332 g, String id, String label, int x, int y, int w, boolean enabled, boolean primary, Runnable action) {
-      double hover = this.hoverAnimations.getOrDefault(id, 0.0);
-      hover += ((enabled && this.inside(x, y, w, 24) ? 1 : 0) - hover) * (1.0 - Math.exp(-this.seconds * 18.0));
-      this.hoverAnimations.put(id, hover);
-      UiPaint.round(
-         g, x, y, w, 24, 5, UiPaint.blend(-15657700, this.config.accentColor, enabled ? (primary ? 0.55 : 0.09) + hover * 0.18 : 0.0)
-      );
-      UiPaint.outline(
-         g, x, y, w, 24, 5, UiPaint.blend(-14079434, this.config.accentColor, enabled ? (primary ? 0.45 : 0.0) + hover * 0.3 : 0.0)
-      );
+      this.button(g, id, label, x, y, w, 24, enabled, primary, action);
+   }
+
+   private void button(class_332 g, String id, String label, int x, int y, int w, int h, boolean enabled, boolean primary, Runnable action) {
+      double hover = this.animate(id, enabled && this.inside(x, y, w, h));
+      UiPaint.round(g, x, y, w, h, 6, UiPaint.blend(CARD, this.config.accentColor, enabled ? (primary ? 0.55 : 0.09) + hover * 0.18 : 0.0));
+      UiPaint.outline(g, x, y, w, h, 6, UiPaint.blend(BORDER, this.config.accentColor, enabled ? (primary ? 0.45 : 0.0) + hover * 0.3 : 0.0));
       String shown = this.ellipsize(label, w - 10);
-      UiPaint.text(
-         g, this.field_22793, shown, x + (w - UiPaint.width(this.field_22793, shown)) / 2, y + 9, enabled ? -1250061 : -9671552
-      );
+      UiPaint.text(g, this.field_22793, shown, x + (w - UiPaint.width(this.field_22793, shown)) / 2, y + (h - 6) / 2, enabled ? TEXT : DIM);
       if (enabled) {
-         this.hit(id, x, y, w, 24, action);
+         this.hit(id, x, y, w, h, action);
       }
    }
 
@@ -812,6 +976,7 @@ public final class AutoBuilderScreen extends class_437 {
             return true;
          } else {
             this.searchFocused = target != null && target.id.equals("materialSearch");
+            this.libraryFocused = target != null && target.id.equals("librarySearch");
             this.keyboardFocus = -1;
             if (target != null) {
                target.action.run();
@@ -846,10 +1011,12 @@ public final class AutoBuilderScreen extends class_437 {
             this.materialScroll = Math.clamp(
                (long)(this.materialScroll - (int)(vertical * 25.0)), 0, Math.max(0, this.wrap(this.details, 525).size() * 17 - 181)
             );
-         } else if (lx >= 246.0 && lx < 822.0 && ly >= 95.0 && ly < 266.0) {
+         } else if (lx >= 250.0 && lx < 606.0 && ly >= 100.0 && ly < 248.0) {
             this.model.zoom(vertical);
-         } else if (lx >= 14.0 && lx < 234.0 && ly >= 151.0 && ly <= 423.0) {
-            this.fileScroll = Math.clamp((long)(this.fileScroll - (int)(vertical * 31.0)), 0, Math.max(0, this.files.size() * 31 - 272));
+         } else if (lx >= 14.0 && lx < 230.0 && ly >= LIST_TOP && ly <= LIST_BOTTOM) {
+            this.fileScroll = Math.clamp(
+               (long)(this.fileScroll - (int)(vertical * ROW)), 0, Math.max(0, this.filteredFiles().size() * ROW - (LIST_BOTTOM - LIST_TOP))
+            );
          }
 
          return true;
@@ -864,6 +1031,8 @@ public final class AutoBuilderScreen extends class_437 {
             if (this.coordinateFocus >= 0) {
                this.coordinateFocus = -1;
                this.syncCoordinates();
+            } else if (this.libraryFocused) {
+               this.libraryFocused = false;
             } else if (!this.materialsOpen && this.details.isEmpty()) {
                this.method_25419();
             } else {
@@ -872,8 +1041,13 @@ public final class AutoBuilderScreen extends class_437 {
 
             return true;
          } else {
-            if (this.coordinateFocus >= 0 || this.searchFocused) {
-               String value = this.coordinateFocus >= 0 ? this.coordinates[this.coordinateFocus] : this.searchQuery;
+            if (this.coordinateFocus >= 0 && (event.comp_4795() == 265 || event.comp_4795() == 264)) {
+               this.nudge(this.coordinateFocus, (event.comp_4795() == 265 ? 1 : -1) * (event.method_74239() ? 10 : 1));
+               return true;
+            }
+
+            if (this.coordinateFocus >= 0 || this.searchFocused || this.libraryFocused) {
+               String value = this.coordinateFocus >= 0 ? this.coordinates[this.coordinateFocus] : (this.libraryFocused ? this.libraryQuery : this.searchQuery);
                if (event.method_74240() && event.comp_4795() == 65) {
                   this.replaceText = true;
                   return true;
@@ -902,6 +1076,7 @@ public final class AutoBuilderScreen extends class_437 {
                      this.commitCoordinates();
                   } else {
                      this.searchFocused = false;
+                     this.libraryFocused = false;
                   }
 
                   return true;
@@ -915,6 +1090,7 @@ public final class AutoBuilderScreen extends class_437 {
 
                this.keyboardFocus = Math.floorMod(this.keyboardFocus + (event.method_74239() ? -1 : 1), this.hits.size());
                this.searchFocused = false;
+               this.libraryFocused = false;
                return true;
             } else if ((event.comp_4795() == 257 || event.comp_4795() == 32) && this.keyboardFocus >= 0 && this.keyboardFocus < this.hits.size()) {
                this.hits.get(this.keyboardFocus).action.run();
@@ -931,6 +1107,9 @@ public final class AutoBuilderScreen extends class_437 {
    private void setInput(String value) {
       if (this.coordinateFocus >= 0) {
          this.coordinates[this.coordinateFocus] = value;
+      } else if (this.libraryFocused) {
+         this.libraryQuery = value;
+         this.fileScroll = 0;
       } else {
          this.searchQuery = value;
          this.materialScroll = 0;
@@ -953,6 +1132,18 @@ public final class AutoBuilderScreen extends class_437 {
             }
          }
 
+         return true;
+      } else if (this.libraryFocused) {
+         if (this.replaceText) {
+            this.libraryQuery = "";
+         }
+
+         this.replaceText = false;
+         if (this.libraryQuery.length() < 64) {
+            this.libraryQuery = this.libraryQuery + event.method_74226();
+         }
+
+         this.fileScroll = 0;
          return true;
       } else if (this.searchFocused) {
          if (this.replaceText) {
@@ -1024,11 +1215,13 @@ public final class AutoBuilderScreen extends class_437 {
       return false;
    }
 
-   private void donut$drawCreativeMode(class_332 var1) {
-      UiPaint.round(var1, 24, 489, 203, 16, 4, -15657700);
-      UiPaint.outline(var1, 24, 489, 203, 16, 4, this.config.accentColor);
-      UiPaint.text(var1, this.field_22793, CreativeBuildMode.label(this.config.autoBuilder), 35, 493, -1250061);
-      this.hit("creativeMode", 24, 489, 203, 16, new CreativeBuildMode(this.config.autoBuilder, this.save));
+   private void donut$drawCreativeMode(class_332 g, int x, int y, int w) {
+      double hover = this.animate("creativeMode", this.inside(x, y, w, 20));
+      UiPaint.round(g, x, y, w, 20, 5, UiPaint.blend(INSET, this.config.accentColor, 0.05 + hover * 0.12));
+      UiPaint.outline(g, x, y, w, 20, 5, UiPaint.alpha(this.config.accentColor, 0.55 + hover * 0.35));
+      String label = this.ellipsize(CreativeBuildMode.label(this.config.autoBuilder), w - 12);
+      UiPaint.text(g, this.field_22793, label, x + (w - UiPaint.width(this.field_22793, label)) / 2, y + 7, TEXT);
+      this.hit("creativeMode", x, y, w, 20, new CreativeBuildMode(this.config.autoBuilder, this.save));
    }
 
    @Environment(EnvType.CLIENT)
