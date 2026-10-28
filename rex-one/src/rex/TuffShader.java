@@ -40,7 +40,7 @@ public final class TuffShader extends Module {
    private static boolean broken;
 
    public TuffShader() {
-      super("Tuff Shader", "A light colour grade for the world. No shader mod needed.", -1, Category.RENDER);
+      super("Tuff Graphics", "Makes the world look tuff: sharper, richer colour, soft vignette. No shader mod needed.", -1, Category.RENDER);
       this.addSettings(new Setting[]{this.style});
       instance = this;
    }

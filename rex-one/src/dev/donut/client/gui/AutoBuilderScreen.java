@@ -414,7 +414,7 @@ public final class AutoBuilderScreen extends class_437 {
       UiPaint.text(g, this.field_22793, "Look", x + 12, wy + 9, DIM);
       TuffShader shader = TuffShader.instance;
       boolean look = shader != null && shader.enabled;
-      this.button(g, "shader", look ? "Tuff Shader: on" : "Tuff Shader: off", x + 100, wy, 128, shader != null, look, () -> shader.toggle());
+      this.button(g, "shader", look ? "Tuff Graphics: on" : "Tuff Graphics: off", x + 100, wy, 128, shader != null, look, () -> shader.toggle());
       if (shader != null) {
          this.button(g, "shaderStyle", "Style: " + styleLabel(shader), x + 236, wy, 128, true, false, () -> {
             shader.style.next();

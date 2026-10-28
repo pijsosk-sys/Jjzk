@@ -72,7 +72,7 @@ Finishing big builds (one.15)
   Memory         the loaded schematic and position come back when you rejoin the same server.
 
 Look (one.15)
-  Tuff Shader (Render)      one-pass colour grade: sharpen, vibrance, contrast, toning, vignette.
+  Tuff Graphics (Render)    one-pass colour grade: sharpen, vibrance, contrast, toning, vignette.
                             Soft, Tuff or Vivid. No shader mod needed; the HUD is untouched.
   Schematic Ghost (Render)  ghost on/off, bindable; Layers: all, working, up to working, one.
   The builder screen hides HUD panels, and has Ghost, Layers, Look, Skipped (why each block was

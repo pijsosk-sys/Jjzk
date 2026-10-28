@@ -109,7 +109,7 @@ loaded back when you join, ready to Start. The builder's scan then finds what's 
 
 ## New: look and screen
 
-- **Tuff Shader** (Render module, bindable; also on the builder screen): one full-screen pass
+- **Tuff Graphics** (Render module, bindable; also on the builder screen): one full-screen pass
   through Minecraft's own post-effect pipeline that sharpens, adds vibrance, a soft contrast curve,
   warm/cool toning and a vignette. Styles are Soft, Tuff and Vivid. It needs no Iris or OptiFine,
   costs about what the creeper spectator effect does, and doesn't touch the HUD.
