@@ -1,0 +1,77 @@
+#!/bin/bash
+# Claude Remote: chat with Claude Code in the Claude app (phone or PC) while it works on this
+# Boddy desktop. Runs `claude remote-control` in a tmux session that a watchdog keeps alive.
+#   boddy-remote open       start it and show its window (the desktop icon does this)
+#   boddy-remote start      start it in the background and keep it running, also after restarts
+#   boddy-remote stop       stop it and don't start it again automatically
+#   boddy-remote status     is it running, plus the end of its log
+#   boddy-remote autostart  start it if it was on before (run at every desktop start)
+DIR=/root/.boddy/remote
+FLAG=/root/.config/boddy/remote-on
+LOG=/root/.boddy/remote/remote.log
+SESSION=boddy-remote
+export HOME=/root DISPLAY=${DISPLAY:-:1}
+export PATH="/opt/boddy/phone-bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+mkdir -p "$DIR" /root/.config/boddy
+
+have_tmux() {
+    command -v tmux >/dev/null && return 0
+    # One quiet install attempt a day; without tmux the window itself hosts Claude.
+    local stamp=$DIR/.tmux-tried
+    [ -n "$(find "$stamp" -mmin -1440 2>/dev/null)" ] && return 1
+    touch "$stamp"
+    DEBIAN_FRONTEND=noninteractive apt-get -y -q install tmux >/dev/null 2>&1 ||
+        { apt-get -q update >/dev/null 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get -y -q install tmux >/dev/null 2>&1; }
+    command -v tmux >/dev/null
+}
+
+running() { tmux has-session -t "$SESSION" 2>/dev/null; }
+
+start() {
+    touch "$FLAG"
+    if have_tmux; then
+        running || tmux new-session -d -s "$SESSION" -x 120 -y 40 "bash $DIR/remote-control.sh"
+        tmux set-option -t "$SESSION" -g mouse on >/dev/null 2>&1
+        watchdog_bg
+        return 0
+    fi
+    return 1
+}
+
+# Restarts the tmux session if anything (Android, a crash, a stray kill) ends it while Remote is on.
+watchdog_bg() { setsid bash "$DIR/boddy-remote" watchdog >/dev/null 2>&1 < /dev/null & }
+
+case "$1" in
+    open)
+        if start; then
+            exec tmux attach -t "$SESSION"
+        fi
+        # No tmux: run here. Closing this window stops Remote until the next desktop start.
+        exec bash "$DIR/remote-control.sh"
+        ;;
+    start) start && echo "Claude Remote is on." || { echo "tmux is missing; use the Claude Remote icon." >&2; exit 1; } ;;
+    stop)
+        rm -f "$FLAG"
+        tmux kill-session -t "$SESSION" 2>/dev/null
+        pkill -f "$DIR/remote-control.sh" 2>/dev/null
+        echo "Claude Remote is off."
+        ;;
+    status)
+        if [ -e "$FLAG" ]; then echo "on"; else echo "off"; fi
+        running && echo "running" || echo "not running"
+        tail -n 15 "$LOG" 2>/dev/null
+        ;;
+    autostart) [ -e "$FLAG" ] && start >/dev/null 2>&1; exit 0 ;;
+    watchdog)
+        exec 9>/tmp/boddy-remote-watchdog.lock
+        flock -n 9 || exit 0
+        while [ -e "$FLAG" ]; do
+            if ! running; then
+                echo "$(date '+%F %T') watchdog: session was gone, starting it again" >> "$LOG"
+                tmux new-session -d -s "$SESSION" -x 120 -y 40 "bash $DIR/remote-control.sh" 2>/dev/null
+            fi
+            sleep 20
+        done
+        ;;
+    *) sed -n '2,9p' "$0"; exit 2 ;;
+esac
