@@ -51,6 +51,9 @@ block was checked on the server afterwards.
 | one.14 Balanced | 614 | 5.1 /s | 0 |
 | one.14 Fast | 846 | 7.0 /s | 0 |
 
+A long run of the same farm on Fast placed 7,524 blocks (49%) in 22 minutes, all exact,
+before stalling on a 17-step walk to the upper levels (`screenshots/kelp-behemoth-22min*.png`).
+
 Each pair of runs shared a 4-core machine with software rendering, so these figures are for
 comparing runs with each other; real hardware will be faster. What's left is mostly walking
 between spots (about 40%).
