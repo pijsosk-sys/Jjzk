@@ -34,6 +34,7 @@ import net.minecraft.class_3218;
 public final class SmokeDriver implements ClientModInitializer {
    private static final class_2338 ORIGIN = new class_2338(0, -60, 0);
    private static final boolean CREATIVE = Boolean.getBoolean("rexsmoke.creative");
+   private static final boolean RESTOCK = Boolean.getBoolean("rexsmoke.restock");
    private static final int MAX_SECONDS = Integer.getInteger("rexsmoke.maxSeconds", 300);
    private static final int STALL_TICKS = 20 * Integer.getInteger("rexsmoke.stallSeconds", 20);
    private static final String[] SURVIVAL = {
@@ -110,7 +111,18 @@ public final class SmokeDriver implements ClientModInitializer {
             for (int y = -60; y <= -60 + size.method_10264() + 4; y++) {
                commands.add("fill -3 " + y + " -3 " + (size.method_10263() + 3) + " " + y + " " + (size.method_10260() + 3) + " minecraft:air");
             }
-            if (CREATIVE) {
+            if (RESTOCK) {
+               // Survival with a short supply and a shulker box holding the rest: only restocking finishes it.
+               commands.addAll(List.of("gamemode survival @a", "clear @a", "give @a minecraft:stone_bricks 32", "give @a minecraft:dirt 64",
+                  "give @a minecraft:shulker_box[container=[{slot:0,item:{id:\"minecraft:stone_bricks\",count:64}},"
+                     + "{slot:1,item:{id:\"minecraft:stone_bricks\",count:64}},{slot:2,item:{id:\"minecraft:stone_bricks\",count:64}},"
+                     + "{slot:3,item:{id:\"minecraft:stone_bricks\",count:64}}]] 1",
+                  "effect give @a minecraft:resistance infinite 255 true", "effect give @a minecraft:saturation infinite 255 true",
+                  "tp @a " + (size.method_10263() / 2.0) + " -60 -3.5 0 20"));
+               Object tempo = Class.forName("rex.BuildTempo").getField("instance").get(null);
+               Object setting = tempo.getClass().getField("restock").get(tempo);
+               setting.getClass().getMethod("set", boolean.class).invoke(setting, true);
+            } else if (CREATIVE) {
                commands.add("gamemode creative @a");
                commands.add("clear @a");
                commands.add("tp @a " + (size.method_10263() / 2.0) + " -60 -3.5 0 20");

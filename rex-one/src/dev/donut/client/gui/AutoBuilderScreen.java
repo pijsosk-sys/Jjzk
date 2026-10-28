@@ -7,6 +7,7 @@ import dev.donut.client.autobuild.Schematic;
 import dev.donut.client.autobuild.UnifiedSchematics;
 import dev.donut.client.autobuild.CreativeBuildMode;
 import rex.BuildTempo;
+import rex.BuildMemory;
 import rex.SchematicGhost;
 import dev.donut.client.config.ClientConfig;
 import dev.donut.client.input.ModuleKeybinds;
@@ -94,6 +95,7 @@ public final class AutoBuilderScreen extends class_437 {
    private String details = "";
    private boolean searchFocused;
    private boolean libraryFocused;
+   private int copied;
    private String libraryQuery = "";
    private double shownProgress;
 
@@ -627,6 +629,11 @@ public final class AutoBuilderScreen extends class_437 {
             UiPaint.text(g, this.field_22793, "Creative only", x + w - 264, y + 78, -9671552);
          }
 
+         this.button(g, "copyMaterials", this.copied > 0 ? "Copied" : "Copy list", x + 388, y + 69, 104, !this.materials.rows().isEmpty(), false, () -> {
+            this.field_22787.field_1774.method_1455(this.shoppingList());
+            this.copied = 40;
+         });
+
          int[] cols = new int[]{334, 397, 468, 531, 594, 663, 737};
          String[] labels = new String[]{"Total", "Correct", "Remain", "Hotbar", "Inv.", "Missing", "Unknown"};
          UiPaint.text(g, this.field_22793, "Material", x + 20, y + 116, -9671552);
@@ -741,6 +748,7 @@ public final class AutoBuilderScreen extends class_437 {
                   this.message = "Invalid schematic: " + errorMessage(error);
                } else {
                   this.builder.setSchematic(value);
+                  BuildMemory.remember(file, value);
                   if (this.field_22787.field_1724 != null) {
                      this.builder.setTransform(new PlacementTransform(this.field_22787.field_1724.method_24515(), 0, false));
                   }
@@ -853,6 +861,26 @@ public final class AutoBuilderScreen extends class_437 {
          String query = this.searchQuery.toLowerCase(Locale.ROOT).trim();
          return this.materials.rows().stream().filter(row -> row.name().toLowerCase(Locale.ROOT).contains(query)).toList();
       }
+   }
+
+   /** What is still missing, one line per item, ready to paste into chat or a note. */
+   private String shoppingList() {
+      StringBuilder out = new StringBuilder();
+      Schematic schematic = this.builder.schematic();
+      out.append("Shopping list").append(schematic == null ? "" : " for " + schematic.name()).append('\n');
+      int lines = 0;
+      for (MaterialTracker.Row row : this.materials.rows()) {
+         if (row.missing() > 0) {
+            int stacks = (row.missing() + 63) / 64;
+            out.append(number(row.missing())).append(" x ").append(row.name()).append("  (").append(stacks).append(stacks == 1 ? " stack" : " stacks")
+               .append(", have ").append(number(row.hotbar() + row.inventory())).append(")\n");
+            lines++;
+         }
+      }
+      if (lines == 0) {
+         out.append("Nothing missing: everything left is in your inventory.\n");
+      }
+      return out.toString();
    }
 
    private void openDetails(String value) {
@@ -1167,6 +1195,9 @@ public final class AutoBuilderScreen extends class_437 {
    }
 
    public void method_25393() {
+      if (this.copied > 0) {
+         this.copied--;
+      }
       if (this.closing && this.progress == 0.0 && this.field_22787.field_1755 == this) {
          this.field_22787.method_1507(this.parent);
       }

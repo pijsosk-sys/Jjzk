@@ -63,6 +63,7 @@ import net.minecraft.class_5544;
 import net.minecraft.class_638;
 import net.minecraft.class_746;
 import net.minecraft.class_2350.class_2353;
+import rex.BuildRestock;
 import rex.BuildTempo;
 import rex.UnifiedAutoBuild;
 
@@ -217,6 +218,31 @@ public final class AutoBuilderController {
    private void sample() {
       this.history[this.historyTicks % this.history.length] = this.correct.cardinality() + this.settling.size();
       this.historyTicks++;
+   }
+
+   // ---- For the shulker restock ------------------------------------------------------------------
+
+   public void restockHold(class_310 client, boolean sneak) {
+      this.navigator.hold(client, sneak);
+   }
+
+   public boolean isBlueprint(class_2338 pos) {
+      return this.indices.containsKey(pos);
+   }
+
+   /** Every item the blocks still to build need, water buckets included. */
+   public Set<class_1792> remainingItems() {
+      Set<class_1792> items = new HashSet<>();
+      for (Target target : this.targets) {
+         if (!this.correct.get(target.index)) {
+            items.add(waterSource(target.state) || kelp(target.state) ? class_1802.field_8705 : MaterialTracker.requirement(target.state).item());
+            if (kelp(target.state)) {
+               items.add(class_1802.field_17532);
+            }
+         }
+      }
+      items.remove(class_1802.field_8162);
+      return items;
    }
 
    /** What the builder thinks of one blueprint position, for diagnostics. */
@@ -509,6 +535,16 @@ public final class AutoBuilderController {
             this.disconnect();
          } else if (FreecamController.enabled()) {
             this.pauseWith("Freecam is active. Disable it, then Resume.");
+         } else if (BuildRestock.active()) {
+            // The shulker box's own screen is open while restocking; it is not a reason to pause.
+            this.yielded = true;
+            if (first) {
+               String failed = BuildRestock.step(client, this);
+               this.reason = failed == null ? BuildRestock.status() : failed;
+               if (failed != null) {
+                  this.pauseWith(failed);
+               }
+            }
          } else if (client.field_1755 instanceof class_7743 editor && this.placedSignRecently()) {
             // Placing a sign opens its editor, which would pause the build: press Done for it.
             editor.method_25419();
@@ -523,6 +559,12 @@ public final class AutoBuilderController {
             this.pauseWith("Finish using the held item, then Resume.");
          } else {
             if (first) {
+               String danger = BuildTempo.danger(client);
+               if (danger != null) {
+                  this.pauseWith(danger);
+                  return;
+               }
+
                if (this.scanned) {
                   this.revalidate(client, BuildTempo.revalidate());
                }
@@ -650,7 +692,10 @@ public final class AutoBuilderController {
                            } else if (this.current.state.method_26184(client.field_1687, this.current.pos) && hasNeighborSupport(client, this.current.pos)) {
                               boolean configuring = PlacementPlanner.needsConfiguration(this.current.state, actual);
                               int slot = configuring ? client.field_1724.method_31548().method_67532() : findSlot(client, needed);
-                              if (slot < 0) {
+                              if (slot < 0 && BuildRestock.start(client, this, needed)) {
+                                 this.reason = BuildRestock.status();
+                                 this.yielded = true;
+                              } else if (slot < 0) {
                                  this.pauseWith("Missing " + needed.method_63680().getString() + ". Add materials, then Resume.");
                               } else if (slot >= 9) {
                                  int selected = client.field_1724.method_31548().method_67532();

@@ -16,6 +16,7 @@ public final class BuildPatience {
       "Cannot reach",
       "Still waiting for server confirmation",
       "No server confirmation",
+      "is nearby. Resumes when they leave",
       "Paired block",
       "Missing support",
       "Occupied or incorrect"

@@ -86,6 +86,16 @@ public final class BuildTempo extends Module {
    public final BooleanSetting pillar = new BooleanSetting("Pillar Up", true)
       .describe("When a block is too high to walk up to, jump and place dirt, cobblestone, cobbled deepslate, netherrack or "
          + "stone under yourself until it is in reach. The pillar stays unless Remove Supports is on.");
+   public final BooleanSetting restock = new BooleanSetting("Shulker Restock", false)
+      .describe("When a block runs out and a shulker box you carry holds it: place the box beside you, take what the build "
+         + "still needs, break it and pick it back up, then carry on.");
+   public final BooleanSetting lowHealth = new BooleanSetting("Pause On Low Health", true)
+      .describe("Pauses at or below Health (half hearts) or when hunger drops to Hunger, so you can heal or eat.");
+   public final NumberSetting health = new NumberSetting("Health", 2.0, 18.0, 8.0, 1.0);
+   public final NumberSetting hunger = new NumberSetting("Hunger", 0.0, 18.0, 6.0, 1.0);
+   public final BooleanSetting nearPlayers = new BooleanSetting("Pause Near Players", false)
+      .describe("Pauses while another player is within Player Radius; Auto Resume carries on once they leave.");
+   public final NumberSetting radius = new NumberSetting("Player Radius", 4.0, 96.0, 24.0, 4.0);
    public final BooleanSetting resume = new BooleanSetting("Auto Resume", true)
       .describe("Resumes after unloaded chunks, lost routes and deferred blocks.");
    public final NumberSetting delay = new NumberSetting("Retry Delay", 10.0, 200.0, 40.0, 10.0);
@@ -102,7 +112,8 @@ public final class BuildTempo extends Module {
       this.addSettings(
          new Setting[]{
             this.preset, this.steps, this.arm, this.ack, this.swap, this.settle, this.interval, this.layers, this.candidates, this.trust,
-            this.trustDelay, this.inflight, this.revalidate, this.pillar, this.resume, this.delay, this.retries
+            this.trustDelay, this.inflight, this.revalidate, this.pillar, this.restock, this.lowHealth, this.health, this.hunger, this.nearPlayers,
+            this.radius, this.resume, this.delay, this.retries
          }
       );
       this.enabled = true;
@@ -145,6 +156,7 @@ public final class BuildTempo extends Module {
       if (controller instanceof dev.donut.client.autobuild.AutoBuilderController builder) {
          try {
             SchematicGhost.sync(builder);
+            BuildMemory.tick(builder);
          } catch (LinkageError | RuntimeException ignored) {
          }
       }
@@ -237,6 +249,35 @@ public final class BuildTempo extends Module {
    /** Pillaring is the one climbing method; off restores the original walk-only builder. */
    public static boolean pillar() {
       return on() && instance.pillar.get();
+   }
+
+   public static boolean restock() {
+      return on() && instance.restock.get();
+   }
+
+   /** A reason to stop right now, or null. Checked by the builder every tick while it runs. */
+   public static String danger(net.minecraft.class_310 client) {
+      if (!on() || client.field_1724 == null || client.field_1687 == null) {
+         return null;
+      }
+      net.minecraft.class_746 player = client.field_1724;
+      if (instance.lowHealth.get() && !player.method_31549().field_7477) {
+         if (player.method_6032() <= instance.health.getDouble()) {
+            return "Low health (" + Math.round(player.method_6032()) + "). Heal, then Resume.";
+         }
+         if (player.method_7344().method_7586() <= instance.hunger.getInt()) {
+            return "Hungry (" + player.method_7344().method_7586() + "). Eat, then Resume.";
+         }
+      }
+      if (instance.nearPlayers.get()) {
+         double range = instance.radius.getDouble() * instance.radius.getDouble();
+         for (net.minecraft.class_742 other : client.field_1687.method_18456()) {
+            if (other != player && !other.method_7325() && other.method_5858(player) <= range) {
+               return "Player " + other.method_5477().getString() + " is nearby. Resumes when they leave.";
+            }
+         }
+      }
+      return null;
    }
 
    public static boolean autoResume() {
