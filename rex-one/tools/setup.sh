@@ -11,11 +11,11 @@ cd "$CACHE"
 
 fetch() { [ -s "$2" ] || curl -sSfL --retry 4 -o "$2" "$1"; }
 
+fetch https://piston-meta.mojang.com/mc/game/version_manifest_v2.json manifest.json
+URL=$(python3 -c "import json;print([v['url'] for v in json.load(open('manifest.json'))['versions'] if v['id']=='$VERSION'][0])")
+fetch "$URL" version.json
+fetch "$(python3 -c "import json;print(json.load(open('version.json'))['downloads']['client']['url'])")" client.jar
 if [ ! -s client-intermediary.jar ]; then
-  fetch https://piston-meta.mojang.com/mc/game/version_manifest_v2.json manifest.json
-  URL=$(python3 -c "import json;print([v['url'] for v in json.load(open('manifest.json'))['versions'] if v['id']=='$VERSION'][0])")
-  fetch "$URL" version.json
-  fetch "$(python3 -c "import json;print(json.load(open('version.json'))['downloads']['client']['url'])")" client.jar
   python3 - <<'PY'
 import json
 d = json.load(open('version.json'))

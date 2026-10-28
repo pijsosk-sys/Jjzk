@@ -133,6 +133,8 @@ libraries into `.cache/`. Then the build:
 
 ## In-game test
 
+The full guide, with commands, is in [HOW-I-RAN-MINECRAFT.md](HOW-I-RAN-MINECRAFT.md).
+
 `test/` holds a real in-game check, run against a real Minecraft client:
 
 1. Download the official 1.21.11 client and its libraries from Mojang, Fabric Loader 0.18.4 and
