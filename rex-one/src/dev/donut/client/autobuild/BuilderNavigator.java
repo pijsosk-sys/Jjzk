@@ -530,8 +530,11 @@ public final class BuilderNavigator {
                   private boolean checkHeadroom(BuilderPathfinder.Cell at) {
                      class_2338 pos = BuilderNavigator.pos(at);
                      if (MaterialTracker.isLoaded(client.field_1687, pos)
-                        && client.field_1687.method_8316(pos).method_15769()
+                        && (client.field_1687.method_8316(pos).method_15769() || client.field_1687.method_8320(pos).method_27852(class_2246.field_10382))
                         && client.field_1687.method_8316(pos.method_10084()).method_15769()) {
+                        // Water at the feet with the head dry is a shallow stream, waded through like
+                        // a player does: the water floor of a cactus farm cut the builder off from half
+                        // the farm. Deeper water (head under) and lava stay off the route.
                         class_2680 state = client.field_1687.method_8320(pos);
                         return !state.method_27852(class_2246.field_10036)
                               && !state.method_27852(class_2246.field_22089)

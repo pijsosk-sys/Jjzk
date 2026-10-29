@@ -55,7 +55,7 @@ def cactus_farm(W, L, layers, hopper_xs, source_xs, full_fence_lines):
             put(x, 0, z, HOPPER_S if x in hopper_xs and 0 <= z < L else FLOOR)
     for hx in hopper_xs:
         put(hx, 0, L, 'minecraft:chest[facing=north,type=single,waterlogged=false]')
-    rim_h = 4
+    rim_h = 1  # holds the water in; any higher and the builder walled itself in (no route out)
     for x in range(-1, W + 1):
         for z in range(-1, L + 1):
             if x in (-1, W) or z in (-1, L):

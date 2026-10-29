@@ -48,6 +48,11 @@ public final class SmokeDriver implements ClientModInitializer {
    private int mode = -1;
    private int phase;
    private int wait;
+   /** -Drexsmoke.farmSeconds=N: after a completed build, let it grow N seconds and count the harvest. */
+   private static final int FARM_SECONDS = Integer.getInteger("rexsmoke.farmSeconds", 0);
+   private static final int FARM_TICK_SPEED = Integer.getInteger("rexsmoke.farmTickSpeed", 300);
+   private boolean farmed;
+   private int farmWait;
    private int ticks;
    private int lastConfirmed;
    private int still;
@@ -412,6 +417,20 @@ public final class SmokeDriver implements ClientModInitializer {
                server.execute(() -> this.verified = this.verify(server.method_30002()));
                return;
             }
+            if (FARM_SECONDS > 0 && !this.farmed && builder.status() == AutoBuilderController.Status.COMPLETED) {
+               // A farm check: step away (a player picks up the drops), let plants grow fast, then
+               // count what reached the farm's containers and what is lying around.
+               this.farmed = true;
+               this.farmWait = FARM_SECONDS * 20;
+               server.execute(() -> {
+                  server.method_3734().method_44252(server.method_3739(), "tp @a -30 -59 -30");
+                  server.method_3734().method_44252(server.method_3739(), "gamerule random_tick_speed " + FARM_TICK_SPEED);
+                  server.method_3734().method_44252(server.method_3739(), "gamerule randomTickSpeed " + FARM_TICK_SPEED);
+               });
+               this.phase = 50;
+               return;
+            }
+            this.farmed = false;
             int[] result = this.verified;
             this.verified = null;
             double seconds = this.ticks / 20.0;
@@ -464,6 +483,18 @@ public final class SmokeDriver implements ClientModInitializer {
                this.phase = 30;
                this.wait = 40;
             }
+         }
+         case 50 -> {
+            if (--this.farmWait > 0) {
+               return;
+            }
+            server.execute(() -> {
+               this.log(this.farmReport(server.method_30002()));
+               server.method_3734().method_44252(server.method_3739(), "gamerule random_tick_speed 3");
+               server.method_3734().method_44252(server.method_3739(), "gamerule randomTickSpeed 3");
+               server.method_3734().method_44252(server.method_3739(), "tp @a " + (ORIGIN.method_10263() - 2) + " -59 " + (ORIGIN.method_10260() - 2));
+            });
+            this.phase = 3;
          }
          case 30 -> {
             class_318.method_22690(client.field_1697, this.viewShot, client.method_1522(), 1, message -> {});
@@ -522,6 +553,29 @@ public final class SmokeDriver implements ClientModInitializer {
       double y = (Float)oy.get(screen) + vy * (Float)scale.get(screen);
       // The hit areas are rebuilt every frame; draw one first so they exist at this point.
       screen.method_25402(new net.minecraft.class_11909(x, y, new net.minecraft.class_11910(0, 0)), false);
+   }
+
+   /** Items in the containers inside the build, and items lying loose in and around it. */
+   private String farmReport(class_3218 world) {
+      class_2338 size = this.schematic.dimensions();
+      java.util.Map<String, Integer> stored = new java.util.TreeMap<>();
+      for (class_2338 pos : class_2338.method_10097(ORIGIN, ORIGIN.method_10081(size))) {
+         if (world.method_8321(pos) instanceof net.minecraft.class_1263 inventory) {
+            for (int i = 0; i < inventory.method_5439(); i++) {
+               net.minecraft.class_1799 stack = inventory.method_5438(i);
+               if (!stack.method_7960()) {
+                  stored.merge(stack.method_7909().toString(), stack.method_7947(), Integer::sum);
+               }
+            }
+         }
+      }
+      java.util.Map<String, Integer> loose = new java.util.TreeMap<>();
+      net.minecraft.class_238 box = new net.minecraft.class_238(ORIGIN.method_10263() - 4, -64, ORIGIN.method_10260() - 4,
+         ORIGIN.method_10263() + size.method_10263() + 4, -60 + size.method_10264() + 4, ORIGIN.method_10260() + size.method_10260() + 4);
+      for (net.minecraft.class_1542 item : world.method_18023(net.minecraft.class_5575.method_31795(net.minecraft.class_1542.class), box, e -> true)) {
+         loose.merge(item.method_6983().method_7909().toString(), item.method_6983().method_7947(), Integer::sum);
+      }
+      return "  farm: after " + FARM_SECONDS + " s at random tick speed " + FARM_TICK_SPEED + ": in containers " + stored + ", lying loose " + loose;
    }
 
    private int[] verify(class_3218 world) {

@@ -1048,6 +1048,21 @@ public final class AutoBuilderController {
       }
    }
 
+   /**
+    * Shallow water (a source with no fluid of the blueprint above it, as on a cactus farm's floor)
+    * also waits for the solid blocks up to this many above it: poured first, it ran across the
+    * floor the builder walked and pillared from, and the layers above never got built.
+    */
+   private static final int SHALLOW_WAIT = 4;
+
+   private boolean shallowWater(Target target) {
+      if (!waterSource(target.state)) {
+         return false;
+      }
+      Integer above = this.indices.get(target.pos.method_10084());
+      return above == null || (this.traits[above] & FLUID) == 0;
+   }
+
    private Target chooseTarget(class_310 client) {
       Target best = null;
       double bestScore = Double.POSITIVE_INFINITY;
@@ -1089,7 +1104,7 @@ public final class AutoBuilderController {
                break;
             }
             int trait = this.trait(target);
-            if ((trait & FLUID) != 0 && target.pos.method_10264() >= lowestSolid) {
+            if ((trait & FLUID) != 0 && target.pos.method_10264() + (this.shallowWater(target) ? SHALLOW_WAIT : 0) >= lowestSolid) {
                continue;
             }
             // Lava last of all: poured while any solid block is still missing, it flows into cells
@@ -1746,6 +1761,13 @@ public final class AutoBuilderController {
    }
 
    private boolean pillarColumnFree(class_310 client, class_2338 feet, int goal) {
+      // The first pillar block is placed by clicking the ground: on a hopper, chest or furnace that
+      // click opens its menu instead, and the open menu paused a cactus farm's build.
+      class_2338 below = feet.method_10074();
+      class_2680 ground = client.field_1687.method_8320(below);
+      if (ground.method_26204() instanceof net.minecraft.class_2343 || ground.method_26196(client.field_1687, below) != null) {
+         return false;
+      }
       for (int y = feet.method_10264(); y <= goal + 2; y++) {
          class_2338 cell = new class_2338(feet.method_10263(), y, feet.method_10260());
          if (!MaterialTracker.isLoaded(client.field_1687, cell) || this.indices.containsKey(cell) || !client.field_1687.method_8320(cell).method_45474()
