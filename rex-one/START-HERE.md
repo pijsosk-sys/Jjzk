@@ -46,6 +46,71 @@ after every release.
   changed.
 - Leave no untracked files: a stop hook checks for them.
 
+## Running Minecraft (how the real game is tested)
+
+There's no emulator. It's Mojang's real 1.21.11 client with Fabric, run headless in the cloud
+container: `xvfb-run` provides a virtual screen and Mesa llvmpipe renders in software. It joins a
+flat singleplayer world, and the test mod (`test/smoke/src/rexsmoke/SmokeDriver.java`) drives Auto
+Build, then compares every block on the server with the blueprint. No Minecraft account is
+needed: it uses offline username "Smoke". Full story in `HOW-I-RAN-MINECRAFT.md`.
+
+**On a fresh container, do this once.** `.cache/`, `.runtime/` and `.work/` are gitignored, so a new chat
+starts without them:
+
+```sh
+cd rex-one
+# needs Java 21, python3, curl, zip/unzip, xvfb-run, Mesa GL (apt install openjdk-21-jdk xvfb libgl1-mesa-dri zip unzip curl python3)
+./tools/setup.sh                 # Minecraft 1.21.11 client + libraries + intermediary remap -> .cache/
+./test/runtime/setup.sh          # Fabric loader, LWJGL natives, Fabric API, game assets -> .runtime/
+./test/runtime/make-world.sh     # the flat test world -> .runtime/world
+# Vineflower (decompiler) for bytecode-only classes, if needed:
+#   curl -sSfL -o .cache/vineflower.jar https://repo1.maven.org/maven2/org/vineflower/vineflower/1.10.1/vineflower-1.10.1.jar
+```
+
+**The base jar.** `build.sh` needs an earlier REX One jar to build on. The old scratchpad copy
+(`base/one15.jar`) is gone in a new chat, so copy the committed jar first. The build writes to
+`out/`, so it must not read from there too:
+
+```sh
+cp out/REX-One-1.21.11.jar /tmp/base.jar && ./build.sh /tmp/base.jar
+```
+
+**Running a test:**
+
+```sh
+python3 test/make_builds.py /tmp/builds              # or make_house.py / make_farms.py
+GAME_DIR=/tmp/g1 test/runtime/run.sh out/REX-One-1.21.11.jar /tmp/builds/castle-gate.schem \
+  -Drexsmoke.presets=FAST,SERVER -Drexsmoke.creative=true -Drexsmoke.clean=true -Drexsmoke.maxSeconds=240
+cat /tmp/g1/rexsmoke-results.txt                     # result per preset, wrong blocks, last states
+ls /tmp/g1/screenshots/                              # pictures of the build and the screens
+```
+
+- A run takes 1–5 minutes. The game quits by itself when done.
+- Each result line looks like:
+  `FAST COMPLETED 93.6s ... server: 191/191 match ... | Complete: ...`
+  - `PAUSED` or `RUNNING` instead of `COMPLETED` means it stopped or ran out of time; the
+    "last builder states" lines show where.
+  - `builder ticks: average/worst ms` is the lag measurement.
+- `-Drexsmoke.stallSeconds=20` (the default) ends a run after 20 s without progress, and
+  `maxSeconds` is the hard limit.
+- Without `-Drexsmoke.creative=true` it runs in survival with a fixed set of materials (fits the test
+  house).
+- **If it fails at start:**
+  - "Aborted" with `liblwjgl_stb` in the log is the rare font crash: just run again.
+  - Other errors: check the log you redirected, and `GAME_DIR/logs/latest.log`.
+- `test/runtime/record.sh out.mp4 <run.sh args>` makes a video, if the user asks for one.
+
+**How the user runs it on their own PC:**
+1. Install **Fabric Loader 0.18.4+** for Minecraft 1.21.11.
+2. Put in `mods/`:
+   - `REX-One-1.21.11.jar` (the file in `out/`, sent with `SendUserFile`),
+   - **Fabric API**,
+   - **Baritone** (fabric 1.17.0).
+3. Replace the old REX jar; don't keep two.
+4. Schematics go in `.minecraft/schematics/` (`donut/` subfolder); the bundled ones install
+   themselves.
+5. The menu key opens the new menu. Auto Build is in the menu sidebar.
+
 ## Building and testing
 
 ```sh
