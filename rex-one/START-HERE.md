@@ -11,7 +11,7 @@ Paste this into the new chat:
 `rex-one/`. The user plays on **DonutSMP**. Most of the work has gone into **Auto Build**, which builds
 `.schem`/`.litematic` schematics by itself. The user also asked for a cleaner UI and a safety check.
 
-The current version is **1.0.0-one.22**. The jar is `rex-one/out/REX-One-1.21.11.jar`; send it to the user
+The current version is **1.0.0-one.23**. The jar is `rex-one/out/REX-One-1.21.11.jar`; send it to the user
 after every release.
 
 ## How to act (the user's expectations)
@@ -33,12 +33,13 @@ after every release.
 
 ## Git rules
 
-- Work and push **only** on branch `ccr-20343ee0-s6lunp`, using `git push -u origin ccr-20343ee0-s6lunp`.
+- Work and push **only** on the branch the session names (one.23 is on `ccr-bc57286a-j89fgy`; one.22 and
+  older on `ccr-20343ee0-s6lunp`). Bring the latest of these into the session's branch first.
 - **No pull requests** unless the user asks.
 - End every commit message with:
   ```
   Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
-  Claude-Session: https://claude.ai/code/session_011yj8KC2kAFYmVWdFdUVn1R
+  Claude-Session: <the session's link>
   ```
 - Never put model names in commits or files.
 - A class that only exists as bytecode is first decompiled (Vineflower, `.cache/vineflower.jar`) and
@@ -130,7 +131,8 @@ cat .runtime/game/rexsmoke-results.txt      # or $GAME_DIR/rexsmoke-results.txt
 - Profile with `-XX:StartFlightRecording=filename=x.jfr,settings=profile`, then `jfr print`.
 - **Test builds:**
   - `test/make_house.py` (house, tower, pools)
-  - `test/make_farms.py` (berry, cactus, wart)
+  - `test/make_farms.py` (berry, cactus, wart; test only since one.23)
+  - `test/make_donut.py` (the bundled DonutSMP farms and bases)
   - `test/make_builds.py` (castle gate, sky bridge, pixel art, spiral tower, garden, storage room,
     modern house)
 - Names in the code are Fabric intermediary (`class_310` = MinecraftClient). Look names up in
@@ -147,6 +149,7 @@ cat .runtime/game/rexsmoke-results.txt      # or $GAME_DIR/rexsmoke-results.txt
 | one.20 | Start always starts (missing materials set aside), 3 new farms, grown plants count as built, doors, more natural movement |
 | one.21 | **Server preset** + lag-proofing: never clicks unconfirmed blocks, repairs wrong blocks, waits after setbacks, slows down when the server refuses blocks, breaks out when walled in |
 | one.22 | **Security audit** (SECURITY.md, nothing malicious, Spotify HUD's PowerShell removed by `tools/Harden.java`); **new module menu** `OneMenuScreen` (categories, favourites, search, cards, settings panel); 7 new test builds (6 added to the library) and the fixes they found (pillaring, walled-in holes, watchdog, search budget) |
+| one.23 | DonutSMP library: simple farms out, cactus farm and spawner base small/big in (big cactus farm test-only, it stalls) (`test/make_donut.py`); farm harvest check in the test; builder wades shallow water, pours floor water last, bucket aim slack, no pillaring from containers |
 
 ## Key code
 

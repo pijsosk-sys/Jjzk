@@ -329,6 +329,7 @@ public final class SmokeDriver implements ClientModInitializer {
             }
             class_2338 size = this.schematic.dimensions();
             List<String> commands = new ArrayList<>();
+            commands.add("kill @e[type=item]");
             for (int y = -60; y <= -60 + size.method_10264() + 4; y++) {
                commands.add("fill -3 " + y + " -3 " + (size.method_10263() + 3) + " " + y + " " + (size.method_10260() + 3) + " minecraft:air");
             }
@@ -572,10 +573,14 @@ public final class SmokeDriver implements ClientModInitializer {
       java.util.Map<String, Integer> loose = new java.util.TreeMap<>();
       net.minecraft.class_238 box = new net.minecraft.class_238(ORIGIN.method_10263() - 4, -64, ORIGIN.method_10260() - 4,
          ORIGIN.method_10263() + size.method_10263() + 4, -60 + size.method_10264() + 4, ORIGIN.method_10260() + size.method_10260() + 4);
+      java.util.Map<String, Integer> where = new java.util.TreeMap<>();
       for (net.minecraft.class_1542 item : world.method_18023(net.minecraft.class_5575.method_31795(net.minecraft.class_1542.class), box, e -> true)) {
          loose.merge(item.method_6983().method_7909().toString(), item.method_6983().method_7947(), Integer::sum);
+         where.merge(item.method_24515().method_23854() + " in " + world.method_8320(item.method_24515()).method_26204().toString().replace("Block{minecraft:", "").replace("}", ""),
+            item.method_6983().method_7947(), Integer::sum);
       }
-      return "  farm: after " + FARM_SECONDS + " s at random tick speed " + FARM_TICK_SPEED + ": in containers " + stored + ", lying loose " + loose;
+      return "  farm: after " + FARM_SECONDS + " s at random tick speed " + FARM_TICK_SPEED + ": in containers " + stored + ", lying loose " + loose
+         + (where.isEmpty() ? "" : "\n  loose at " + where);
    }
 
    private int[] verify(class_3218 world) {

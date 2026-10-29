@@ -1,15 +1,29 @@
 # Handoff: start a new chat from here
 
-Everything is on branch `ccr-20343ee0-s6lunp` of `pijsosk-sys/Jjzk`, in `rex-one/`. To pick up in a
+Everything is on branch `ccr-bc57286a-j89fgy` (one.22 and older: `ccr-20343ee0-s6lunp`) of `pijsosk-sys/Jjzk`, in `rex-one/`. To pick up in a
 new chat, tell it: *"Read rex-one/HANDOFF.md, rex-one/README.md and
 rex-one/HOW-I-RAN-MINECRAFT.md, then continue."*
 
-## What exists now (version 1.0.0-one.22)
+## What exists now (version 1.0.0-one.23)
 
 **Jar:** `rex-one/out/REX-One-1.21.11.jar`. Drop it into `mods/` in place of the old jar; it
 needs Fabric Loader 0.18.4+, Fabric API and Baritone, as before.
 
 **Auto Build:**
+- **one.23:**
+  - **Library:** the simple farms (sugar cane, berry, cactus, wart) were swapped for DonutSMP
+    builds made by `test/make_donut.py`: cactus farm small (water channels, hoppers, a chest)
+    and spawner base small/big. A big cactus farm stays test-only: every layout stalled at ~80%. `UnifiedSchematics.RETIRED` deletes the old installed copies
+    only when their SHA-256 matches what was shipped. `build.sh` drops them from the base jar
+    (`retired`) and no longer duplicates entries `resources/` provides (`provided`).
+  - **Wading:** `BuilderNavigator` headroom allows water at the feet when the head cell is dry.
+  - **Floor water last:** `shallowWater` + `SHALLOW_WAIT` in `chooseTarget`. The layer window
+    starts above the held water, with a second pass without the wait if nothing else is placeable.
+  - **Bucket slack:** `BUCKET_SLACK` (1 degree) in `sendPrepared`. In a current, an exact aim
+    never came.
+  - **No pillaring from containers:** `pillarColumnFree` rejects ground with a block entity or menu.
+  - **Test:** `-Drexsmoke.farmSeconds=N` (and `farmTickSpeed`) counts the harvest after a completed
+    build, in containers and lying loose (with positions). Item entities are killed between runs.
 - **one.22:**
   - **Security audit** (SECURITY.md): nothing malicious. Spotify HUD's PowerShell calls are
     removed by `tools/Harden.java`, which runs in `build.sh` and empties any method that starts a
@@ -137,6 +151,9 @@ The full story of how the real game runs headless is in `HOW-I-RAN-MINECRAFT.md`
   baselines are each in their own commit; `git log -p` shows every change.
 
 ## Known gaps / next ideas
+
+- A big cactus farm (`test/builds/donut-cactus-farm-big.schem`) stalls at ~80% with the builder
+  stuck in a 1-wide water channel, "Moving material into the hotbar" repeating. Not diagnosed.
 
 - Never run on a real server: the lag simulator stands in for one. Some servers ban building mods
   outright; check the rules first. Use the **Server** preset there.

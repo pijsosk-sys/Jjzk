@@ -19,8 +19,8 @@ import java.util.stream.Stream;
 public final class UnifiedSchematics {
    private static final String[] DEFAULTS = new String[]{
       "starter-house.schem", "sample.schem", "kelp-blue-behemoth.litematic", "auto-regear-hendog.litematic", "kelp-compact-auto.schem",
-      // DonutSMP farms and spawner bases, small and big, made by test/make_donut.py
-      "donut-cactus-farm-small.schem", "donut-cactus-farm-big.schem", "donut-spawner-base-small.schem", "donut-spawner-base-big.schem",
+      // DonutSMP farm and spawner bases, made by test/make_donut.py
+      "donut-cactus-farm-small.schem", "donut-spawner-base-small.schem", "donut-spawner-base-big.schem",
       // Showcase builds, made by test/make_builds.py
       "castle-gate.schem", "sky-bridge.schem", "pixel-art.schem", "garden.schem", "storage-room.schem", "modern-house.schem"
    };

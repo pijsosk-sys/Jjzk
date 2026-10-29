@@ -1,6 +1,6 @@
 # REX One: faster Auto Build, climbing, water, a new builder screen and a shader
 
-Sources and tooling for REX One `1.0.0-one.22` (Minecraft 1.21.11, Fabric). The build takes the
+Sources and tooling for REX One `1.0.0-one.23` (Minecraft 1.21.11, Fabric). The build takes the
 released `1.0.0-one.13` jar, replaces or adds these classes, and adds the shader files:
 
 | Class | What changed |
@@ -19,6 +19,47 @@ released `1.0.0-one.13` jar, replaces or adds these classes, and adds the shader
 
 Classes that shipped only as bytecode were decompiled first, and each was committed unchanged
 before being edited, so `git log -p` shows exactly what changed.
+
+## New in one.23: DonutSMP farms and bases, and the builder handles farms with water floors
+
+**The library.** The simple farms are gone: sugar cane, sweet berry, cactus and nether wart
+(their old copies in `.minecraft/schematics/` are removed too, but only if you never edited them).
+In their place, what makes money on DonutSMP:
+
+| Build | What it is | Fast | Server |
+| --- | --- | --- | --- |
+| `donut-cactus-farm-small` (312) | 12 cacti, no redstone: each new cactus block grows into a fence, pops off, falls into a water channel and is carried over hoppers into a chest | complete | complete |
+| `donut-spawner-base-small` (274) | 9x9 cobbled deepslate bunker: door, bed, chests, barrels, ender chest, furnaces, anvil, 4 spawner pads | complete | complete |
+| `donut-spawner-base-big` (923) | 17x15 bunker: storage wall, furnaces, enchanting table with 15 bookshelves, a spawner hall with 12 pads, two beds | complete | slow (794/923 in the 10 min test) |
+
+The kelp farms stay and are the small and big kelp farm (`kelp-compact-auto`, 85 blocks, and
+`kelp-blue-behemoth`): kelp is still one of the best farms there. Re-tested this round:
+`kelp-compact-auto` and `castle-gate` still complete on Fast and Server. Spawners are not in the blueprints (you buy them, and they stack): stand them on the
+chiseled deepslate pads.
+
+**Does the farm farm?** The test now checks that too (`-Drexsmoke.farmSeconds=60`). After the
+build it steps away, speeds up growth and counts the harvest. Small cactus farm: 29 cactus in the
+chest and 12 lying loose after 60 s (about 70% collected). The loose ones mostly sit on the strip
+under a fence, where a drop has nowhere to roll.
+
+**Builder fixes the farms found:**
+- **It wades through shallow water.** Water at the feet with the head dry counts as walkable, as
+  it is for a player. Before, a cactus farm's water floor cut the builder off from half the farm.
+- **Floor water goes in last.** Shallow water now also waits for the blocks up to 4 above it, so
+  it no longer runs across the floor the builder walks and pillars from. If those blocks are
+  stuck, the water goes in anyway.
+- **It pours water even while the current pushes it.** A bucket may be a degree off its aim.
+  Before, the current moved the player every tick and it never poured.
+- **It never pillars from a hopper, chest or furnace.** The first pillar block is placed by
+  clicking the ground, and on a container that opened its menu and paused the build.
+
+**Not fixed:**
+- On the cactus farm it can leave a few temporary blocks it can't reach. They're listed at the
+  end; break them by hand.
+- No big cactus farm. Every big version stalled at about 80%, with the builder stuck in the narrow
+  channels: three stacked layers, 15x29, 15x13 with the water down the middle, and 15x13 mirrored.
+  It stays a test build (`test/make_donut.py` writes it to `test/builds/`).
+- Server preset on the big base: 794/923 in the 10 minute test, still going. It's just slow there.
 
 ## New in one.22: safety audit, a new menu, and seven new test builds
 

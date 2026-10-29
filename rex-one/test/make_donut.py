@@ -1,12 +1,13 @@
 """Writes the bundled DonutSMP farms and bases (Sponge v2 .schem) into resources/assets/rex/schematics/.
 Kelp, cactus and spawners are the top earners on DonutSMP. The kelp farms are already bundled
-(kelp-compact-auto, kelp-blue-behemoth), so this adds cactus farms and spawner bases, small and big.
+(kelp-compact-auto small, kelp-blue-behemoth big), so this adds a cactus farm and spawner bases.
 
 - donut-cactus-farm-small: one layer of 12 cacti. Each new cactus block grows into a fence and pops
   off, falls into a water stream, and the stream carries it over a line of hoppers into a chest.
   Needs no redstone.
-- donut-cactus-farm-big: the same idea three layers high, 120 cacti, two hopper lines and two
-  chests. Each layer's sand sits on the fence of the layer below.
+- donut-cactus-farm-big (test only, not bundled): two of the small farm's halves facing each other, 36 cacti: water from
+  both outer edges, one hopper line down the middle into a chest. A stacked three-layer farm, a
+  15x29 one and one with its water down the middle all left the builder stuck in the channels.
 - donut-spawner-base-small: a 9x9 cobbled deepslate bunker: door, bed, storage, ender chest,
   furnaces, anvil, and four marked pads (chiseled deepslate) to stand spawners on.
 - donut-spawner-base-big: a 17x15 bunker with a front room (storage wall, furnaces, an enchanting
@@ -14,7 +15,7 @@ Kelp, cactus and spawners are the top earners on DonutSMP. The kelp farms are al
 
 Spawners are not part of the blueprints (they are bought, and stack): place them on the pads.
 
-usage: make_donut.py [out_dir]"""
+usage: make_donut.py [out_dir] [test_dir]   (defaults: the bundled schematics folder, test/builds)"""
 import os, sys
 from collections import deque
 from make_builds import write
@@ -43,9 +44,9 @@ def flow(b, sources, y):
     for (x, z), level in seen.items():
         b[(x, y, z)] = f'minecraft:water[level={level}]'
 
-def cactus_farm(W, L, layers, hopper_xs, source_xs, full_fence_lines):
-    """Cacti on a checkerboard: layer 0 on (odd x, odd z), layer 1 on (even x, odd z), and so on.
-    The farm floor spans x 0..W-1, z 0..L-1 inside a glass rim, shifted by one so the rim fits."""
+def cactus_farm(W, L, hopper_xs, source_xs):
+    """Cacti on (odd x, odd z) on sand, fence lines on the even x one above each cactus, so the block it grows into touches a fence and pops off. The floor spans
+    x 0..W-1, z 0..L-1 inside a glass rim, shifted by one so the rim fits."""
     b = {}
     O = 1
     def put(x, y, z, state):
@@ -55,28 +56,30 @@ def cactus_farm(W, L, layers, hopper_xs, source_xs, full_fence_lines):
             put(x, 0, z, HOPPER_S if x in hopper_xs and 0 <= z < L else FLOOR)
     for hx in hopper_xs:
         put(hx, 0, L, 'minecraft:chest[facing=north,type=single,waterlogged=false]')
-    rim_h = 1  # holds the water in; any higher and the builder walled itself in (no route out)
+    # The rim is one high so the builder can step in and out; a 4-high wall shut it in.
     for x in range(-1, W + 1):
         for z in range(-1, L + 1):
             if x in (-1, W) or z in (-1, L):
-                for y in range(1, rim_h + 1):
-                    put(x, y, z, GLASS)
-    A = [(x, z) for x in range(1, W - 1, 2) for z in range(1, L - 1, 2)]
-    B = [(x, z) for x in range(2, W - 2, 2) for z in range(1, L - 1, 2)]
-    for x, z in A:
-        put(x, 1, z, 'minecraft:cobblestone')  # holds the sand up out of the water
-    for layer in range(layers):
-        base = 2 + 3 * layer  # sand at base, cactus at base+1, fences at base+2
-        cells = A if layer % 2 == 0 else B
-        for x, z in cells:
-            put(x, base, z, 'minecraft:sand')
-            put(x, base + 1, z, 'minecraft:cactus[age=0]')
-        # fences beside every cell a cactus grows into
-        fence_x = range(0, W, 2) if layer % 2 == 0 else range(1, W - 1, 2)
-        for x in fence_x:
-            for z in (range(0, L) if full_fence_lines else range(1, L - 1, 2)):
-                put(x, base + 2, z, FENCE)
-    flow(b, [(x + O, z + O) for x in source_xs for z in range(L) if (x + O, 1, z + O) not in b], 1)
+                put(x, 1, z, GLASS)
+    # Cactus rows on solid strips (odd z), straight water channels between them (even z). With
+    # posts under each sand block instead, the water between two posts stood still and held the
+    # drops; a cactus only minds what is beside it at its own height, so the strip can be solid.
+    for z in range(1, L - 1, 2):
+        for x in range(1, W - 1):
+            if x not in hopper_xs:
+                put(x, 1, z, 'minecraft:cobblestone')
+                put(x, 2, z, 'minecraft:sand' if x % 2 else 'minecraft:cobblestone')
+                if x % 2:
+                    put(x, 3, z, 'minecraft:cactus[age=0]')
+    for x in range(0, W, 2):
+        for z in range(L):
+            put(x, 4, z, FENCE)
+        # A glass post at each end of a fence line to place it from: nothing may stand beside a
+        # cactus, so a floating line had nowhere for a temporary block.
+        for z in (-1, L):
+            for y in (2, 3, 4):
+                put(x, y, z, GLASS)
+    flow(b, [(x + O, z + O) for x in source_xs for z in range(0, L, 2)], 1)
     return b
 
 def bunker(W, L, H, wall, floor, roof):
@@ -160,12 +163,17 @@ def spawner_base_big():
 
 if __name__ == '__main__':
     out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'resources', 'assets', 'rex', 'schematics')
-    os.makedirs(out, exist_ok=True)
-    builds = {
-        'donut-cactus-farm-small': lambda: cactus_farm(8, 9, 1, hopper_xs=(0,), source_xs=(7,), full_fence_lines=True),
-        'donut-cactus-farm-big': lambda: cactus_farm(15, 13, 3, hopper_xs=(0, 14), source_xs=(7,), full_fence_lines=False),
+    tests = sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(os.path.abspath(__file__)), 'builds')
+    bundled = {
+        'donut-cactus-farm-small': lambda: cactus_farm(8, 9, hopper_xs=(0,), source_xs=(7,)),
         'donut-spawner-base-small': spawner_base_small,
         'donut-spawner-base-big': spawner_base_big,
     }
-    for name, make in builds.items():
-        write(os.path.join(out, name + '.schem'), make())
+    # Not bundled: the builder still gets stuck in it at about 80% (see README, one.23).
+    test_only = {
+        'donut-cactus-farm-big': lambda: cactus_farm(15, 13, hopper_xs=(7,), source_xs=(0, 14)),
+    }
+    for folder, builds in ((out, bundled), (tests, test_only)):
+        os.makedirs(folder, exist_ok=True)
+        for name, make in builds.items():
+            write(os.path.join(folder, name + '.schem'), make())

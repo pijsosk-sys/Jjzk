@@ -1064,6 +1064,12 @@ public final class AutoBuilderController {
    }
 
    private Target chooseTarget(class_310 client) {
+      Target best = this.chooseTarget(client, true);
+      // Nothing else left to place (the blocks above it are stuck): the shallow water goes in after all.
+      return best != null ? best : this.chooseTarget(client, false);
+   }
+
+   private Target chooseTarget(class_310 client, boolean waitShallow) {
       Target best = null;
       double bestScore = Double.POSITIVE_INFINITY;
       if (this.work.isEmpty()) {
@@ -1087,6 +1093,11 @@ public final class AutoBuilderController {
             }
          }
          boolean solidsLeft = lowestSolid != Integer.MAX_VALUE;
+         if (waitShallow && solidsLeft && this.work.first().pos.method_10264() < lowestSolid && this.shallowWater(this.work.first())) {
+            // The layer window starts above the held water, or it held only water and the blocks the
+            // water waits for were never in it.
+            minimumY = lowestSolid;
+         }
          // Materials already in the hotbar: a block of one of those costs no inventory shuffle.
          Set<class_1792> hotbar = new HashSet<>();
          for (int slot = 0; slot < 9; slot++) {
@@ -1104,7 +1115,7 @@ public final class AutoBuilderController {
                break;
             }
             int trait = this.trait(target);
-            if ((trait & FLUID) != 0 && target.pos.method_10264() + (this.shallowWater(target) ? SHALLOW_WAIT : 0) >= lowestSolid) {
+            if ((trait & FLUID) != 0 && target.pos.method_10264() + (waitShallow && this.shallowWater(target) ? SHALLOW_WAIT : 0) >= lowestSolid) {
                continue;
             }
             // Lava last of all: poured while any solid block is still missing, it flows into cells
@@ -1458,6 +1469,14 @@ public final class AutoBuilderController {
       }
    }
 
+   /**
+    * How far off, in degrees, the last sent look may be from a bucket's aim. Standing in flowing
+    * water the current moves the player every tick, the aim is worked out again from there, and an
+    * exact match never came: the builder turned, slid, turned again and never poured. A bucket aims
+    * at the middle of a whole floor face, so a degree either way still lands on it.
+    */
+   private static final float BUCKET_SLACK = 1.0F;
+
    private void sendPrepared(class_310 client) {
       Prepared action = this.prepared;
       this.prepared = null;
@@ -1502,8 +1521,8 @@ public final class AutoBuilderController {
                this.prepared = new Prepared(this.current, plan, this.tick + 1);
                this.reason = "Waiting for the server to confirm the block at " + coordinates(clicked);
                this.yielded = true;
-            } else if (!(Math.abs(class_3532.method_15393(sent.donut$lastSentYaw() - plan.yaw())) > 0.001F)
-               && !(Math.abs(sent.donut$lastSentPitch() - plan.pitch()) > 0.001F)
+            } else if (!(Math.abs(class_3532.method_15393(sent.donut$lastSentYaw() - plan.yaw())) > (bucket ? BUCKET_SLACK : 0.001F))
+               && !(Math.abs(sent.donut$lastSentPitch() - plan.pitch()) > (bucket ? BUCKET_SLACK : 0.001F))
                && sent.donut$lastSentInput() != null
                && sent.donut$lastSentInput().comp_3164() == sneak) {
                this.send(client, this.current, plan);
