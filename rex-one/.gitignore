@@ -1,3 +1,5 @@
 .cache/
 .work/
 .runtime/
+test/builds/
+__pycache__/

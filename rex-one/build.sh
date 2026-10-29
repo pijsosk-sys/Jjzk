@@ -5,7 +5,7 @@
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 BASE=${1:?usage: build.sh <base REX-One jar>}
-VERSION=1.0.0-one.22
+VERSION=1.0.0-one.23
 CACHE="$HERE/.cache"
 WORK="${REX_WORK:-$HERE/.work}"
 OUT="${REX_OUT:-$HERE/out/REX-One-1.21.11.jar}"
@@ -37,12 +37,16 @@ def owned(name):
 with zipfile.ZipFile(base) as zin, zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as zout:
     dropped = 0
     shipped = {'one-client-source/src/' + p.relative_to(src).as_posix() for p in src.rglob('*.java')}
+    # Files resources/ provides replace the base jar's copies (a base built by an earlier round has them too).
+    provided = {p.relative_to(Path(src).parent / 'resources').as_posix() for p in (Path(src).parent / 'resources').rglob('*') if p.is_file()}
+    # Bundled schematics no longer shipped (one.23 swapped the simple farms for DonutSMP farms and bases).
+    retired = {'assets/rex/schematics/' + n for n in ('sugar-cane-farm.schem', 'sweet-berry-farm.schem', 'cactus-farm.schem', 'nether-wart-farm.schem')}
     for item in zin.infolist():
         name = item.filename
         if name.endswith('.class') and owned(name):
             dropped += 1
             continue
-        if name in shipped or name.startswith('assets/rex/post_effect/') or name.startswith('assets/rex/shaders/post/'):
+        if name in shipped or name in provided or name in retired or name.startswith('assets/rex/post_effect/') or name.startswith('assets/rex/shaders/post/'):
             continue
         data = zin.read(name)
         if name == 'fabric.mod.json':

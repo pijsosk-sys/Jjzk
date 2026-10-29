@@ -220,8 +220,9 @@ def modern_house():
     b[(6, 2, 1)] = 'minecraft:spruce_planks'
     return b
 
-out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), 'builds')
-os.makedirs(out, exist_ok=True)
-for name, make in (('castle-gate', castle_gate), ('sky-bridge', sky_bridge), ('pixel-art', pixel_art), ('spiral-tower', spiral_tower),
-                   ('garden', garden), ('storage-room', storage_room), ('modern-house', modern_house)):
-    write(os.path.join(out, name + '.schem'), make())
+if __name__ == '__main__':
+    out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), 'builds')
+    os.makedirs(out, exist_ok=True)
+    for name, make in (('castle-gate', castle_gate), ('sky-bridge', sky_bridge), ('pixel-art', pixel_art), ('spiral-tower', spiral_tower),
+                       ('garden', garden), ('storage-room', storage_room), ('modern-house', modern_house)):
+        write(os.path.join(out, name + '.schem'), make())

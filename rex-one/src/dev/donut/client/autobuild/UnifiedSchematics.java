@@ -7,7 +7,10 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileAttribute;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Comparator;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.CompletionException;
@@ -15,14 +18,36 @@ import java.util.stream.Stream;
 
 public final class UnifiedSchematics {
    private static final String[] DEFAULTS = new String[]{
-      "starter-house.schem", "sample.schem", "sugar-cane-farm.schem", "kelp-blue-behemoth.litematic", "auto-regear-hendog.litematic", "kelp-compact-auto.schem",
-      // Farms that need no tilled soil, made by test/make_farms.py
-      "sweet-berry-farm.schem", "cactus-farm.schem", "nether-wart-farm.schem",
+      "starter-house.schem", "sample.schem", "kelp-blue-behemoth.litematic", "auto-regear-hendog.litematic", "kelp-compact-auto.schem",
+      // DonutSMP farms and spawner bases, small and big, made by test/make_donut.py
+      "donut-cactus-farm-small.schem", "donut-cactus-farm-big.schem", "donut-spawner-base-small.schem", "donut-spawner-base-big.schem",
       // Showcase builds, made by test/make_builds.py
       "castle-gate.schem", "sky-bridge.schem", "pixel-art.schem", "garden.schem", "storage-room.schem", "modern-house.schem"
    };
 
+   /** Simple farms bundled up to one.22, with the SHA-256 of the copy that was installed. */
+   private static final String[][] RETIRED = new String[][]{
+      {"sugar-cane-farm.schem", "09a2433a9f0e112e26e6c4db1d39dc559dca81397e2e4c99b50549059d43e839"},
+      {"sweet-berry-farm.schem", "aee80a3d207aa1bc00aac017d5d67c255b392aea07836448427c2e1b586bb77a"},
+      {"cactus-farm.schem", "d3cb079be615054202275e95ce2722695e36c74be145258c61886bbefedebda7"},
+      {"nether-wart-farm.schem", "07638c88e4c9e32da17bcbf4a925a94ee155ff1bbe92e19c19ef349eebcf550b"}
+   };
+
    private UnifiedSchematics() {
+   }
+
+   /** Removes a retired farm only if it is still the untouched copy this mod installed; edited ones stay. */
+   private static void retire(Path var0, String var1, String var2) {
+      Path var3 = var0.resolve(var1);
+      try {
+         if (Files.isRegularFile(var3, LinkOption.NOFOLLOW_LINKS) && Files.size(var3) < 65536) {
+            byte[] var4 = MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(var3));
+            if (HexFormat.of().formatHex(var4).equals(var2)) {
+               Files.delete(var3);
+            }
+         }
+      } catch (IOException | NoSuchAlgorithmException var5) {
+      }
    }
 
    private static void install(Path var0, String var1) throws IOException {
@@ -55,6 +80,10 @@ public final class UnifiedSchematics {
          } else {
             for (String var5 : DEFAULTS) {
                install(var1, var5);
+            }
+
+            for (String[] var14 : RETIRED) {
+               retire(var1, var14[0], var14[1]);
             }
 
             List<Path> var13;

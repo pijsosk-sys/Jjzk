@@ -1,5 +1,6 @@
-"""Writes the bundled farm schematics (Sponge v2 .schem) into resources/assets/rex/schematics/.
-usage: make_farms.py [out_dir]
+"""Writes three small farm test builds (Sponge v2 .schem). They were bundled up to one.22; one.23 took
+them out of the library for the DonutSMP farms (make_donut.py), and they stay as tests for grown plants.
+usage: make_farms.py [out_dir]   (default: test/builds next to this file)
 - sweet-berry-farm: rows of grown berry bushes on grass with stone brick walkways between them, so
   the builder never has to walk through a thorn bush, inside a cobblestone rim.
 - cactus-farm: a sand floor with three-high cacti on every other cell both ways, the spacing a
@@ -89,7 +90,7 @@ def nether_wart_farm():
                 b[(x, 0, z)] = 'minecraft:stone_bricks'
     return (W, H, L), b
 
-out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(__file__), '..', 'resources', 'assets', 'rex', 'schematics')
+out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), 'builds')
 os.makedirs(out, exist_ok=True)
 for name, make in (('sweet-berry-farm', sweet_berry_farm), ('cactus-farm', cactus_farm), ('nether-wart-farm', nether_wart_farm)):
     size, blocks = make()
