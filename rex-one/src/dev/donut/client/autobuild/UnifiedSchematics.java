@@ -15,7 +15,9 @@ import java.util.stream.Stream;
 
 public final class UnifiedSchematics {
    private static final String[] DEFAULTS = new String[]{
-      "starter-house.schem", "sample.schem", "sugar-cane-farm.schem", "kelp-blue-behemoth.litematic", "auto-regear-hendog.litematic", "kelp-compact-auto.schem"
+      "starter-house.schem", "sample.schem", "sugar-cane-farm.schem", "kelp-blue-behemoth.litematic", "auto-regear-hendog.litematic", "kelp-compact-auto.schem",
+      // Farms that need no tilled soil, made by test/make_farms.py
+      "sweet-berry-farm.schem", "cactus-farm.schem", "nether-wart-farm.schem"
    };
 
    private UnifiedSchematics() {

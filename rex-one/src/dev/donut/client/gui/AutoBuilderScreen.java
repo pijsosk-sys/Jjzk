@@ -572,6 +572,9 @@ public final class AutoBuilderScreen extends class_437 {
          if (this.commitCoordinates()) {
             if (this.builder.isRunning()) {
                this.builder.pause();
+            } else if (!this.builder.hasAnyMaterial(this.field_22787)) {
+               // Closing the screen into an instant "Missing ..." pause looked like Start did nothing.
+               this.message = "You carry none of the materials this build needs. Open Materials for the list.";
             } else {
                this.field_22787.method_1507(null);
                if (this.builder.status() == AutoBuilderController.Status.PAUSED) {

@@ -58,6 +58,8 @@ public final class SmokeDriver implements ClientModInitializer {
    private static final String[] SHOTS = {"OFF", "SOFT", "TUFF", "VIVID", "OFF"};
    private int shot;
    private String viewShot;
+   private List<java.nio.file.Path> library;
+   private String startingFile = "";
    private String pendingShot;
    private int pendingShotAt;
    private int afterView;
@@ -109,8 +111,85 @@ public final class SmokeDriver implements ClientModInitializer {
             if (hasPresets() && (System.getProperty("rexsmoke.presets", "").isEmpty() || System.getProperty("rexsmoke.presets").toUpperCase(Locale.ROOT).contains("OFF"))) {
                this.modes.add("OFF");
             }
-            this.phase = Boolean.getBoolean("rexsmoke.ui") ? 20 : 1;
+            this.phase = Boolean.getBoolean("rexsmoke.starts") ? 40 : Boolean.getBoolean("rexsmoke.ui") ? 20 : 1;
             this.wait = 60;
+         }
+         case 40 -> {
+            // -Drexsmoke.starts=true: every schematic in the library, started with the screen's own
+            // Start button, as a player does; logs what the builder is doing two seconds later.
+            if (this.library == null) {
+               java.nio.file.Path folder = client.field_1697.toPath().resolve("schematics").resolve("donut");
+               this.library = new ArrayList<>(UnifiedSchematics.list(folder));
+               this.log("library: " + this.library.size() + " files");
+               if (CREATIVE) {
+                  server.execute(() -> server.method_3734().method_44252(server.method_3739(), "gamemode creative @a"));
+                  AutoBuilderSettings settings = new AutoBuilderSettings();
+                  settings.creativeMode = true;
+                  CreativeBuildMode.configure(settings);
+               } else {
+                  // Survival: a stack of a few common blocks, so builds using them start and the
+                  // rest show why they cannot.
+                  for (String item : new String[]{"cobblestone", "spruce_planks", "sand"}) {
+                     server.execute(() -> server.method_3734().method_44252(server.method_3739(), "give @a " + item + " 64"));
+                  }
+               }
+            }
+            if (this.library.isEmpty()) {
+               this.finish(client);
+               return;
+            }
+            java.nio.file.Path file = this.library.remove(0);
+            this.startingFile = file.getFileName().toString();
+            try {
+               Schematic loaded = UnifiedSchematics.load(file);
+               AutoBuilderController.get().cancel();
+               AutoBuilderController.get().setSchematic(loaded);
+               AutoBuilderController.get().setTransform(new PlacementTransform(client.field_1724.method_24515().method_10069(3, 0, 3), 0, false));
+            } catch (Exception failure) {
+               this.log(String.format(Locale.ROOT, "%-34s does not load: %s", this.startingFile, failure.getMessage()));
+               this.wait = 5;
+               return;
+            }
+            client.method_1507(new AutoBuilderScreen(null, new ClientConfig(), () -> {}));
+            this.phase = 41;
+            this.wait = 20;
+         }
+         case 41 -> {
+            Field hitsField = AutoBuilderScreen.class.getDeclaredField("hits");
+            hitsField.setAccessible(true);
+            boolean pressed = false;
+            for (Object hit : (List<?>)hitsField.get(client.field_1755)) {
+               Method id = hit.getClass().getDeclaredMethod("id");
+               id.setAccessible(true);
+               if ("start".equals(id.invoke(hit))) {
+                  Method action = hit.getClass().getDeclaredMethod("action");
+                  action.setAccessible(true);
+                  ((Runnable)action.invoke(hit)).run();
+                  pressed = true;
+               }
+            }
+            if (!pressed) {
+               this.log(String.format(Locale.ROOT, "%-34s Start button not clickable (disabled)", this.startingFile));
+               client.method_1507(null);
+               this.phase = 40;
+               this.wait = 5;
+               return;
+            }
+            this.phase = 42;
+            this.wait = 40;
+         }
+         case 42 -> {
+            AutoBuilderController builder = AutoBuilderController.get();
+            this.log(String.format(Locale.ROOT, "%-34s %-9s %d/%d  %s", this.startingFile, builder.status(), builder.confirmedBlocks(), builder.totalBlocks(), builder.reason()));
+            if (client.field_1755 instanceof AutoBuilderScreen) {
+               Field message = AutoBuilderScreen.class.getDeclaredField("message");
+               message.setAccessible(true);
+               this.log(String.format(Locale.ROOT, "%-34s screen says: %s", "", message.get(client.field_1755)));
+            }
+            builder.cancel();
+            client.method_1507(null);
+            this.phase = 40;
+            this.wait = 10;
          }
          case 20 -> {
             // -Drexsmoke.ui=true: the module menu and the Custom speed editor, screenshotted, then quit.

@@ -41,7 +41,12 @@ public final class BuilderNavigator {
    private double walkReach = 4.25;
    private boolean fullReach;
    private boolean standing;
+   private static final java.util.Random DRIFT = new java.util.Random();
+   private float driftYaw;
+   private float driftPitch;
    private java.util.function.Predicate<class_2338> placeable;
+   /** When a door was last clicked: the server needs a moment to answer, or a second click undoes it. */
+   private long doorClicked;
    private int progressIndex = -1;
    private double progressGap = Double.POSITIVE_INFINITY;
 
@@ -154,7 +159,7 @@ public final class BuilderNavigator {
 
    public void rejectCurrent(class_310 client) {
       if (client.field_1724 != null) {
-         this.rejectedGoals.add(cell(client.field_1724.method_24515()));
+         this.rejectedGoals.add(feetCell(client.field_1724));
       }
 
       this.replan();
@@ -184,7 +189,7 @@ public final class BuilderNavigator {
             this.replan();
          }
 
-         BuilderPathfinder.Cell feet = cell(client.field_1724.method_24515());
+         BuilderPathfinder.Cell feet = feetCell(client.field_1724);
          java.util.function.Predicate<BuilderPathfinder.Cell> arrived = stand
             ? at -> at.equals(cell(destination))
             : at -> this.goal(client, at, destination);
@@ -213,8 +218,15 @@ public final class BuilderNavigator {
                this.replan();
                return BuilderNavigator.Result.MOVING;
             }
+            class_2338 door = this.closedDoorAhead(client);
+            if (door != null && this.openDoor(client, door)) {
+               this.stalled = 0;
+               return BuilderNavigator.Result.MOVING;
+            }
             class_243 aim = new class_243(next.x() + 0.5, next.y(), next.z() + 0.5);
-            if (client.field_1724.method_73189().method_1025(aim) < 0.16) {
+            class_243 at = client.field_1724.method_73189();
+            // Across the ground only: on a slab the feet are half a block under the cell's floor.
+            if (Math.pow(at.field_1352 - aim.field_1352, 2) + Math.pow(at.field_1350 - aim.field_1350, 2) < 0.16 && Math.abs(at.field_1351 - aim.field_1351) < 0.6) {
                this.index++;
                if (this.index >= this.route.size()) {
                   this.replan();
@@ -235,7 +247,14 @@ public final class BuilderNavigator {
                // down for a drop and up for a climb instead of holding one fixed angle.
                BuilderPathfinder.Cell ahead = this.route.get(Math.min(this.route.size() - 1, this.index + 2));
                float[] look = BuilderLook.anglesTo(client.field_1724, ahead.x() + 0.5, ahead.y() + 0.3, ahead.z() + 0.5);
-               BuilderLook.toward(client.field_1724, (float)Math.toDegrees(Math.atan2(-delta.field_1352, delta.field_1350)), class_3532.method_15363(look[1], 4.0F, 38.0F));
+               // A slow wander of a few degrees: nobody walks holding the mouse dead still.
+               this.driftYaw = class_3532.method_15363(this.driftYaw + (float)(DRIFT.nextGaussian() * 0.35) - this.driftYaw * 0.04F, -3.5F, 3.5F);
+               this.driftPitch = class_3532.method_15363(this.driftPitch + (float)(DRIFT.nextGaussian() * 0.25) - this.driftPitch * 0.05F, -2.5F, 2.5F);
+               BuilderLook.toward(
+                  client.field_1724,
+                  (float)Math.toDegrees(Math.atan2(-delta.field_1352, delta.field_1350)) + this.driftYaw,
+                  class_3532.method_15363(look[1] + this.driftPitch, 4.0F, 38.0F)
+               );
             } else {
                float[] look = BuilderLook.anglesTo(
                   client.field_1724, destination.method_10263() + 0.5, destination.method_10264() + 0.5, destination.method_10260() + 0.5
@@ -327,7 +346,7 @@ public final class BuilderNavigator {
                return canClickFrom(client, eye, destination, reach) && (this.placeable == null || this.placeable.test(pos(at)));
             } else {
                class_3965 hit = client.field_1687
-                  .method_17742(new class_3959(eye, class_243.method_24953(destination), class_3960.field_17558, class_242.field_1348, client.field_1724));
+                  .method_17742(new class_3959(eye, class_243.method_24953(destination), class_3960.field_17559, class_242.field_1348, client.field_1724));
                return hit.method_17783() == class_240.field_1333 || hit.method_17777().equals(destination);
             }
          }
@@ -378,7 +397,7 @@ public final class BuilderNavigator {
                continue;
             }
             class_243 inside = point.method_1019(class_243.method_24954(direction.method_62675()).method_1021(0.002));
-            class_3965 hit = client.field_1687.method_17742(new class_3959(eye, inside, class_3960.field_17558, class_242.field_1348, client.field_1724));
+            class_3965 hit = client.field_1687.method_17742(new class_3959(eye, inside, class_3960.field_17559, class_242.field_1348, client.field_1724));
             if (hit.method_17783() == class_240.field_1332 && hit.method_17777().equals(neighbor) && hit.method_17780() == direction.method_10153()) {
                return true;
             }
@@ -430,7 +449,7 @@ public final class BuilderNavigator {
                               && !ground.method_27852(class_2246.field_23860)
                               && !ground.method_27852(class_2246.field_10029)
                               && !ground.method_27852(class_2246.field_27879)
-                              && ground.method_26234(client.field_1687, pos.method_10074())
+                              && solidFooting(client, ground, pos.method_10074())
                            ? this.headroom(at)
                            : false;
                      } else {
@@ -477,10 +496,27 @@ public final class BuilderNavigator {
       if (client.field_1724 == null || client.field_1687 == null) {
          return out;
       }
-      for (BuilderPathfinder.Cell at : BuilderPathfinder.explore(cell(client.field_1724.method_24515()), terrain(client), budget, 96, maxDrop(client.field_1724))) {
+      for (BuilderPathfinder.Cell at : BuilderPathfinder.explore(feetCell(client.field_1724), terrain(client), budget, 96, maxDrop(client.field_1724))) {
          out.add(pos(at));
       }
       return out;
+   }
+
+   /**
+    * Ground the player can stand on: a full block, or one with a top at least half height across the
+    * whole square, as slabs, stairs, soul sand, farmland and path blocks have. Full blocks only made
+    * the walkways of a nether wart farm into islands, and left a slab roof with nowhere to stand.
+    */
+   private static boolean solidFooting(class_310 client, class_2680 ground, class_2338 pos) {
+      if (ground.method_26234(client.field_1687, pos)) {
+         return true;
+      }
+      class_265 shape = ground.method_26220(client.field_1687, pos);
+      if (shape.method_1110()) {
+         return false;
+      }
+      class_238 box = shape.method_1107();
+      return box.field_1325 >= 0.5 && box.field_1323 <= 0.0 && box.field_1321 <= 0.0 && box.field_1320 >= 1.0 && box.field_1324 >= 1.0;
    }
 
    /** Whether a planned route cell still has room for the player's body. */
@@ -501,7 +537,12 @@ public final class BuilderNavigator {
    private static boolean bodyFits(class_310 client, BuilderPathfinder.Cell at) {
       for (int dy = 0; dy <= 1; dy++) {
          class_2338 pos = new class_2338(at.x(), at.y() + dy, at.z());
-         class_265 shape = client.field_1687.method_8320(pos).method_26220(client.field_1687, pos);
+         class_2680 state = client.field_1687.method_8320(pos);
+         if (openable(state)) {
+            // Opened on the way through, as a player does.
+            continue;
+         }
+         class_265 shape = state.method_26220(client.field_1687, pos);
          if (shape.method_1110()) {
             continue;
          }
@@ -511,9 +552,87 @@ public final class BuilderNavigator {
             if (box.field_1320 > 0.2 && box.field_1323 < 0.8 && box.field_1324 > 0.2 && box.field_1321 < 0.8 && box.field_1325 > bottom && box.field_1322 < top) {
                return false;
             }
+            // A door, closed trapdoor or gate: a thin panel right across one edge. The body fits beside
+            // it, but nobody walks through it, and the player hopped against a closed door forever.
+            boolean acrossX = box.field_1323 <= 0.05 && box.field_1320 >= 0.95;
+            boolean acrossZ = box.field_1321 <= 0.05 && box.field_1324 >= 0.95;
+            if ((acrossX || acrossZ) && box.field_1325 > bottom && box.field_1322 < top && box.field_1325 - box.field_1322 > 0.5) {
+               return false;
+            }
          }
       }
       return true;
+   }
+
+   /** A door that opens by hand, or a fence gate. */
+   private static boolean openable(class_2680 state) {
+      return state.method_26204() instanceof net.minecraft.class_2323 && net.minecraft.class_2323.method_24796(state)
+         || state.method_26204() instanceof net.minecraft.class_2349;
+   }
+
+   private static boolean closed(class_2680 state) {
+      return state.method_26204() instanceof net.minecraft.class_2323
+         ? !state.method_11654(net.minecraft.class_2323.field_10945)
+         : !state.method_11654(net.minecraft.class_2349.field_11026);
+   }
+
+   /** A closed door or gate in the next two route cells, or null. */
+   private class_2338 closedDoorAhead(class_310 client) {
+      for (int i = this.index; i < Math.min(this.route.size(), this.index + 2); i++) {
+         BuilderPathfinder.Cell at = this.route.get(i);
+         for (int dy = 0; dy <= 1; dy++) {
+            class_2338 pos = new class_2338(at.x(), at.y() + dy, at.z());
+            class_2680 state = client.field_1687.method_8320(pos);
+            if (openable(state) && closed(state)) {
+               // A door opens from either half; click the lower one.
+               return state.method_26204() instanceof net.minecraft.class_2323 && dy == 1 && openable(client.field_1687.method_8320(pos.method_10074())) ? pos.method_10074() : pos;
+            }
+         }
+      }
+      return null;
+   }
+
+   /** Turns to the door and opens it. True while that holds up the walk. */
+   private boolean openDoor(class_310 client, class_2338 door) {
+      class_746 player = client.field_1724;
+      class_243 center = class_243.method_24953(door);
+      if (player.method_33571().method_1025(center) > 3.5 * 3.5) {
+         return false;
+      }
+      this.steering.side = 0.0F;
+      this.steering.ahead = 0.0F;
+      this.steering.jump = false;
+      this.steering.sprint = false;
+      this.steering.method_3129();
+      this.clickDoor(client, door);
+      return true;
+   }
+
+   /** Turns to the door and, once facing it, clicks it. True on the tick it was clicked. */
+   public boolean clickDoor(class_310 client, class_2338 door) {
+      class_746 player = client.field_1724;
+      class_243 center = class_243.method_24953(door);
+      float[] look = BuilderLook.anglesTo(player, center.field_1352, center.field_1351, center.field_1350);
+      if (!BuilderLook.toward(player, look[0], look[1]) || System.currentTimeMillis() - this.doorClicked < 700L) {
+         return false;
+      }
+      class_243 from = player.method_33571().method_1020(center);
+      class_2350 side = Math.abs(from.field_1352) > Math.abs(from.field_1350)
+         ? (from.field_1352 > 0 ? class_2350.field_11034 : class_2350.field_11039)
+         : (from.field_1350 > 0 ? class_2350.field_11035 : class_2350.field_11043);
+      client.field_1761.method_2896(player, net.minecraft.class_1268.field_5808, new class_3965(center, side, door, false));
+      player.method_6104(net.minecraft.class_1268.field_5808);
+      this.doorClicked = System.currentTimeMillis();
+      return true;
+   }
+
+   /**
+    * The cell the player stands in. On a slab, stair or soul sand the feet are partway into the
+    * block below that cell, so on the ground the height is rounded rather than floored.
+    */
+   private static BuilderPathfinder.Cell feetCell(class_746 player) {
+      double y = player.method_24828() ? Math.floor(player.method_23318() + 0.5) : Math.floor(player.method_23318());
+      return new BuilderPathfinder.Cell(class_3532.method_15357(player.method_23317()), (int)y, class_3532.method_15357(player.method_23321()));
    }
 
    private static BuilderPathfinder.Cell cell(class_2338 p) {

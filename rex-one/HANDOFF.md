@@ -1,15 +1,25 @@
 # Handoff: start a new chat from here
 
-Everything is on branch `claude/yo-b2792p` of `pijsosk-sys/Jjzk`, in `rex-one/`. To pick up in a
+Everything is on branch `ccr-20343ee0-s6lunp` of `pijsosk-sys/Jjzk`, in `rex-one/`. To pick up in a
 new chat, tell it: *"Read rex-one/HANDOFF.md, rex-one/README.md and
 rex-one/HOW-I-RAN-MINECRAFT.md, then continue."*
 
-## What exists now (version 1.0.0-one.19)
+## What exists now (version 1.0.0-one.20)
 
 **Jar:** `rex-one/out/REX-One-1.21.11.jar`. Drop it into `mods/` in place of the old jar; it
 needs Fabric Loader 0.18.4+, Fabric API and Baritone, as before.
 
 **Auto Build:**
+- **one.20:** Start always starts: blocks with no material are set aside and built when the item
+  turns up, with a full missing list at the end (`setAsideMissing`, `checkMissing`,
+  `missingSummary`). If you carry none of the materials, the screen says so. Grown plants and
+  stair shapes count as built (`MaterialTracker.growthOnly`). Sight lines use the block outline
+  (cactus and soul sand were unreachable). Doors and gates are opened on the way through and shut
+  at the end (`shutDoors`, `BuilderNavigator.clickDoor`), and no support goes beside a cactus or
+  door (`keepClear`). Slabs and stairs count as ground (`feetCell`, `solidFooting`). Three new
+  bundled farms: sweet berry, cactus, nether wart (`test/make_farms.py`). Natural look: easing,
+  turn wobble, random aim among near-best points, and walk drift. The test house completes for
+  the first time.
 - **one.19:** no stutter on placement (pathfinder collision checks cached and direct, pillar spot
   search sorted and limited to reachable spots: average tick 3.8 -> 0.8 ms), Fast turns 120°/tick
   (9.6 blocks/s on the big farm), and the materials list no longer counts flowing fluids or shows
@@ -75,6 +85,10 @@ Driver options:
 - `-Drexsmoke.ui=true` screenshots the module menu, the builder screen and the Custom editor, then quits.
 - `-Drexsmoke.maxSeconds=N` and `-Drexsmoke.stallSeconds=N` set the time limits.
 - `GAME_DIR=...` runs two games side by side.
+- `-Drexsmoke.starts=true` presses the builder screen's real Start on every library file and logs
+  what happened (and the screen's message). Add `creative=true` for creative.
+- `python3 test/make_farms.py` regenerates the bundled farm schematics.
+- Run at most two games at once: four starve the CPU (10 fps) and runs time out.
 
 The full story of how the real game runs headless is in `HOW-I-RAN-MINECRAFT.md`.
 
@@ -92,12 +106,11 @@ The full story of how the real game runs headless is in `HOW-I-RAN-MINECRAFT.md`
 
 ## Known gaps / next ideas
 
-- one.17 test status is in README ("New in one.17"). The starter house (3,201 blocks, many
-  materials) builds but slowly; the test house still boxes the player in under its roof.
-
-- A player boxed inside a closed room with a planned roof can't pillar out (the test house).
-- The big kelp farm: the last full run reached about half before the test cut it off on a long
-  walk. The run started with every fix was still going when this was written.
+- Rare: Balanced on the compact kelp farm stops two blocks short about one run in twelve (a
+  piston in a cramped water spot; one.19 does it too). Also rare: an observer comes out facing the
+  wrong way and is re-placed three times, then set aside.
+- Iron doors can't be opened by hand, so the builder treats them as walls.
+- The starter house (3,201 blocks, many materials) builds but slowly.
 - Not tested on a real server or against an anticheat; start with **Balanced** there.
-- Ideas not done yet: remove temporary pillars at the end, refill water buckets in survival,
-  build in strips to cut walking further.
+- Ideas: refill water buckets in survival, build in strips to cut walking further, more farm
+  schematics (crops need tilled farmland, which needs a hoe step the builder doesn't have yet).

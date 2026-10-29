@@ -329,6 +329,18 @@ public final class BuildTempo extends Module {
       return (float)(p != null ? p.turn : instance.turn.getDouble());
    }
 
+   /**
+    * How much of the way a big turn covers each tick: under 1 it slows as it closes in, the way a
+    * hand moves a mouse. Turns under 25 degrees always finish in one tick, so speed barely changes.
+    */
+   public static double easing() {
+      if (!smoothAim()) {
+         return 1.0;
+      }
+      Preset p = instance.chosen();
+      return p == Preset.SAFE ? 0.5 : p == Preset.FAST ? 0.8 : 0.65;
+   }
+
    public static boolean smoothAim() {
       return on() && instance.smooth.get();
    }

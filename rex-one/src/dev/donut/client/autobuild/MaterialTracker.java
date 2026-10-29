@@ -67,7 +67,40 @@ public final class MaterialTracker {
       if (kelp(desired)) {
          return kelp(actual);
       }
-      return false;
+      if (passage(desired) && desired.method_26204() == actual.method_26204()) {
+         // Opened on the way through; the builder shuts it again once the build is done.
+         return desired.method_47968(net.minecraft.class_2741.field_12537, false).method_47968(net.minecraft.class_2741.field_12484, false)
+            .equals(actual.method_47968(net.minecraft.class_2741.field_12537, false).method_47968(net.minecraft.class_2741.field_12484, false));
+      }
+      return growthOnly(desired, actual);
+   }
+
+   /**
+    * The same block differing only in how far it has grown: a farm schematic saves its bushes,
+    * crops and cane fully grown, a freshly placed one starts at the beginning, and the game grows
+    * it the rest of the way. Treated as different, a berry farm never finished. Stair shapes are
+    * the same kind of thing: the game picks them from the neighbouring stairs.
+    */
+   public static boolean growthOnly(class_2680 desired, class_2680 actual) {
+      if (actual == null || desired.method_26204() != actual.method_26204()) {
+         return false;
+      }
+      for (class_2769<?> property : desired.method_28501()) {
+         if (!desired.method_11654(property).equals(actual.method_11654(property))) {
+            String name = property.method_11899();
+            // A stair's shape follows its neighbours: corner stairs always come out as corners.
+            boolean stairShape = name.equals("shape") && desired.method_26204() instanceof net.minecraft.class_2510;
+            if (!name.equals("age") && !name.equals("stage") && !name.equals("moisture") && !stairShape) {
+               return false;
+            }
+         }
+      }
+      return true;
+   }
+
+   /** A door or fence gate: something a player walks through. */
+   private static boolean passage(class_2680 state) {
+      return state.method_26204() instanceof net.minecraft.class_2323 || state.method_26204() instanceof net.minecraft.class_2349;
    }
 
    private static boolean waterSource(class_2680 state) {

@@ -82,9 +82,9 @@ if KIND == 'house':
             else:
                 s = 'minecraft:smooth_stone_slab[type=bottom,waterlogged=false]'
             put(x, 4, z, s)
-    # a top slab shelf and a lantern under the roof
+    # a top slab shelf and a lantern hanging from the roof (a standing lantern cannot sit on a bottom slab)
     put(2, 3, 2, 'minecraft:smooth_stone_slab[type=top,waterlogged=false]')
-    put(4, 5, 4, 'minecraft:lantern[hanging=false,waterlogged=false]')
+    put(4, 3, 4, 'minecraft:lantern[hanging=true,waterlogged=false]')
 
 palette = {'minecraft:air': 0}
 for state in blocks.values():

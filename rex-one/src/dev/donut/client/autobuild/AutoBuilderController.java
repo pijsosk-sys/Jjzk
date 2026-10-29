@@ -151,6 +151,10 @@ public final class AutoBuilderController {
    private final Map<class_2338, Integer> climbs = new HashMap<>();
    private final Set<class_2338> badSupports = new HashSet<>();
    private int deferRounds;
+   private final Set<class_1792> missing = new HashSet<>();
+   /** The blueprint's doors and gates, found when the build first needs them, and those given up on. */
+   private List<Target> doors;
+   private final Set<class_2338> doorsSkipped = new HashSet<>();
    private Target plannableFor;
    private final Map<class_2338, Boolean> plannable = new HashMap<>();
    private final Map<class_2338, String> supportsKept = new HashMap<>();
@@ -458,6 +462,9 @@ public final class AutoBuilderController {
          this.digging = null;
          this.fixing = null;
          this.fixes.clear();
+         this.missing.clear();
+         this.doors = null;
+         this.doorsSkipped.clear();
          this.pillarSpot = null;
          this.badPillarSpots.clear();
          this.badSupports.clear();
@@ -762,6 +769,8 @@ public final class AutoBuilderController {
                   } else if (this.current == null && this.requeueAllDeferred()) {
                      this.reason = "Retrying skipped blocks...";
                      this.yielded = true;
+                  } else if (this.current == null && !this.missing.isEmpty()) {
+                     this.pauseWith(this.missingSummary());
                   } else if (this.current == null) {
                      this.pauseWith(
                         this.lastFailure.isEmpty() ? "No placeable blocks remain. Check unloaded areas, supports and occupied positions." : this.lastFailure
@@ -820,7 +829,9 @@ public final class AutoBuilderController {
                                  this.reason = BuildRestock.status();
                                  this.yielded = true;
                               } else if (slot < 0) {
-                                 this.pauseWith("Missing " + needed.method_63680().getString() + ". Add materials, then Resume.");
+                                 // Build everything else first: pausing on the first block it had nothing for made
+                                 // Start look like it did nothing.
+                                 this.setAsideMissing(needed);
                               } else if (slot >= 9) {
                                  int selected = client.field_1724.method_31548().method_67532();
                                  client.field_1761
@@ -968,7 +979,7 @@ public final class AutoBuilderController {
                      }
                   }
 
-                  if (this.finalCheckIndex == this.targets.size() && !this.clearSupports(client)) {
+                  if (this.finalCheckIndex == this.targets.size() && !this.clearSupports(client) && !this.shutDoors(client)) {
                      this.complete();
                   }
                }
@@ -1181,6 +1192,8 @@ public final class AutoBuilderController {
       class_746 player = client.field_1724;
       PlacementPlanner.Plan best = null;
       double bestTurn = Double.POSITIVE_INFINITY;
+      List<PlacementPlanner.Plan> options = new ArrayList<>();
+      List<Double> turns = new ArrayList<>();
       if (!(stack.method_7909() instanceof class_1747 item) || !client.field_1687.method_8320(target.pos).method_45474()) {
          return null;
       }
@@ -1248,6 +1261,8 @@ public final class AutoBuilderController {
                            return found;
                         }
                         double turn = Math.hypot(class_3532.method_15393(yaw - near[0]), pitch - near[1]);
+                        options.add(found);
+                        turns.add(turn);
                         if (turn < bestTurn) {
                            bestTurn = turn;
                            best = found;
@@ -1256,6 +1271,17 @@ public final class AutoBuilderController {
                   }
                }
             }
+         }
+         // Not always the very same spot: any point within a few degrees of the easiest is fine, and
+         // clicks that land in slightly different places each time look like a hand.
+         if (best != null && options.size() > 1) {
+            List<PlacementPlanner.Plan> close = new ArrayList<>();
+            for (int i = 0; i < options.size(); i++) {
+               if (turns.get(i) <= bestTurn + 5.0) {
+                  close.add(options.get(i));
+               }
+            }
+            best = close.get(AIM_RANDOM.nextInt(close.size()));
          }
          return best;
       } finally {
@@ -1341,6 +1367,7 @@ public final class AutoBuilderController {
       return state.method_27852(class_2246.field_10382) && state.method_26227().method_15771() || state.method_27852(class_2246.field_10422);
    }
 
+   private static final java.util.Random AIM_RANDOM = new java.util.Random();
    private static final byte FLUID = 1;
    private static final byte DIRECTIONAL = 2;
    private static final byte SECONDARY = 4;
@@ -1406,7 +1433,8 @@ public final class AutoBuilderController {
    private static final Set<String> CONNECTIONS = Set.of("north", "east", "south", "west", "up");
 
    private static boolean compatible(class_2680 desired, class_2680 predicted) {
-      return PlacementPlanner.compatible(desired, predicted) || predicted != null && kelp(desired) && kelp(predicted);
+      return PlacementPlanner.compatible(desired, predicted) || predicted != null && kelp(desired) && kelp(predicted)
+         || predicted != null && MaterialTracker.growthOnly(desired, predicted);
    }
 
    /** A water cell with no source yet, or a kelp cell that needs its water before the kelp. */
@@ -1417,6 +1445,23 @@ public final class AutoBuilderController {
 
    private static boolean needsLava(class_2680 desired, class_2680 actual) {
       return lavaSource(desired) && !lavaSource(actual);
+   }
+
+   /** The same door, trapdoor or gate, differing only in whether it is open. */
+   private static boolean onlyOpenDiffers(class_2680 desired, class_2680 actual) {
+      if (desired.method_26204() != actual.method_26204() || !desired.method_28498(net.minecraft.class_2741.field_12537)) {
+         return false;
+      }
+      boolean differs = false;
+      for (net.minecraft.class_2769<?> property : desired.method_28501()) {
+         if (!desired.method_11654(property).equals(actual.method_11654(property))) {
+            if (property != net.minecraft.class_2741.field_12537 && property != net.minecraft.class_2741.field_12484) {
+               return false;
+            }
+            differs |= property == net.minecraft.class_2741.field_12537;
+         }
+      }
+      return differs;
    }
 
    private static boolean needsWater(class_2680 desired, class_2680 actual) {
@@ -1556,7 +1601,8 @@ public final class AutoBuilderController {
    private boolean pillarColumnFree(class_310 client, class_2338 feet, int goal) {
       for (int y = feet.method_10264(); y <= goal + 2; y++) {
          class_2338 cell = new class_2338(feet.method_10263(), y, feet.method_10260());
-         if (!MaterialTracker.isLoaded(client.field_1687, cell) || this.indices.containsKey(cell) || !client.field_1687.method_8320(cell).method_45474()) {
+         if (!MaterialTracker.isLoaded(client.field_1687, cell) || this.indices.containsKey(cell) || !client.field_1687.method_8320(cell).method_45474()
+            || y < goal && this.keepClear(cell)) {
             return false;
          }
       }
@@ -2093,6 +2139,103 @@ public final class AutoBuilderController {
       return result;
    }
 
+   /**
+    * No material for this block: it, and every other queued block needing the same item, waits
+    * until the item turns up (checked every second), and the build carries on with the rest.
+    */
+   private void setAsideMissing(class_1792 item) {
+      this.missing.add(item);
+      String why = "Missing " + item.method_63680().getString() + ". Built as soon as you carry some.";
+      List<Target> same = new ArrayList<>();
+      for (Target target : this.work) {
+         if (target == this.current || target.index >= 0 && target.index < this.itemOf.length && this.itemOf[target.index] == item) {
+            same.add(target);
+         }
+      }
+      if (this.current != null && !same.contains(this.current) && !this.current.support) {
+         same.add(this.current);
+      }
+      for (Target target : same) {
+         this.work.remove(target);
+         this.deferred.add(target.pos);
+         this.deferReasons.put(target.pos, why);
+      }
+      this.lastFailure = why;
+      this.current = null;
+      this.navigator.reset();
+   }
+
+   /** What is missing and how much, for the pause message. */
+   private String missingSummary() {
+      // Everything the rest of the build needs and the player has none of, not only what blocked
+      // the layer being built.
+      class_310 client = class_310.method_1551();
+      Map<class_1792, Integer> counts = new HashMap<>();
+      for (Target target : this.targets) {
+         if (this.correct.get(target.index) || target.index >= this.itemOf.length) {
+            continue;
+         }
+         class_1792 item = this.itemOf[target.index];
+         if (item != null && item != class_1802.field_8162 && (this.missing.contains(item) || client.field_1724 != null && donut$findInventorySlot(client, item) < 0)) {
+            counts.merge(item, 1, Integer::sum);
+         }
+      }
+      StringBuilder out = new StringBuilder("Missing materials: ");
+      int shown = 0;
+      for (Map.Entry<class_1792, Integer> entry : counts.entrySet().stream().sorted((a, b) -> b.getValue() - a.getValue()).toList()) {
+         if (shown++ == 4) {
+            out.append(", and ").append(counts.size() - 4).append(" more");
+            break;
+         }
+         out.append(shown == 1 ? "" : ", ").append(entry.getKey().method_63680().getString()).append(" x").append(entry.getValue());
+      }
+      return out.append(". Add them and it carries on by itself.").toString();
+   }
+
+   /** Every second: any missing material now carried goes back into the queue, and a pause for it ends. */
+   private void checkMissing(class_310 client) {
+      if (this.missing.isEmpty() || client.field_1724 == null || this.tick % 20 != 0 && this.status == Status.RUNNING) {
+         return;
+      }
+      List<class_1792> found = new ArrayList<>();
+      for (class_1792 item : this.missing) {
+         if (donut$findInventorySlot(client, item) >= 0 || client.field_1724.method_31549().field_7477) {
+            found.add(item);
+         }
+      }
+      if (found.isEmpty()) {
+         return;
+      }
+      found.forEach(this.missing::remove);
+      java.util.Iterator<class_2338> it = this.deferred.iterator();
+      while (it.hasNext()) {
+         class_2338 pos = it.next();
+         Integer index = this.indices.get(pos);
+         if (index != null && index < this.itemOf.length && found.contains(this.itemOf[index])) {
+            it.remove();
+            if (!this.correct.get(index)) {
+               this.work.add(this.byIndex[index]);
+            }
+         }
+      }
+      if (this.status == Status.PAUSED && this.reason.startsWith("Missing materials")) {
+         this.resume();
+      }
+   }
+
+   /** Whether the player carries anything the rest of the build needs (creative always does). */
+   public boolean hasAnyMaterial(class_310 client) {
+      if (client.field_1724 == null || client.field_1724.method_31549().field_7477 || BuildTempo.restock()) {
+         return true;
+      }
+      for (class_1792 item : this.remainingItems()) {
+         if (donut$findInventorySlot(client, item) >= 0) {
+            return true;
+         }
+      }
+      return this.remainingItems().isEmpty();
+   }
+
    private void requeueDeferredNear(class_2338 placed) {
       this.deferRounds = 0;
       // A spot that did not work before may now: the build around it changed.
@@ -2283,6 +2426,49 @@ public final class AutoBuilderController {
       }
    }
 
+   /**
+    * The last step: doors and gates the walk opened on its way through are shut again, as the
+    * blueprint has them. Until then an open door counts as built, or walking through it and shutting
+    * it behind took turns forever. Returns false when there is nothing (left) to do.
+    */
+   private boolean shutDoors(class_310 client) {
+      if (this.doors == null) {
+         this.doors = new ArrayList<>();
+         for (Target target : this.targets) {
+            if (target.state.method_26204() instanceof net.minecraft.class_2349
+               || target.state.method_26204() instanceof net.minecraft.class_2323 && !MaterialTracker.isSecondary(target.state)) {
+               this.doors.add(target);
+            }
+         }
+      }
+      class_243 eye = client.field_1724.method_33571();
+      Target nearest = null;
+      for (Target door : this.doors) {
+         if (!this.doorsSkipped.contains(door.pos)
+            && MaterialTracker.isLoaded(client.field_1687, door.pos)
+            && onlyOpenDiffers(door.state, client.field_1687.method_8320(door.pos))
+            && (nearest == null || eye.method_1025(class_243.method_24953(door.pos)) < eye.method_1025(class_243.method_24953(nearest.pos)))) {
+            nearest = door;
+         }
+      }
+      if (nearest == null) {
+         return false;
+      }
+      this.yielded = true;
+      if (eye.method_1025(class_243.method_24953(nearest.pos)) <= 3.5 * 3.5) {
+         this.navigator.release();
+         this.reason = "Shutting the door at " + coordinates(nearest.pos);
+         this.navigator.clickDoor(client, nearest.pos);
+      } else {
+         BuilderNavigator.Result movement = this.navigator.moveTo(client, nearest.pos);
+         if (movement == BuilderNavigator.Result.NO_PATH || movement == BuilderNavigator.Result.STUCK) {
+            this.doorsSkipped.add(nearest.pos);
+         }
+         this.reason = "Walking to the door at " + coordinates(nearest.pos) + " / " + this.navigator.routeLength() + " steps";
+      }
+      return true;
+   }
+
    // ---- Removing temporary supports ---------------------------------------------------------------
 
    /**
@@ -2397,7 +2583,7 @@ public final class AutoBuilderController {
       if (eye.method_1025(center) > reach * reach) {
          return null;
       }
-      class_3965 hit = client.field_1687.method_17742(new class_3959(eye, center, class_3960.field_17558, class_242.field_1348, client.field_1724));
+      class_3965 hit = client.field_1687.method_17742(new class_3959(eye, center, class_3960.field_17559, class_242.field_1348, client.field_1724));
       return hit.method_17783() == class_240.field_1332 && hit.method_17777().equals(pos) ? hit.method_17780() : null;
    }
 
@@ -2424,7 +2610,21 @@ public final class AutoBuilderController {
     * sign, ladder, button), which face away from what holds them.
     */
    private static boolean restsOn(class_2680 state, class_2350 fromSupport) {
+      net.minecraft.class_2248 block = state.method_26204();
+      if (block instanceof net.minecraft.class_2482 || block instanceof net.minecraft.class_2510 || block instanceof net.minecraft.class_2389
+         || block instanceof net.minecraft.class_2354 || block instanceof net.minecraft.class_2544) {
+         // Slabs, stairs, panes, fences and walls stay up on their own.
+         return false;
+      }
       if (fromSupport == class_2350.field_11036) {
+         // Above the support, unless it hangs from the block over it instead.
+         for (net.minecraft.class_2769<?> property : state.method_28501()) {
+            Object value = state.method_11654(property);
+            if (property.method_11899().equals("hanging") && Boolean.TRUE.equals(value)
+               || property.method_11899().equals("face") && value.toString().equals("ceiling")) {
+               return false;
+            }
+         }
          return true;
       }
       for (net.minecraft.class_2769<?> property : state.method_28501()) {
@@ -2515,14 +2715,8 @@ public final class AutoBuilderController {
       if (!desired.method_28498(class_2741.field_12508)
          || !(Boolean)desired.method_11654(class_2741.field_12508)
          || desired.method_26204() == actual.method_26204() && (Boolean)actual.method_11654(class_2741.field_12508)) {
-         for (class_2769<?> property : kelp(desired) ? List.<class_2769<?>>of() : desired.method_28501()) {
-            if ((property.method_11899().equals("age") || property.method_11899().equals("stage"))
-               && desired.method_11654(property) instanceof Integer age
-               && age > 0) {
-               return "This grown block state requires growth or server support";
-            }
-         }
-
+         // A grown plant (berry bush, crop, cane) is placed young and counted as built: the game
+         // grows it the rest of the way.
          if (desired.method_26204() instanceof class_5544 && (Boolean)desired.method_11654(class_2741.field_12548)) {
             return "Lit candles require ignition";
          } else {
@@ -2533,6 +2727,23 @@ public final class AutoBuilderController {
       } else {
          return "Waterlogged blocks require water placement";
       }
+   }
+
+   /**
+    * No temporary block may stand beside a cactus, door or gate of the blueprint: a cactus will not
+    * go next to a solid block (stepping blocks there blocked a whole cactus farm), and a step left in
+    * front of a door shut the player inside a house with no way out. Diagonal is fine.
+    */
+   private boolean keepClear(class_2338 pos) {
+      for (class_2350 direction : class_2350.class_2353.field_11062) {
+         Integer index = this.indices.get(pos.method_10093(direction));
+         class_2680 beside = index != null && this.byIndex[index] != null ? this.byIndex[index].state : null;
+         // A cactus breaks beside a block; a block in a doorway walls the player in or out.
+         if (beside != null && (beside.method_27852(class_2246.field_10029) || beside.method_26204() instanceof net.minecraft.class_2323 || beside.method_26204() instanceof net.minecraft.class_2349)) {
+            return true;
+         }
+      }
+      return false;
    }
 
    private static boolean hasNeighborSupport(class_310 client, class_2338 pos) {
@@ -2579,6 +2790,7 @@ public final class AutoBuilderController {
                if (!MaterialTracker.isLoaded(client.field_1687, var10)
                   || this.indices.containsKey(var10)
                   || this.badSupports.contains(var10)
+                  || this.keepClear(var10)
                   || !client.field_1687.method_8320(var10).method_45474()) {
                   return null;
                }
@@ -2649,6 +2861,7 @@ public final class AutoBuilderController {
                class_2338 neighbor = target.pos.method_10093(directionx);
                if (!this.indices.containsKey(neighbor)
                   && !this.badSupports.contains(neighbor)
+                  && !this.keepClear(neighbor)
                   && MaterialTracker.isLoaded(client.field_1687, neighbor)
                   && MaterialTracker.isLoaded(client.field_1687, neighbor.method_10074())
                   && client.field_1687.method_8320(neighbor).method_45474()
@@ -2695,6 +2908,7 @@ public final class AutoBuilderController {
                class_2338 step = target.pos.method_10087(2).method_10093(directionx);
                if (!this.indices.containsKey(step)
                   && !this.badSupports.contains(step)
+                  && !this.keepClear(step)
                   && MaterialTracker.isLoaded(client.field_1687, step)
                   && client.field_1687.method_8320(step).method_45474()
                   && client.field_1687.method_8320(step.method_10074()).method_26234(client.field_1687, step.method_10074())) {
@@ -2772,6 +2986,9 @@ public final class AutoBuilderController {
    /** The client tick entry point: the retry check, then as many pipeline steps as the tempo allows. */
    public void tick(class_310 client) {
       long started = System.nanoTime();
+      if (this.isRunning() || this.status == Status.PAUSED) {
+         this.checkMissing(client);
+      }
       BuildTempo.before(this);
       int steps = BuildTempo.steps();
       this.yielded = false;

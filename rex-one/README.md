@@ -1,6 +1,6 @@
 # REX One: faster Auto Build, climbing, water, a new builder screen and a shader
 
-Sources and tooling for REX One `1.0.0-one.19` (Minecraft 1.21.11, Fabric). The build takes the
+Sources and tooling for REX One `1.0.0-one.20` (Minecraft 1.21.11, Fabric). The build takes the
 released `1.0.0-one.13` jar, replaces or adds these classes, and adds the shader files:
 
 | Class | What changed |
@@ -19,6 +19,59 @@ released `1.0.0-one.13` jar, replaces or adds these classes, and adds the shader
 
 Classes that shipped only as bytecode were decompiled first, and each was committed unchanged
 before being edited, so `git log -p` shows exactly what changed.
+
+## New in one.20: Start always starts, three new farms, farms and houses finish, more natural
+
+**Start did nothing on some schematics.** In survival, the first block it had no material for
+paused the whole build at once ("Missing X"), so Start looked dead. Now every block needing a
+missing item is set aside, the rest is built, and the set-aside blocks are placed by themselves
+as soon as the item turns up in the inventory (checked every second, and a build paused only for
+materials resumes). When nothing else is left it pauses with the full list ("Missing materials:
+Spruce Planks x144, Cobblestone x27"). If you carry *none* of the build's materials, the screen
+says so instead of starting. Tested by pressing the screen's real Start button on every
+library file: all 10 start in creative; in survival the ones you carry blocks for start and the
+others show that message.
+
+**The sweet berry farm stopped part way.** Farm schematics save plants fully grown (berry bushes
+at age 3); a placed bush is age 0 and the builder treated it as wrong forever. Blocks that differ
+only in growth (`age`, `stage`, `moisture`) now count as built, in the builder, the HUD and the
+materials list. Stair `shape` too: the game picks it from the neighbouring stairs.
+
+**Cactus and nether wart could not be placed at all.** The reach test aimed at a block's outline
+but traced the sight line against its collision box. Cactus and soul sand have a collision top
+below their outline top, so the line never hit and every spot looked out of reach ("No walking
+route"). Sight lines now use the outline, as the real crosshair does. Temporary blocks are no
+longer put beside a cactus (it would break), soul sand, slabs and stairs count as ground to stand
+on, and its feet are placed on the right cell when standing on them.
+
+**Houses with a door.** A closed door counted as open space, so the player hopped against it
+forever (the test house stopped at 116/260, on one.19 too). Now the builder opens wooden doors
+and gates on its way through like a player, never leaves a temporary block in a doorway (that
+had shut it inside), and shuts the doors again once the build is done. Supports under slabs,
+stairs, fences, panes and walls are removed (they never needed them), and a hanging lantern no
+longer keeps the block under it.
+
+**New farms** (in the library, made by `test/make_farms.py`):
+
+| Farm | Blocks | Fast (creative) |
+| --- | --- | --- |
+| `sweet-berry-farm` | 135 | complete, 21.8 s |
+| `cactus-farm` | 129 | complete, 27.1 s |
+| `nether-wart-farm` | 90 | complete, 14.5 s |
+
+**Looks more like a player.**
+- Big turns ease out toward the end (Safe eases the most), and the turn speed wanders a little
+  from tick to tick, as a hand does.
+- Among the aim points that work, it picks one at random within a few degrees of the smallest
+  turn, so it doesn't click the same point of every block.
+- While walking, the view drifts a few degrees and looks at the ground ahead, not along a fixed
+  line.
+
+**Tested on the final jar (creative):** test house 260/260 on Fast and Safe with every support
+removed; Cozy Oak Cabin 284/284; compact kelp farm 85/85 on Fast, Balanced and Safe; tower
+224/224; lava and water pools 90/90; the three farms above. One known rare miss: about one run in
+twelve, Balanced on the compact kelp farm stopped two blocks short (a piston in a cramped water
+spot). The same thing happens on one.19.
 
 ## New in one.19: no stutter when it places, a correct materials list, a bit faster
 

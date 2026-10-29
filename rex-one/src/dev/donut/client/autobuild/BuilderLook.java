@@ -25,6 +25,10 @@ public final class BuilderLook {
    private static float fromYaw;
    private static float fromPitch;
    private static boolean hooked;
+   private static final java.util.Random RANDOM = new java.util.Random();
+   /** Turns under this many degrees finish in one tick. */
+   private static final double SNAP = 25.0;
+   private static double wobble = 1.0;
 
    private BuilderLook() {
    }
@@ -59,15 +63,26 @@ public final class BuilderLook {
       }
 
       double distance = Math.sqrt(dy * dy + dp * dp);
-      double limit = BuildTempo.turnSpeed();
-      if (distance <= limit) {
+      // A hand is never perfectly even: the turn limit wanders a little from tick to tick.
+      if (BuildTempo.smoothAim()) {
+         wobble += (RANDOM.nextDouble() - 0.5) * 0.12;
+         wobble = Math.max(0.85, Math.min(1.1, wobble + (1.0 - wobble) * 0.15));
+      }
+      double limit = BuildTempo.turnSpeed() * (BuildTempo.smoothAim() ? wobble : 1.0);
+      if (distance <= Math.min(limit, SNAP)) {
          player.method_36456(currentYaw + dy);
          player.method_36457(currentPitch + dp);
          return true;
       }
 
-      // Ease out of big turns: most of the way at full speed, the rest still within the cap.
-      double scale = limit / distance;
+      // Big turns ease in toward the end instead of arriving at full speed.
+      double step = Math.min(limit, Math.max(SNAP * 0.5, distance * BuildTempo.easing()));
+      if (step >= distance) {
+         player.method_36456(currentYaw + dy);
+         player.method_36457(currentPitch + dp);
+         return true;
+      }
+      double scale = step / distance;
       player.method_36456(currentYaw + (float)(dy * scale));
       player.method_36457(currentPitch + (float)(dp * scale));
       return false;
