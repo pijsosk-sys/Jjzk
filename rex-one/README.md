@@ -28,7 +28,7 @@ In their place, what makes money on DonutSMP:
 
 | Build | What it is | Fast | Server |
 | --- | --- | --- | --- |
-| `donut-cactus-farm-small` (312) | 12 cacti, no redstone: each new cactus block grows into a fence, pops off, falls into a water channel and is carried over hoppers into a chest | complete | complete |
+| `donut-cactus-farm-small` (312) | 12 cacti, no redstone: each new cactus block grows into a fence, pops off, falls into a water channel and is carried over hoppers into a chest | complete (1 run: 310/312) | complete |
 | `donut-spawner-base-small` (274) | 9x9 cobbled deepslate bunker: door, bed, chests, barrels, ender chest, furnaces, anvil, 4 spawner pads | complete | complete |
 | `donut-spawner-base-big` (923) | 17x15 bunker: storage wall, furnaces, enchanting table with 15 bookshelves, a spawner hall with 12 pads, two beds | complete | slow (794/923 in the 10 min test) |
 
@@ -54,8 +54,11 @@ under a fence, where a drop has nowhere to roll.
   clicking the ground, and on a container that opened its menu and paused the build.
 
 **Not fixed:**
-- On the cactus farm it can leave a few temporary blocks it can't reach. They're listed at the
+- The cactus farm isn't fully reliable yet: in 4 of 5 runs it completed, and in the last it stopped
+  at 310/312, with two water sources left while the current kept pushing it off its spot. Pour
+  those by hand. It can also leave a few temporary blocks it can't reach. They're listed at the
   end; break them by hand.
+- After the big base is done (923/923), it can spend a while walking to the door at the end.
 - No big cactus farm. Every big version stalled at about 80%, with the builder stuck in the narrow
   channels: three stacked layers, 15x29, 15x13 with the water down the middle, and 15x13 mirrored.
   It stays a test build (`test/make_donut.py` writes it to `test/builds/`).
