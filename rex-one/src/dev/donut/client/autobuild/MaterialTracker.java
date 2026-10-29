@@ -47,8 +47,43 @@ public final class MaterialTracker {
    private MaterialTracker() {
    }
 
+   /**
+    * Exact, except where the game decides the rest, as the builder sees it: any water source fills a
+    * water or bubble-column cell, any lava source a lava cell, and kelp counts at any age.
+    */
    public static boolean matches(class_2680 desired, class_2680 actual) {
-      return desired.equals(actual);
+      if (desired.equals(actual)) {
+         return true;
+      }
+      if (actual == null) {
+         return false;
+      }
+      if (waterSource(desired)) {
+         return waterSource(actual);
+      }
+      if (desired.method_27852(class_2246.field_10164) && desired.method_26227().method_15771()) {
+         return actual.method_27852(class_2246.field_10164) && actual.method_26227().method_15771();
+      }
+      if (kelp(desired)) {
+         return kelp(actual);
+      }
+      return false;
+   }
+
+   private static boolean waterSource(class_2680 state) {
+      return state.method_27852(class_2246.field_10382) && state.method_26227().method_15771() || state.method_27852(class_2246.field_10422);
+   }
+
+   private static boolean kelp(class_2680 state) {
+      return state.method_27852(class_2246.field_9993) || state.method_27852(class_2246.field_10463);
+   }
+
+   /**
+    * Flowing water and lava: they form on their own from a source and are never placed, so they
+    * need nothing. Counted as needing buckets, a farm listed dozens it could never use.
+    */
+   public static boolean flowing(class_2680 state) {
+      return (state.method_27852(class_2246.field_10382) || state.method_27852(class_2246.field_10164)) && !state.method_26227().method_15771();
    }
 
    public static boolean isLoaded(class_638 level, class_2338 pos) {
@@ -63,7 +98,7 @@ public final class MaterialTracker {
 
    public static MaterialTracker.Requirement requirement(class_2680 state) {
       class_1792 item = placementItem(state);
-      int count = !isSecondary(state) && !state.method_26215() ? 1 : 0;
+      int count = !isSecondary(state) && !state.method_26215() && !flowing(state) ? 1 : 0;
       if (count != 0) {
          if (state.method_26204() instanceof class_2482 && state.method_11654(class_2482.field_11501) == class_2771.field_12682) {
             count = 2;
@@ -351,6 +386,9 @@ public final class MaterialTracker {
       private void accumulate(class_310 client, Block block) {
          class_2338 pos = this.transform.apply(block.pos());
          class_2680 desired = this.transform.apply(block.state());
+         if (MaterialTracker.flowing(desired)) {
+            return; // not part of what gets built: the game makes it from a source
+         }
          boolean loaded = MaterialTracker.isLoaded(client.field_1687, pos);
          class_2680 actual = loaded ? client.field_1687.method_8320(pos) : null;
          if (!loaded) {

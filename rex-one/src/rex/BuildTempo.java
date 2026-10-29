@@ -26,7 +26,7 @@ public final class BuildTempo extends Module {
       /** Trusts the client's prediction one tick after sending, two placements unconfirmed at most. */
       BALANCED(3, 1, 60, 1, 2, 16384, 64, true, 1, 0, 2, 0, 3.25, 50),
       /** One block per tick, the protocol floor for a placement that needs its own rotation. */
-      FAST(4, 0, 80, 1, 2, 16384, 96, true, 0, 0, 4, 0, 3.0, 80),
+      FAST(4, 0, 80, 1, 2, 16384, 96, true, 0, 0, 4, 0, 3.0, 120),
       CUSTOM(0, 0, 0, 0, 0, 0, 0, false, 0, 0, 0, 0, 0.0, 0);
 
       final int steps, arm, ack, swap, layers, candidates, revalidate;

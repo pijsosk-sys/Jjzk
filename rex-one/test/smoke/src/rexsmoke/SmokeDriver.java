@@ -58,6 +58,8 @@ public final class SmokeDriver implements ClientModInitializer {
    private static final String[] SHOTS = {"OFF", "SOFT", "TUFF", "VIVID", "OFF"};
    private int shot;
    private String viewShot;
+   private String pendingShot;
+   private int pendingShotAt;
    private int afterView;
    private boolean shotArmed;
 
@@ -79,6 +81,10 @@ public final class SmokeDriver implements ClientModInitializer {
    }
 
    private void step(class_310 client) throws Exception {
+      if (this.pendingShot != null && --this.pendingShotAt <= 0) {
+         class_318.method_22690(client.field_1697, this.pendingShot, client.method_1522(), 1, message -> {});
+         this.pendingShot = null;
+      }
       if (Boolean.getBoolean("rexsmoke.clean")) {
          client.method_1566().method_2000(); // recipe and tutorial pop-ups, for recordings
       }
@@ -252,6 +258,10 @@ public final class SmokeDriver implements ClientModInitializer {
             this.log(String.format(Locale.ROOT, "%-9s %-9s %6.1fs  %5.1f placed/s  placements sent %s  server: %d/%d match (%d exact), %d wrong  | %s",
                current == null ? "default" : current, builder.status(), seconds, result[1] / seconds, sent(builder), result[1],
                this.schematic.blocks().size(), result[0], result[2], builder.reason()));
+            try {
+               this.log("  " + AutoBuilderController.class.getMethod("tickReport").invoke(builder));
+            } catch (ReflectiveOperationException none) {
+            }
             this.reasons.entrySet().stream().sorted((a, b) -> b.getValue() - a.getValue()).limit(6)
                .forEach(e -> this.log(String.format(Locale.ROOT, "    %5.1f%%  %s", e.getValue() * 100.0 / this.ticks, e.getKey())));
             this.reasons.clear();
@@ -262,7 +272,9 @@ public final class SmokeDriver implements ClientModInitializer {
             this.transitions.clear();
             this.lastReason = "";
             String name = "rexsmoke-" + (current == null ? "default" : current.toString().toLowerCase(Locale.ROOT)) + ".png";
-            class_318.method_22690(client.field_1697, name, client.method_1522(), 1, message -> {});
+            // A moment later, so the frame shows the HUD after the build's last change.
+            this.pendingShot = name;
+            this.pendingShotAt = 4;
             if (builder.status() == AutoBuilderController.Status.COMPLETED) {
                // Step back for a picture of the finished build from outside.
                class_2338 size = this.schematic.dimensions();

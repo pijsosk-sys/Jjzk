@@ -192,47 +192,7 @@ public final class BuilderNavigator {
             return BuilderNavigator.Result.ARRIVED;
          } else {
             if (this.route.isEmpty() || this.index >= this.route.size()) {
-               BuilderPathfinder.Terrain terrain = new BuilderPathfinder.Terrain() {
-                  @Override
-                  public boolean standable(BuilderPathfinder.Cell at) {
-                     class_2338 pos = BuilderNavigator.pos(at);
-                     if (MaterialTracker.isLoaded(client.field_1687, pos)
-                        && MaterialTracker.isLoaded(client.field_1687, pos.method_10086(2))) {
-                        class_2680 ground = client.field_1687.method_8320(pos.method_10074());
-                        return !ground.method_27852(class_2246.field_10092)
-                              && !ground.method_27852(class_2246.field_17350)
-                              && !ground.method_27852(class_2246.field_23860)
-                              && !ground.method_27852(class_2246.field_10029)
-                              && !ground.method_27852(class_2246.field_27879)
-                              && ground.method_26234(client.field_1687, pos.method_10074())
-                           ? this.headroom(at)
-                           : false;
-                     } else {
-                        return false;
-                     }
-                  }
-
-                  @Override
-                  public boolean headroom(BuilderPathfinder.Cell at) {
-                     class_2338 pos = BuilderNavigator.pos(at);
-                     if (MaterialTracker.isLoaded(client.field_1687, pos)
-                        && client.field_1687.method_8316(pos).method_15769()
-                        && client.field_1687.method_8316(pos.method_10084()).method_15769()) {
-                        class_2680 state = client.field_1687.method_8320(pos);
-                        return !state.method_27852(class_2246.field_10036)
-                              && !state.method_27852(class_2246.field_22089)
-                              && !state.method_27852(class_2246.field_16999)
-                              && !state.method_27852(class_2246.field_27879)
-                           ? client.field_1687
-                              .method_8587(
-                                 client.field_1724, new class_238(at.x() + 0.2, at.y() + 0.01, at.z() + 0.2, at.x() + 0.8, at.y() + 1.8, at.z() + 0.8)
-                              )
-                           : false;
-                     } else {
-                        return false;
-                     }
-                  }
-               };
+               BuilderPathfinder.Terrain terrain = terrain(client);
                int maxDrop = maxDrop(client.field_1724);
                this.route = BuilderPathfinder.find(feet, cell(destination), terrain, arrived, 6000, 96, maxDrop);
                this.index = 0;
@@ -440,14 +400,120 @@ public final class BuilderNavigator {
       return 3 + Math.max(0, Math.min(3, spare));
    }
 
+   /**
+    * The walking rules over the live world, with every answer kept for the life of this object.
+    */
+   private static BuilderPathfinder.Terrain terrain(class_310 client) {
+               // Each answer is kept for the length of the search: the pathfinder asks about the same
+               // cells again and again (every neighbour test, every drop), and these checks were
+               // nearly all the builder's time on a cabin, with ticks of a quarter second.
+               java.util.Map<BuilderPathfinder.Cell, Boolean> standCache = new java.util.HashMap<>();
+               java.util.Map<BuilderPathfinder.Cell, Boolean> headCache = new java.util.HashMap<>();
+               return new BuilderPathfinder.Terrain() {
+                  @Override
+                  public boolean standable(BuilderPathfinder.Cell at) {
+                     Boolean known = standCache.get(at);
+                     if (known == null) {
+                        known = this.checkStandable(at);
+                        standCache.put(at, known);
+                     }
+                     return known;
+                  }
+
+                  private boolean checkStandable(BuilderPathfinder.Cell at) {
+                     class_2338 pos = BuilderNavigator.pos(at);
+                     if (MaterialTracker.isLoaded(client.field_1687, pos)
+                        && MaterialTracker.isLoaded(client.field_1687, pos.method_10086(2))) {
+                        class_2680 ground = client.field_1687.method_8320(pos.method_10074());
+                        return !ground.method_27852(class_2246.field_10092)
+                              && !ground.method_27852(class_2246.field_17350)
+                              && !ground.method_27852(class_2246.field_23860)
+                              && !ground.method_27852(class_2246.field_10029)
+                              && !ground.method_27852(class_2246.field_27879)
+                              && ground.method_26234(client.field_1687, pos.method_10074())
+                           ? this.headroom(at)
+                           : false;
+                     } else {
+                        return false;
+                     }
+                  }
+
+                  @Override
+                  public boolean headroom(BuilderPathfinder.Cell at) {
+                     Boolean known = headCache.get(at);
+                     if (known == null) {
+                        known = this.checkHeadroom(at);
+                        headCache.put(at, known);
+                     }
+                     return known;
+                  }
+
+                  private boolean checkHeadroom(BuilderPathfinder.Cell at) {
+                     class_2338 pos = BuilderNavigator.pos(at);
+                     if (MaterialTracker.isLoaded(client.field_1687, pos)
+                        && client.field_1687.method_8316(pos).method_15769()
+                        && client.field_1687.method_8316(pos.method_10084()).method_15769()) {
+                        class_2680 state = client.field_1687.method_8320(pos);
+                        return !state.method_27852(class_2246.field_10036)
+                              && !state.method_27852(class_2246.field_22089)
+                              && !state.method_27852(class_2246.field_16999)
+                              && !state.method_27852(class_2246.field_27879)
+                           ? bodyFits(client, at)
+                           : false;
+                     } else {
+                        return false;
+                     }
+                  }
+               };
+   }
+
+   /**
+    * Every block position the player can walk to from where they stand, within a budget. One
+    * flood answers "can I get there" for many spots at once, where trying each spot with its own
+    * search explored the whole budget for every spot that could not be reached.
+    */
+   public Set<class_2338> reachable(class_310 client, int budget) {
+      Set<class_2338> out = new HashSet<>();
+      if (client.field_1724 == null || client.field_1687 == null) {
+         return out;
+      }
+      for (BuilderPathfinder.Cell at : BuilderPathfinder.explore(cell(client.field_1724.method_24515()), terrain(client), budget, 96, maxDrop(client.field_1724))) {
+         out.add(pos(at));
+      }
+      return out;
+   }
+
    /** Whether a planned route cell still has room for the player's body. */
    private static boolean stillOpen(class_310 client, BuilderPathfinder.Cell at) {
       class_2338 pos = pos(at);
       if (!MaterialTracker.isLoaded(client.field_1687, pos)) {
          return true;
       }
-      // The same body box the pathfinder's headroom test uses.
-      return client.field_1687.method_8587(client.field_1724, new class_238(at.x() + 0.2, at.y() + 0.01, at.z() + 0.2, at.x() + 0.8, at.y() + 1.8, at.z() + 0.8));
+      // The same body test the pathfinder's headroom check uses.
+      return bodyFits(client, at);
+   }
+
+   /**
+    * Whether the player's body (a 0.6-wide, 1.8-tall box in the middle of the cell) clears the
+    * collision boxes of the two blocks it would be in. The world's general collision query also
+    * walks entities and the world border, and cost far more for the same answer here.
+    */
+   private static boolean bodyFits(class_310 client, BuilderPathfinder.Cell at) {
+      for (int dy = 0; dy <= 1; dy++) {
+         class_2338 pos = new class_2338(at.x(), at.y() + dy, at.z());
+         class_265 shape = client.field_1687.method_8320(pos).method_26220(client.field_1687, pos);
+         if (shape.method_1110()) {
+            continue;
+         }
+         double bottom = dy == 0 ? 0.01 : 0.0;
+         double top = dy == 0 ? 1.0 : 0.8;
+         for (class_238 box : shape.method_1090()) {
+            if (box.field_1320 > 0.2 && box.field_1323 < 0.8 && box.field_1324 > 0.2 && box.field_1321 < 0.8 && box.field_1325 > bottom && box.field_1322 < top) {
+               return false;
+            }
+         }
+      }
+      return true;
    }
 
    private static BuilderPathfinder.Cell cell(class_2338 p) {

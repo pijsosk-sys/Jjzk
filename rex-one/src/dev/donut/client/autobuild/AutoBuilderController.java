@@ -142,6 +142,10 @@ public final class AutoBuilderController {
    private class_2338 pillarSpot;
    private Target pillarSpotFor;
    private int pillarSpotGoal;
+   private Target spotSearchFor;
+   private List<long[]> spotOptions;
+   private int spotIndex;
+   private int spotWalkTicks;
    private final Set<class_2338> badPillarSpots = new HashSet<>();
    private final Map<class_2338, Integer> arrivals = new HashMap<>();
    private final Map<class_2338, Integer> climbs = new HashMap<>();
@@ -833,9 +837,9 @@ public final class AutoBuilderController {
                                  client.field_1724.method_31548().method_61496(slot);
                                  PlacementPlanner.Plan plan = water
                                     ? planWater(client, this.current)
-                                    : PlacementPlanner.plan(client, this.current.pos, this.current.state, client.field_1724.method_6047());
-                                 if (plan == null && !configuring && !water) {
-                                    plan = planSampled(client, this.current);
+                                    : (configuring ? PlacementPlanner.plan(client, this.current.pos, this.current.state, client.field_1724.method_6047()) : planNearest(client, this.current));
+                                 if (plan == null && !water) {
+                                    plan = PlacementPlanner.plan(client, this.current.pos, this.current.state, client.field_1724.method_6047());
                                  }
                                  this.bucketPlan = water ? plan : null;
                                  Target alternative;
@@ -868,6 +872,14 @@ public final class AutoBuilderController {
                                           this.yielded = true;
                                           if (this.pillarSpot != null && this.pillarSpotFor == this.current) {
                                              this.walkToPillarSpot(client);
+                                             return;
+                                          }
+                                          if (this.spotSearchFor == this.current && this.spotOptions != null) {
+                                             // A spot search spread over ticks: carry on with it, not with another
+                                             // walking search that already failed.
+                                             if (!this.testPillarSpots(client, this.current)) {
+                                                this.defer("No walking route to " + coordinates(this.current.pos) + ". Provide a path or stairs, then Resume.");
+                                             }
                                              return;
                                           }
                                           this.navigator.walkReach(BuildTempo.walkReach());
@@ -1152,7 +1164,23 @@ public final class AutoBuilderController {
    }
 
    private static PlacementPlanner.Plan planSampled(class_310 client, Target target, class_1799 stack) {
+      return planSampled(client, target, stack, null);
+   }
+
+   /**
+    * Of every face point that places the target right, the one needing the smallest turn from the
+    * rotation the server already has: shorter turns finish inside one tick's turn limit more often,
+    * which leaves fewer ticks spent aligning, and they look calmer.
+    */
+   private static PlacementPlanner.Plan planNearest(class_310 client, Target target) {
+      BuilderLocalPlayerAccessor sent = (BuilderLocalPlayerAccessor)client.field_1724;
+      return planSampled(client, target, client.field_1724.method_6047(), new float[]{sent.donut$lastSentYaw(), sent.donut$lastSentPitch()});
+   }
+
+   private static PlacementPlanner.Plan planSampled(class_310 client, Target target, class_1799 stack, float[] near) {
       class_746 player = client.field_1724;
+      PlacementPlanner.Plan best = null;
+      double bestTurn = Double.POSITIVE_INFINITY;
       if (!(stack.method_7909() instanceof class_1747 item) || !client.field_1687.method_8320(target.pos).method_45474()) {
          return null;
       }
@@ -1215,13 +1243,21 @@ public final class AutoBuilderController {
                   if (context != null && context.method_8037().equals(target.pos) && context.method_7716()) {
                      class_2680 predicted = ((BlockItemAccessor)item).donut$getPlacementState(context);
                      if (compatible(target.state, predicted)) {
-                        return new PlacementPlanner.Plan(hit, predicted, yaw, pitch, false);
+                        PlacementPlanner.Plan found = new PlacementPlanner.Plan(hit, predicted, yaw, pitch, false);
+                        if (near == null) {
+                           return found;
+                        }
+                        double turn = Math.hypot(class_3532.method_15393(yaw - near[0]), pitch - near[1]);
+                        if (turn < bestTurn) {
+                           bestTurn = turn;
+                           best = found;
+                        }
                      }
                   }
                }
             }
          }
-         return null;
+         return best;
       } finally {
          player.method_36456(oldYaw);
          player.method_36457(oldPitch);
@@ -1551,43 +1587,76 @@ public final class AutoBuilderController {
          || target.pos.method_10264() <= client.field_1724.method_24515().method_10264()) {
          return false;
       }
+      if (this.spotSearchFor == target && this.spotOptions != null) {
+         return this.testPillarSpots(client, target);
+      }
       class_243 at = client.field_1724.method_73189();
-      class_2338 best = null;
-      double bestScore = Double.POSITIVE_INFINITY;
+      // Every (spot, height) worth trying, with its score from cheap checks only: short climbs
+      // first, then short walks. The expensive test (sight lines and the real planner as if
+      // standing on top) then runs in score order and stops at the first that works, which is the
+      // best one. Testing them all took a third of a second in one tick on a cabin roof.
+      List<long[]> options = new ArrayList<>();
+      // Only spots the player can walk to: one flood from here instead of a failed search per spot.
+      Set<class_2338> reachable = this.navigator.reachable(client, 6000);
       for (int dx = -3; dx <= 3; dx++) {
          for (int dz = -3; dz <= 3; dz++) {
             for (int dy = -10; dy <= 0; dy++) {
                class_2338 feet = target.pos.method_10069(dx, dy, dz);
-               if (this.badPillarSpots.contains(feet) || !this.standable(client, feet)) {
+               if (this.badPillarSpots.contains(feet) || !reachable.contains(feet) || !this.standable(client, feet)) {
                   continue;
                }
                // One below the target first; higher where an edge is in the way (the middle of a roof
-               // ridge, seen past its end). The climb is scored, so higher is only used when needed.
+               // ridge, seen past its end).
                int lowest = pillarGoal(target, feet.method_10264());
                for (int goal = lowest; goal <= lowest + 5; goal++) {
                   if (goal - feet.method_10264() > 14 || !this.pillarColumnFree(client, feet, goal)) {
                      break;
                   }
-                  if (!this.placeableFromTop(client, feet, goal, target)) {
-                     continue;
-                  }
-                  // Short climbs first, then short walks.
                   double score = (goal - feet.method_10264()) * 4.0 + Math.sqrt(at.method_1025(class_243.method_24955(feet)));
-                  if (score < bestScore) {
-                     bestScore = score;
-                     best = feet;
-                     this.pillarSpotGoal = goal;
-                  }
-                  break;
+                  options.add(new long[]{Double.doubleToLongBits(score), feet.method_10063(), goal});
                }
             }
          }
       }
+      options.sort(Comparator.comparingDouble(option -> Double.longBitsToDouble(option[0])));
+      this.spotSearchFor = target;
+      this.spotOptions = options;
+      this.spotIndex = 0;
+      return this.testPillarSpots(client, target);
+   }
+
+   /**
+    * Tests pillar spots in score order for at most ten milliseconds a tick, carrying on from the
+    * same place next tick: testing up to 160 at once took over 400 ms in one tick. True while it
+    * is still looking or has found one; false once every option failed.
+    */
+   private boolean testPillarSpots(class_310 client, Target target) {
+      long deadline = System.nanoTime() + 10_000_000L;
+      class_2338 best = null;
+      while (this.spotIndex < Math.min(this.spotOptions.size(), 160)) {
+         long[] option = this.spotOptions.get(this.spotIndex++);
+         class_2338 feet = class_2338.method_10092(option[1]);
+         int goal = (int)option[2];
+         if (this.placeableFromTop(client, feet, goal, target)) {
+            best = feet;
+            this.pillarSpotGoal = goal;
+            break;
+         }
+         if (System.nanoTime() > deadline) {
+            this.yielded = true;
+            this.navigator.hold(client, false);
+            this.reason = "Looking for a spot to pillar up from, for " + coordinates(target.pos);
+            return true;
+         }
+      }
+      this.spotSearchFor = null;
+      this.spotOptions = null;
       if (best == null) {
          return false;
       }
       this.pillarSpot = best;
       this.pillarSpotFor = target;
+      this.spotWalkTicks = 0;
       this.navigator.reset();
       this.noProgress = 0;
       this.reason = "Walking to a spot to pillar up from, for " + coordinates(target.pos);
@@ -1620,7 +1689,9 @@ public final class AutoBuilderController {
       this.navigator.walkReach(BuildTempo.walkReach());
       BuilderNavigator.Result movement = this.navigator.standAt(client, spot);
       this.reason = "Walking to a spot to pillar up from, for " + coordinates(this.current.pos) + " / " + this.navigator.routeLength() + " steps";
-      if (movement == BuilderNavigator.Result.NO_PATH || movement == BuilderNavigator.Result.STUCK || ++this.noProgress > 300) {
+      // Its own clock: a route with a step the player cannot make (a fall off an edge, then the
+      // long way round, and again) never counted as stuck, and noProgress is reset elsewhere.
+      if (movement == BuilderNavigator.Result.NO_PATH || movement == BuilderNavigator.Result.STUCK || ++this.spotWalkTicks > 160) {
          this.badPillarSpots.add(spot);
          this.pillarSpot = null;
          this.noProgress = 0;
@@ -1906,7 +1977,9 @@ public final class AutoBuilderController {
             this.markCorrect(action.target);
             this.failures.remove(action.target.pos);
 
-            this.requeueDeferredNear(action.target.pos);
+            if (!action.target.support) {
+               this.requeueDeferredNear(action.target.pos);
+            }
             this.current = null;
             this.noProgress = 0;
             this.cooldown = BuildTempo.settleDelay();
@@ -1967,9 +2040,12 @@ public final class AutoBuilderController {
       } else {
          this.inflight.put(action.target.pos, action.sentTick);
          this.markCorrect(action.target);
+         // Only a blueprint block is progress: counting pillar and stepping blocks reset the
+         // retry limits each time, so a block it could not place from a pillar was climbed for,
+         // dug down from and climbed for again without end.
+         this.requeueDeferredNear(action.target.pos);
       }
 
-      this.requeueDeferredNear(action.target.pos);
       this.current = null;
       this.noProgress = 0;
       this.cooldown = BuildTempo.settleDelay();
@@ -2695,6 +2771,7 @@ public final class AutoBuilderController {
 
    /** The client tick entry point: the retry check, then as many pipeline steps as the tempo allows. */
    public void tick(class_310 client) {
+      long started = System.nanoTime();
       BuildTempo.before(this);
       int steps = BuildTempo.steps();
       this.yielded = false;
@@ -2703,7 +2780,42 @@ public final class AutoBuilderController {
       for (int done = 1; done < steps && this.isRunning() && this.idle(); done++) {
          this.step(client, false);
       }
+      if (this.isRunning()) {
+         long took = System.nanoTime() - started;
+         this.tickCount++;
+         this.tickTotal += took;
+         if (took > this.tickWorst) {
+            this.tickWorst = took;
+            this.tickWorstReason = this.reason;
+         }
+         if (took > 5_000_000L) {
+            this.ticksOver5++;
+         }
+         if (took > 16_000_000L) {
+            this.ticksOver16++;
+         }
+      }
    }
+
+   /** How long the builder's ticks take: a stutter shows up here as slow ticks. Resets the figures. */
+   public String tickReport() {
+      String report = String.format(java.util.Locale.ROOT, "builder ticks: %d, average %.2f ms, worst %.1f ms (%s), over 5 ms: %d, over 16 ms: %d",
+         this.tickCount, this.tickCount == 0 ? 0.0 : this.tickTotal / 1.0E6 / this.tickCount, this.tickWorst / 1.0E6, this.tickWorstReason,
+         this.ticksOver5, this.ticksOver16);
+      this.tickCount = 0;
+      this.tickTotal = 0L;
+      this.tickWorst = 0L;
+      this.ticksOver5 = 0;
+      this.ticksOver16 = 0;
+      return report;
+   }
+
+   private long tickCount;
+   private long tickTotal;
+   private long tickWorst;
+   private String tickWorstReason = "";
+   private int ticksOver5;
+   private int ticksOver16;
 
    /** Ticks since the placement in flight was sent, or zero when nothing is in flight. */
    private int waited() {

@@ -4,12 +4,16 @@ Everything is on branch `claude/yo-b2792p` of `pijsosk-sys/Jjzk`, in `rex-one/`.
 new chat, tell it: *"Read rex-one/HANDOFF.md, rex-one/README.md and
 rex-one/HOW-I-RAN-MINECRAFT.md, then continue."*
 
-## What exists now (version 1.0.0-one.18)
+## What exists now (version 1.0.0-one.19)
 
 **Jar:** `rex-one/out/REX-One-1.21.11.jar`. Drop it into `mods/` in place of the old jar; it
 needs Fabric Loader 0.18.4+, Fabric API and Baritone, as before.
 
 **Auto Build:**
+- **one.19:** no stutter on placement (pathfinder collision checks cached and direct, pillar spot
+  search sorted and limited to reachable spots: average tick 3.8 -> 0.8 ms), Fast turns 120°/tick
+  (9.6 blocks/s on the big farm), and the materials list no longer counts flowing fluids or shows
+  stale or creative shortages. The driver logs `builder ticks: ...` per run.
 - **one.18:** big farms no longer lag (ghost renderer 29% -> 8% of a frame, cached 3D preview),
   lava sources are poured with lava buckets (after every solid block), an Options row and a
   layer progress strip on the builder screen, and the screen no longer pauses the build.

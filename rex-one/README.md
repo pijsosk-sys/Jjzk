@@ -1,6 +1,6 @@
 # REX One: faster Auto Build, climbing, water, a new builder screen and a shader
 
-Sources and tooling for REX One `1.0.0-one.18` (Minecraft 1.21.11, Fabric). The build takes the
+Sources and tooling for REX One `1.0.0-one.19` (Minecraft 1.21.11, Fabric). The build takes the
 released `1.0.0-one.13` jar, replaces or adds these classes, and adds the shader files:
 
 | Class | What changed |
@@ -19,6 +19,44 @@ released `1.0.0-one.13` jar, replaces or adds these classes, and adds the shader
 
 Classes that shipped only as bytecode were decompiled first, and each was committed unchanged
 before being edited, so `git log -p` shows exactly what changed.
+
+## New in one.19: no stutter when it places, a correct materials list, a bit faster
+
+**The stutter.** The builder now times its own ticks (`tickReport()`, logged by the test driver).
+On the Cozy Oak Cabin on Fast:
+
+| | one.18 | one.19 |
+| --- | --- | --- |
+| average builder tick | 3.8 ms | 0.8 ms |
+| worst builder tick | 316 ms | 70-100 ms |
+| ticks longer than a frame (16 ms) | 67 | about 20 |
+| time to finish | 136 s | 94 s |
+
+(This test machine renders on the CPU and runs two games at once; a normal PC is several times
+faster per tick.)
+
+- 95% of the builder's time went into the pathfinder asking "does the player fit here" through
+  the world's general collision query (which also walks entities and the world border), for the
+  same cells again and again. Answers are now kept for the length of a search, and the test is a
+  direct look at the two blocks' collision boxes.
+- Choosing a pillar spot ran sight lines and the full placement planner for up to ~3,000
+  spot-and-height pairs in one tick. They are now sorted by their cheap score and tested in that
+  order, stopping at the first that works, and only spots the player can walk to (one flood from
+  the player) are considered, so it never starts a doomed walk to an unreachable spot.
+- Placements pick, among every face that works, the one needing the smallest turn.
+- The pillar-spot test runs at most ten milliseconds a tick and carries on next tick; walking to a
+  spot gives up after eight seconds (a route with a step the player cannot make looped forever);
+  and pillar or stepping blocks no longer count as progress, which had reset the retry limits so
+  a block it could not place from a pillar was climbed for again and again.
+
+**Faster.** Fast turns up to 120° a tick (was 80°): fewer ticks spent aligning, 9.6 blocks/s on
+the big kelp farm against 8.8-9.0. The camera still glides between ticks.
+
+**Materials list (HUD and Materials screen).** Flowing water and lava in a schematic were counted
+as buckets still needed (the "and 37 more short" on the big farm); they form on their own and now
+need nothing. Any water source satisfies a water cell, any lava source a lava cell, kelp counts at
+any age, as the builder already judged. The HUD shows "nothing left to place" as soon as a build
+completes instead of a scan up to four seconds stale, and in creative nothing is shown as short.
 
 ## New in one.18: no more lag on big farms, lava, a better screen
 

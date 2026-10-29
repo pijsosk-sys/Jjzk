@@ -26,6 +26,26 @@ public final class BuilderPathfinder {
       int maxDistance,
       int maxDrop
    ) {
+      return search(start, target, terrain, goal, maxVisited, maxDistance, maxDrop, null);
+   }
+
+   /** Every cell the player can walk to from start, up to the budget, by the same rules as find. */
+   public static Set<BuilderPathfinder.Cell> explore(BuilderPathfinder.Cell start, BuilderPathfinder.Terrain terrain, int maxVisited, int maxDistance, int maxDrop) {
+      Set<BuilderPathfinder.Cell> reached = new HashSet<>();
+      search(start, start, terrain, cell -> false, maxVisited, maxDistance, maxDrop, reached);
+      return reached;
+   }
+
+   private static List<BuilderPathfinder.Cell> search(
+      BuilderPathfinder.Cell start,
+      BuilderPathfinder.Cell target,
+      BuilderPathfinder.Terrain terrain,
+      Predicate<BuilderPathfinder.Cell> goal,
+      int maxVisited,
+      int maxDistance,
+      int maxDrop,
+      Set<BuilderPathfinder.Cell> explored
+   ) {
       PriorityQueue<BuilderPathfinder.Entry> open = new PriorityQueue<>(
          Comparator.comparingDouble(BuilderPathfinder.Entry::score)
       );
@@ -39,6 +59,9 @@ public final class BuilderPathfinder {
       while (!open.isEmpty() && closed.size() < maxVisited) {
          BuilderPathfinder.Cell current = open.remove().cell;
          if (closed.add(current)) {
+            if (explored != null) {
+               explored.add(current);
+            }
             if (goal.test(current)) {
                LinkedList<BuilderPathfinder.Cell> route = new LinkedList<>();
 

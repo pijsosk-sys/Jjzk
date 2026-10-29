@@ -183,6 +183,12 @@ public final class BuildHud extends Module {
       if (now.equals(this.status)) {
          return;
       }
+      if (now.equals("COMPLETED")) {
+         // Rescan now rather than up to Rescan seconds later, so the list does not go on naming
+         // materials for a build that is already finished.
+         this.scan = null;
+         this.scanned = -1000L;
+      }
       boolean starting = now.equals("RUNNING") && !this.status.equals("PAUSED");
       this.status = now;
       if (!starting) {
@@ -321,14 +327,22 @@ public final class BuildHud extends Module {
       if (snapshot == null) {
          return List.of();
       }
+      if (String.valueOf(Bridge.call(controller(), "status")).equals("COMPLETED")) {
+         List<String[]> done = new ArrayList<>();
+         done.add(new String[]{"", "nothing left to place", "ok"});
+         return done;
+      }
       List<Object> all = new ArrayList<>((List<Object>)Bridge.call(snapshot, "rows"));
       if (this.shortFirst.get()) {
          all.sort(Comparator.comparingInt((Object row) -> -number(row, "missing")).thenComparingInt(row -> -number(row, "remaining")));
       }
       List<String[]> rows = new ArrayList<>();
       int shortages = 0;
+      // Creative hands out blocks as they are needed: nothing is ever short there.
+      net.minecraft.class_746 player = net.minecraft.class_310.method_1551().field_1724;
+      boolean creative = player != null && player.method_31549().field_7477;
       for (Object entry : all) {
-         int missing = number(entry, "missing");
+         int missing = creative ? 0 : number(entry, "missing");
          int remaining = number(entry, "remaining");
          if (remaining <= 0 && missing <= 0) {
             continue;
