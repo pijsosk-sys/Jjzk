@@ -1,8 +1,10 @@
 """Writes a small Sponge v2 .schem test build. Default: a house that exercises the planner: full blocks, a planks floor,
 glass panes, a door (paired block), bottom and top slabs, stairs in four facings and a lantern.
-usage: make_house.py out.schem [house|tower|signs]
+usage: make_house.py out.schem [house|tower|signs|pools]
 The tower is a hollow 5x5 stone-brick ring 14 high with no stairs: the top can only be reached
-by pillaring."""
+by pillaring.
+The pools are two cobblestone basins side by side, one of lava sources and one of water sources:
+both buckets, and the walls must be in before either fluid."""
 import gzip, struct, sys
 
 def nbt_string(s):
@@ -16,7 +18,7 @@ def compound(entries):
     return b''.join(entries) + b'\x00'
 
 KIND = sys.argv[2] if len(sys.argv) > 2 else 'house'
-W, H, L = {'house': (9, 6, 9), 'tower': (5, 14, 5), 'signs': (5, 3, 3)}[KIND]
+W, H, L = {'house': (9, 6, 9), 'tower': (5, 14, 5), 'signs': (5, 3, 3), 'pools': (9, 2, 5)}[KIND]
 blocks = {}
 
 def put(x, y, z, state):
@@ -30,6 +32,15 @@ if KIND == 'signs':
         put(x, 2, 1, 'minecraft:oak_sign[rotation=0,waterlogged=false]' if x % 2 == 0 else 'minecraft:stone_bricks')
         if x % 2 == 1:
             put(x, 1, 0, 'minecraft:oak_wall_sign[facing=north,waterlogged=false]')
+if KIND == 'pools':
+    for x in range(W):
+        for z in range(L):
+            put(x, 0, z, 'minecraft:cobblestone')
+            inner = 1 <= z <= 3 and x not in (0, 4, 8)
+            if not inner:
+                put(x, 1, z, 'minecraft:cobblestone')
+            else:
+                put(x, 1, z, 'minecraft:lava[level=0]' if x < 4 else 'minecraft:water[level=0]')
 if KIND == 'tower':
     for y in range(H):
         for x in range(W):

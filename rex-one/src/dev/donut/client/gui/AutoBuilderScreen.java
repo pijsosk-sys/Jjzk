@@ -77,6 +77,9 @@ public final class AutoBuilderScreen extends class_437 {
    private boolean materialsOpen;
    private boolean tempoOpen;
    private Runnable dragKnob;
+   private int[][] layers;
+   private long layersAt;
+   private String tooltip;
    private String dragId;
    private boolean modalClosing;
    private boolean draggingPreview;
@@ -140,6 +143,7 @@ public final class AutoBuilderScreen extends class_437 {
       this.mouseX = (mx - this.originX) / this.scale;
       this.mouseY = (my - this.originY) / this.scale;
       this.hits.clear();
+      this.tooltip = null;
       if (!this.closing || this.progress != 0.0) {
          double previous = UiPaint.pushOpacity(smooth(this.progress));
          g.method_51448().pushMatrix();
@@ -172,6 +176,10 @@ public final class AutoBuilderScreen extends class_437 {
                } finally {
                   UiPaint.popOpacity(modalOpacity);
                }
+            }
+
+            if (this.tooltip != null && !this.materialsOpen && !this.tempoOpen && this.details.isEmpty()) {
+               this.drawTooltip(g, this.tooltip);
             }
 
             if (this.keyboardFocus >= 0 && this.keyboardFocus < this.hits.size()) {
@@ -315,6 +323,9 @@ public final class AutoBuilderScreen extends class_437 {
 
       this.hit("model", vx, vy, vw, vh, () -> this.draggingPreview = true);
       if (schematic != null) {
+         this.drawLayers(g, vx + vw - 12, vy + 6, 6, vh - 12);
+      }
+      if (schematic != null) {
          class_2338 d = schematic.dimensions();
          UiPaint.text(
             g,
@@ -414,6 +425,57 @@ public final class AutoBuilderScreen extends class_437 {
          this.button(g, "layerUp", "+", x + 316, ly, 22, true, false, () -> SchematicGhost.shiftLayer(1));
       } else if (mode != SchematicGhost.Layers.ALL && this.builder.workingLayer() != Integer.MIN_VALUE) {
          UiPaint.text(g, this.field_22793, "Y " + this.builder.workingLayer(), x + 236, ly + 9, MUTED);
+      }
+
+      // The switches that matter most while building, one click each.
+      int oy = y + 180;
+      UiPaint.text(g, this.field_22793, "Options", x + 12, oy + 9, DIM);
+      BuildTempo tempo = BuildTempo.instance;
+      if (tempo != null) {
+         BooleanSetting[] options = {tempo.smooth, tempo.sprint, tempo.removeSupports, tempo.pillar};
+         String[] labels = {"Smooth", "Sprint", "Clean up", "Pillar"};
+         int ow = (w - 100 - 12 - 3 * 4) / 4;
+         for (int i = 0; i < options.length; i++) {
+            BooleanSetting option = options[i];
+            this.button(g, "option" + i, labels[i], x + 100 + i * (ow + 4), oy, ow, 24, true, option.get(), () -> option.set(!option.get()));
+            if (this.inside(x + 100 + i * (ow + 4), oy, ow, 24)) {
+               this.tooltip = option.getDescription();
+            }
+         }
+      }
+   }
+
+   /**
+    * One bar per blueprint layer, bottom at the bottom, filled by how much of it is built. The layer
+    * being built is marked; pointing at the strip names the layer and its count.
+    */
+   private void drawLayers(class_332 g, int x, int y, int w, int h) {
+      long now = System.currentTimeMillis();
+      if (this.layers == null || now - this.layersAt > 500L) {
+         this.layers = this.builder.layerProgress();
+         this.layersAt = now;
+      }
+      int[][] rows = this.layers;
+      if (rows.length == 0) {
+         return;
+      }
+      UiPaint.round(g, x - 1, y - 1, w + 2, h + 2, 3, BORDER);
+      int working = this.builder.workingLayer();
+      double step = (double)h / rows.length;
+      for (int i = 0; i < rows.length; i++) {
+         int[] row = rows[i];
+         int top = y + h - (int)Math.round((i + 1) * step);
+         int bottom = y + h - (int)Math.round(i * step);
+         int size = Math.max(1, bottom - top - (step >= 4.0 ? 1 : 0));
+         double done = row[2] == 0 ? 1.0 : (double)row[1] / row[2];
+         int color = done >= 1.0 ? GOOD : UiPaint.blend(INSET, this.config.accentColor, 0.25 + 0.75 * done);
+         UiPaint.round(g, x, top, w, size, 0, color);
+         if (row[0] == working && this.builder.isRunning()) {
+            UiPaint.round(g, x - 4, top, 3, size, 0, TEXT);
+         }
+         if (this.inside(x - 6, top, w + 8, Math.max(2, bottom - top))) {
+            this.tooltip = "Layer Y " + row[0] + ": " + number(row[1]) + " / " + number(row[2]) + " built";
+         }
       }
    }
 
@@ -549,6 +611,24 @@ public final class AutoBuilderScreen extends class_437 {
       }
 
       this.donut$drawCreativeMode(g, x + 12, y + h - 28, w - 24);
+   }
+
+   /** A small wrapped note next to the pointer, kept inside the window. */
+   private void drawTooltip(class_332 g, String text) {
+      List<String> lines = this.wrap(text, 220);
+      int width = 0;
+      for (String line : lines) {
+         width = Math.max(width, UiPaint.width(this.field_22793, line));
+      }
+      int w = width + 16;
+      int h = lines.size() * 12 + 10;
+      int tx = (int)Math.min(W - w - 6, this.mouseX + 12);
+      int ty = (int)Math.min(H - h - 6, this.mouseY + 14);
+      UiPaint.round(g, tx - 1, ty - 1, w + 2, h + 2, 6, BORDER);
+      UiPaint.round(g, tx, ty, w, h, 5, CARD);
+      for (int i = 0; i < lines.size(); i++) {
+         UiPaint.text(g, this.field_22793, lines.get(i), tx + 8, ty + 6 + i * 12, TEXT);
+      }
    }
 
    private void card(class_332 g, int x, int y, int w, int h) {

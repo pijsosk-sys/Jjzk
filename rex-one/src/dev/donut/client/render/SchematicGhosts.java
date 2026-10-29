@@ -59,8 +59,8 @@ final class SchematicGhosts {
             List<SchematicGhosts.Ghost> visible = new ArrayList<>();
             List<class_1923> columns = new ArrayList<>(169);
 
-            for (int x = cx - 6; x <= cx + 6; x++) {
-               for (int z = cz - 6; z <= cz + 6; z++) {
+            for (int x = cx - 3; x <= cx + 3; x++) {
+               for (int z = cz - 3; z <= cz + 3; z++) {
                   columns.add(new class_1923(x, z));
                }
             }
@@ -74,9 +74,10 @@ final class SchematicGhosts {
                   if (layers != null && (y < layers[0] || y > layers[1])) {
                      continue;
                   }
-                  if (!(class_243.method_24953(ghost.pos).method_1025(camera) > 9216.0)) {
+                  // 48 blocks and 4,096 ghosts: further out they only cost frames.
+                  if (!(class_243.method_24953(ghost.pos).method_1025(camera) > 2304.0)) {
                      visible.add(ghost);
-                     if (visible.size() >= 8192) {
+                     if (visible.size() >= 4096) {
                         return visible;
                      }
                   }

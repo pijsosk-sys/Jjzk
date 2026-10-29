@@ -41,6 +41,8 @@ import net.minecraft.class_11285;
 import net.minecraft.class_238;
 import net.minecraft.class_243;
 import net.minecraft.class_265;
+import net.minecraft.class_2338;
+import net.minecraft.class_638;
 import net.minecraft.class_2680;
 import net.minecraft.class_276;
 import net.minecraft.class_287;
@@ -192,36 +194,100 @@ public final class HighlightRenderer implements AutoCloseable {
             }
          }
 
-         for (Ghost ghost : this.ghosts.nearby(camera)) {
-            boolean loaded = MaterialTracker.isLoaded(context.world(), ghost.pos());
-            class_2680 actual = loaded ? context.world().method_8320(ghost.pos()) : null;
-            if (actual == null || !actual.equals(ghost.state())) {
-               boolean conflict = actual != null && !actual.method_45474() && !actual.method_27852(ghost.state().method_26204());
-               int color = !loaded ? 12028159 : (conflict ? 16737659 : ghost.state().method_26205(context.world(), ghost.pos()).field_16011);
-               if (color == 0) {
-                  color = this.config.accentColor;
-               }
-
-               class_265 shape = ghost.state().method_26218(context.world(), ghost.pos());
-               class_238 bounds = (shape.method_1110() ? new class_238(0.0, 0.0, 0.0, 1.0, 1.0, 1.0) : shape.method_1107())
-                  .method_996(ghost.pos())
-                  .method_1014(0.002);
-               if (context.frustum().method_23093(bounds)) {
-                  boxes.add(
-                     new HighlightRenderer.DrawBox(
-                        bounds.method_989(-camera.field_1352, -camera.field_1351, -camera.field_1350),
-                        argb(color, this.config.autoBuilder.previewOpacity),
-                        argb(color, 0.8),
-                        1.3F,
-                        false
-                     )
-                  );
-               }
+         // The schematic ghost. Working out every ghost box (a world lookup, shape and colour each)
+         // on every frame, and drawing all six faces and twelve edges of thousands of boxes, took a
+         // big farm down to a couple of frames a second. The boxes are now worked out a few times a
+         // second, faces shared by two ghost cubes are left out, and only nearby ghosts get edges;
+         // each frame just culls them to the view.
+         this.refreshGhosts(context.world(), camera);
+         for (HighlightRenderer.GhostBox ghost : this.ghostBoxes) {
+            if (context.frustum().method_23093(ghost.bounds)) {
+               boxes.add(
+                  new HighlightRenderer.DrawBox(
+                     ghost.bounds.method_989(-camera.field_1352, -camera.field_1351, -camera.field_1350), ghost.fill, ghost.outline, 1.3F, false, ghost.faces
+                  )
+               );
             }
          }
 
          state.setData(this.frame, List.copyOf(boxes));
       }
+   }
+
+   private static final int[][] NEIGHBOURS = {{-1, 0, 0}, {1, 0, 0}, {0, -1, 0}, {0, 1, 0}, {0, 0, -1}, {0, 0, 1}};
+   private static final long GHOST_REFRESH_NANOS = 400_000_000L;
+   private static final double GHOST_EDGE_RANGE = 18.0;
+   private List<HighlightRenderer.GhostBox> ghostBoxes = List.of();
+   private long ghostsAt;
+   private class_243 ghostsCamera;
+   private Object ghostsWorld;
+   // Outline boxes by block state; a few dozen states cover a whole farm.
+   private final java.util.Map<class_2680, class_238> ghostShapes = new java.util.IdentityHashMap<>();
+
+   private void refreshGhosts(class_638 world, class_243 camera) {
+      long now = System.nanoTime();
+      if (world == this.ghostsWorld && this.ghostsCamera != null && now - this.ghostsAt < GHOST_REFRESH_NANOS
+         && this.ghostsCamera.method_1025(camera) < 36.0) {
+         return;
+      }
+      this.ghostsAt = now;
+      this.ghostsCamera = camera;
+      this.ghostsWorld = world;
+      List<Ghost> nearby = this.ghosts.nearby(camera);
+      if (nearby.isEmpty()) {
+         this.ghostBoxes = List.of();
+         return;
+      }
+      List<Ghost> shown = new ArrayList<>();
+      List<class_238> shapes = new ArrayList<>();
+      List<class_2680> actuals = new ArrayList<>();
+      it.unimi.dsi.fastutil.longs.LongOpenHashSet cubes = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+      for (Ghost ghost : nearby) {
+         boolean loaded = MaterialTracker.isLoaded(world, ghost.pos());
+         class_2680 actual = loaded ? world.method_8320(ghost.pos()) : null;
+         if (actual != null && actual.equals(ghost.state())) {
+            continue;
+         }
+         class_238 box = this.ghostShapes.computeIfAbsent(ghost.state(), ghostState -> {
+            class_265 shape = ghostState.method_26218(world, ghost.pos());
+            return shape.method_1110() ? new class_238(0.0, 0.0, 0.0, 1.0, 1.0, 1.0) : shape.method_1107();
+         });
+         shown.add(ghost);
+         shapes.add(box);
+         actuals.add(actual);
+         if (box.field_1323 <= 0.0 && box.field_1322 <= 0.0 && box.field_1321 <= 0.0 && box.field_1320 >= 1.0 && box.field_1325 >= 1.0 && box.field_1324 >= 1.0) {
+            cubes.add(ghost.pos().method_10063());
+         }
+      }
+      List<HighlightRenderer.GhostBox> result = new ArrayList<>(shown.size());
+      double edges = GHOST_EDGE_RANGE * GHOST_EDGE_RANGE;
+      for (int i = 0; i < shown.size(); i++) {
+         Ghost ghost = shown.get(i);
+         class_2338 pos = ghost.pos();
+         int faces = 63;
+         if (cubes.contains(pos.method_10063())) {
+            for (int face = 0; face < 6; face++) {
+               int[] d = NEIGHBOURS[face];
+               if (cubes.contains(class_2338.method_10064(pos.method_10263() + d[0], pos.method_10264() + d[1], pos.method_10260() + d[2]))) {
+                  faces &= ~(1 << face);
+               }
+            }
+            if (faces == 0) {
+               continue; // buried inside other ghost cubes: nothing of it can be seen
+            }
+         }
+         class_2680 actual = actuals.get(i);
+         boolean loaded = actual != null;
+         boolean conflict = actual != null && !actual.method_45474() && !actual.method_27852(ghost.state().method_26204());
+         int color = !loaded ? 12028159 : (conflict ? 16737659 : ghost.state().method_26205(world, pos).field_16011);
+         if (color == 0) {
+            color = this.config.accentColor;
+         }
+         class_238 bounds = shapes.get(i).method_996(pos).method_1014(0.002);
+         boolean near = class_243.method_24953(pos).method_1025(camera) < edges;
+         result.add(new HighlightRenderer.GhostBox(bounds, argb(color, this.config.autoBuilder.previewOpacity), near || conflict ? argb(color, 0.8) : 0, faces));
+      }
+      this.ghostBoxes = result;
    }
 
    private static int color(FinderSettings settings, TargetKind kind) {
@@ -255,7 +321,7 @@ public final class HighlightRenderer implements AutoCloseable {
 
             for (HighlightRenderer.DrawBox box : boxes) {
                if (box.fill >>> 24 != 0) {
-                  filled((box.throughWalls ? this.fillThrough : this.fillVisible).begin(), pose.method_23761(), box.bounds, box.fill);
+                  filled((box.throughWalls ? this.fillThrough : this.fillVisible).begin(), pose.method_23761(), box.bounds, box.fill, box.faces);
                }
 
                if (box.outline >>> 24 != 0) {
@@ -271,9 +337,12 @@ public final class HighlightRenderer implements AutoCloseable {
       }
    }
 
-   private static void filled(class_287 buffer, Matrix4fc pose, class_238 bounds, int color) {
-      for (int[] face : FACES) {
-         for (int corner : face) {
+   private static void filled(class_287 buffer, Matrix4fc pose, class_238 bounds, int color, int faces) {
+      for (int index = 0; index < FACES.length; index++) {
+         if ((faces & 1 << index) == 0) {
+            continue;
+         }
+         for (int corner : FACES[index]) {
             buffer.method_22918(pose, x(bounds, corner), y(bounds, corner), z(bounds, corner)).method_39415(color);
          }
       }
@@ -420,6 +489,14 @@ public final class HighlightRenderer implements AutoCloseable {
    }
 
    @Environment(EnvType.CLIENT)
-   private record DrawBox(class_238 bounds, int fill, int outline, float width, boolean throughWalls) {
+   /** A ghost box in world space, worked out a few times a second; faces is a bit per face to fill. */
+   private record GhostBox(class_238 bounds, int fill, int outline, int faces) {
+   }
+
+   private record DrawBox(class_238 bounds, int fill, int outline, float width, boolean throughWalls, int faces) {
+      DrawBox(class_238 bounds, int fill, int outline, float width, boolean throughWalls) {
+         this(bounds, fill, outline, width, throughWalls, 63);
+      }
+
    }
 }

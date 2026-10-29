@@ -30,11 +30,19 @@ final class SchematicModelPreview {
    private double pitch = 0.48;
    private double zoom = 1.0;
    private boolean sampled;
+   private static final int UP = 1;
+   private static final int EAST = 2;
+   private static final int WEST = 4;
+   private static final int SOUTH = 8;
+   private static final int NORTH = 16;
+   private long cachedKey;
+   private List<SchematicModelPreview.Face> cachedFaces;
 
    void setSchematic(Schematic value) {
       if (this.schematic != value) {
          this.schematic = value;
          this.voxels.clear();
+         this.cachedFaces = null;
          this.sampled = false;
          this.yaw = Math.PI / 4;
          this.pitch = 0.48;
@@ -63,8 +71,14 @@ final class SchematicModelPreview {
                   .toList();
             }
 
-            int stride = Math.max(1, (candidates.size() + 6000 - 1) / 6000);
+            int stride = Math.max(1, (candidates.size() + 4000 - 1) / 4000);
             this.sampled = stride > 1;
+            Set<class_2338> all = new HashSet<>();
+            if (stride == 1) {
+               for (Block block : value.blocks()) {
+                  all.add(block.pos());
+               }
+            }
 
             for (int i = 0; i < candidates.size(); i += stride) {
                Block block = candidates.get(i);
@@ -73,7 +87,16 @@ final class SchematicModelPreview {
                   rgb = 8954558;
                }
 
-               this.voxels.add(new SchematicModelPreview.Voxel(block.pos(), rgb));
+               // Faces with a block against them can never be seen; leave them out. (Sampled
+               // models keep every face, since the neighbours that would hide them are not drawn.)
+               class_2338 p = block.pos();
+               int open = stride > 1 ? 31
+                  : (all.contains(p.method_10084()) ? 0 : UP)
+                     | (all.contains(p.method_10078()) ? 0 : EAST)
+                     | (all.contains(p.method_10067()) ? 0 : WEST)
+                     | (all.contains(p.method_10072()) ? 0 : SOUTH)
+                     | (all.contains(p.method_10095()) ? 0 : NORTH);
+               this.voxels.add(new SchematicModelPreview.Voxel(p, rgb, open));
             }
          }
       }
@@ -100,6 +123,14 @@ final class SchematicModelPreview {
 
    void render(class_332 g, int x, int y, int width, int height) {
       if (this.schematic != null && !this.voxels.isEmpty()) {
+         // Projecting and depth-sorting every face of thousands of blocks each frame took a big
+         // farm's builder screen to a few frames a second. The sorted faces are kept until the view
+         // (angle, zoom, size or the schematic) changes.
+         long key = java.util.Objects.hash(this.yaw, this.pitch, this.zoom, x, y, width, height, System.identityHashCode(this.schematic), UiPaint.withOpacity(-1));
+         if (key == this.cachedKey && this.cachedFaces != null) {
+            submit(g, new SchematicModelPreview.ModelMesh(g, x, y, width, height, this.cachedFaces));
+            return;
+         }
          class_2338 d = this.schematic.dimensions();
          double cy = Math.cos(this.yaw);
          double sy = Math.sin(this.yaw);
@@ -115,10 +146,14 @@ final class SchematicModelPreview {
             cy >= 0.0 ? new int[][]{{1, 0, 1}, {0, 0, 1}, {0, 1, 1}, {1, 1, 1}} : new int[][]{{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}}
          };
 
+         int[] seen = {UP, sy >= 0.0 ? EAST : WEST, cy >= 0.0 ? SOUTH : NORTH};
          for (SchematicModelPreview.Voxel voxel : this.voxels) {
             int[] colors = new int[]{this.shade(voxel.color, 1.08), this.shade(voxel.color, 0.72), this.shade(voxel.color, 0.88)};
 
             for (int face = 0; face < 3; face++) {
+               if ((voxel.open & seen[face]) == 0) {
+                  continue;
+               }
                float[] points = new float[8];
                double depth = 0.0;
 
@@ -138,6 +173,8 @@ final class SchematicModelPreview {
          }
 
          faces.sort(Comparator.comparingDouble(SchematicModelPreview.Face::depth));
+         this.cachedKey = key;
+         this.cachedFaces = faces;
          submit(g, new SchematicModelPreview.ModelMesh(g, x, y, width, height, faces));
       }
    }
@@ -240,6 +277,6 @@ final class SchematicModelPreview {
    }
 
    @Environment(EnvType.CLIENT)
-   private record Voxel(class_2338 pos, int color) {
+   private record Voxel(class_2338 pos, int color, int open) {
    }
 }

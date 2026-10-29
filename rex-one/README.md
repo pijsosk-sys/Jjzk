@@ -1,6 +1,6 @@
 # REX One: faster Auto Build, climbing, water, a new builder screen and a shader
 
-Sources and tooling for REX One `1.0.0-one.17` (Minecraft 1.21.11, Fabric). The build takes the
+Sources and tooling for REX One `1.0.0-one.18` (Minecraft 1.21.11, Fabric). The build takes the
 released `1.0.0-one.13` jar, replaces or adds these classes, and adds the shader files:
 
 | Class | What changed |
@@ -19,6 +19,43 @@ released `1.0.0-one.13` jar, replaces or adds these classes, and adds the shader
 
 Classes that shipped only as bytecode were decompiled first, and each was committed unchanged
 before being edited, so `git log -p` shows exactly what changed.
+
+## New in one.18: no more lag on big farms, lava, a better screen
+
+**Lag.** Profiled with Java Flight Recorder on the bundled 15,460-block kelp farm, building on Fast:
+
+| | one.17 | one.18 |
+| --- | --- | --- |
+| ghost renderer, share of each frame | 29% | 8% |
+| world drawing, share of each frame | 33% | 18% |
+| frames per second (this test machine renders on the CPU) | 13 | 23 |
+| build speed | 9.1 blocks/s | 9.2 blocks/s |
+
+- The schematic ghost worked out every ghost box (a world lookup, shape and colour each) on every
+  frame and drew all six faces and twelve edges of up to 8,192 boxes. The boxes are now worked
+  out a few times a second, faces shared by two ghost cubes are left out (a solid wall of ghosts
+  only draws its surface), only ghosts within 18 blocks get edges, and ghosts reach 48 blocks
+  out, 4,096 at most.
+- The builder screen's 3D preview projected and depth-sorted every face of up to 6,000 blocks on
+  every frame. The sorted faces are now kept until the view changes, hidden faces are left out,
+  and big schematics are sampled to 4,000 blocks.
+- Target choice reads each block's material, fluid and facing from a table built once per
+  schematic instead of working them out for thousands of candidates per choice.
+
+**Lava.** Lava sources are poured with lava buckets, like water. Lava goes in last of all, once
+every solid block of the build is in, since poured early it flows into cells meant for blocks
+and sets wood, wool and leaves alight. Flowing lava forms on its own and is never placed. A
+two-basin test (9 lava and 9 water sources) completes on Fast and Safe, all exact.
+
+**Screen.**
+- *Options* row on the Placement card: Smooth aim, Sprint, Clean up (Remove Supports) and Pillar,
+  one click each. Pointing at one explains it.
+- A layer strip down the side of the 3D preview: one bar per layer, filled as it is built, green
+  when done, the layer being built marked. Pointing at it names the layer and its count.
+- The builder's own screen no longer pauses the build, so the live figures can be watched.
+
+**Camera.** Walking, the view rests on the ground a couple of steps ahead instead of a fixed
+angle, so it tips down for a drop and up for a climb, as a player's does.
 
 ## New in one.17: finishes real builds, cleans up after itself, looks human
 

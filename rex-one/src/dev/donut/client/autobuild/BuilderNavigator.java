@@ -15,6 +15,7 @@ import net.minecraft.class_241;
 import net.minecraft.class_243;
 import net.minecraft.class_2680;
 import net.minecraft.class_310;
+import net.minecraft.class_3532;
 import net.minecraft.class_3959;
 import net.minecraft.class_3965;
 import net.minecraft.class_744;
@@ -270,7 +271,11 @@ public final class BuilderNavigator {
             // Look the way a player would: along the walk while there is a way to go, at the block
             // for the last couple of steps, so the aim is mostly done on arrival.
             if (left > 2 && flat > 1.0E-4) {
-               BuilderLook.toward(client.field_1724, (float)Math.toDegrees(Math.atan2(-delta.field_1352, delta.field_1350)), 12.0F);
+               // Eyes on the ground a couple of steps ahead, as a player walking does: the view tips
+               // down for a drop and up for a climb instead of holding one fixed angle.
+               BuilderPathfinder.Cell ahead = this.route.get(Math.min(this.route.size() - 1, this.index + 2));
+               float[] look = BuilderLook.anglesTo(client.field_1724, ahead.x() + 0.5, ahead.y() + 0.3, ahead.z() + 0.5);
+               BuilderLook.toward(client.field_1724, (float)Math.toDegrees(Math.atan2(-delta.field_1352, delta.field_1350)), class_3532.method_15363(look[1], 4.0F, 38.0F));
             } else {
                float[] look = BuilderLook.anglesTo(
                   client.field_1724, destination.method_10263() + 0.5, destination.method_10264() + 0.5, destination.method_10260() + 0.5

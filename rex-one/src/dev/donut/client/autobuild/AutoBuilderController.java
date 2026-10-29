@@ -200,6 +200,19 @@ public final class AutoBuilderController {
    }
 
    /** The lowest layer with blocks still to place, or Integer.MIN_VALUE when there is none. */
+   /** Per blueprint layer, bottom up: {world y, blocks built, blocks in the layer}. For the builder screen. */
+   public int[][] layerProgress() {
+      java.util.TreeMap<Integer, int[]> layers = new java.util.TreeMap<>();
+      for (Target target : this.targets) {
+         int[] row = layers.computeIfAbsent(target.pos.method_10264(), y -> new int[]{y, 0, 0});
+         row[2]++;
+         if (this.correct.get(target.index) || this.settling.containsKey(target.pos)) {
+            row[1]++;
+         }
+      }
+      return layers.values().toArray(new int[0][]);
+   }
+
    public int workingLayer() {
       return this.work.isEmpty() ? Integer.MIN_VALUE : this.work.first().pos.method_10264();
    }
@@ -281,7 +294,8 @@ public final class AutoBuilderController {
       Set<class_1792> items = new HashSet<>();
       for (Target target : this.targets) {
          if (!this.correct.get(target.index)) {
-            items.add(waterSource(target.state) || kelp(target.state) ? class_1802.field_8705 : MaterialTracker.requirement(target.state).item());
+            items.add(lavaSource(target.state) ? class_1802.field_8187
+               : waterSource(target.state) || kelp(target.state) ? class_1802.field_8705 : MaterialTracker.requirement(target.state).item());
             if (kelp(target.state)) {
                items.add(class_1802.field_17532);
             }
@@ -369,6 +383,18 @@ public final class AutoBuilderController {
             class_2338 pos = this.transform.apply(block.pos());
             values.add(new Target(pos, state, index, false));
             this.indices.put(pos, index);
+         }
+
+         // What target choice asks about every candidate, worked out once: it weighs thousands of
+         // candidates per choice, and recomputing these for each was a tenth of a frame on a big farm.
+         this.itemOf = new class_1792[blocks.size()];
+         this.traits = new byte[blocks.size()];
+         for (Target target : values) {
+            this.itemOf[target.index] = MaterialTracker.requirement(target.state).item();
+            this.traits[target.index] = (byte)((waterSource(target.state) || kelp(target.state) || lavaSource(target.state) ? FLUID : 0)
+               | (lavaSource(target.state) ? LAVA : 0)
+               | (directional(target.state) ? DIRECTIONAL : 0)
+               | (MaterialTracker.isSecondary(target.state) ? SECONDARY : 0));
          }
 
          values.sort(
@@ -475,8 +501,11 @@ public final class AutoBuilderController {
             } else {
                this.failures.clear();
                this.deferred.clear();
-      this.arrivals.clear();
-      this.climbs.clear();
+               this.arrivals.clear();
+               this.climbs.clear();
+               this.badPillarSpots.clear();
+               this.badSupports.clear();
+               this.deferRounds = 0;
                this.lastFailure = "";
                this.noProgress = 0;
                this.current = null;
@@ -620,7 +649,9 @@ public final class AutoBuilderController {
             // Placing a sign opens its editor, which would pause the build: press Done for it.
             editor.method_25419();
             this.reason = "Closed the sign editor";
-         } else if (client.field_1755 != null || client.method_1493()) {
+         } else if (client.field_1755 != null && !(client.field_1755 instanceof dev.donut.client.gui.AutoBuilderScreen) || client.method_1493()) {
+            // The builder's own screen does not pause it, so the live figures and the layer strip
+            // can be watched while it works. Any other menu still does.
             this.pauseWith("An open menu paused construction. Close it, then Resume.");
          } else if (!client.field_1724.method_5805() || client.field_1724.method_31481()) {
             this.pauseWith("Player unavailable. Resume after respawning.");
@@ -768,8 +799,9 @@ public final class AutoBuilderController {
                            MaterialTracker.Requirement requirement = MaterialTracker.requirement(
                               this.current.state
                            );
-                           boolean water = needsWater(this.current.state, actual);
-                           class_1792 needed = water ? class_1802.field_8705 : requirement.item();
+                           boolean lava = needsLava(this.current.state, actual);
+                           boolean water = lava || needsWater(this.current.state, actual);
+                           class_1792 needed = lava ? class_1802.field_8187 : water ? class_1802.field_8705 : requirement.item();
                            if (!water && (requirement.item() == class_1802.field_8162 || !(requirement.item() instanceof class_1747))) {
                               this.defer(
                                  "This block requires manual placement: "
@@ -816,7 +848,7 @@ public final class AutoBuilderController {
                                     this.reason = (
                                           this.current.support
                                              ? "Placing a temporary support"
-                                             : (water ? "Pouring water" : (plan.configure() ? "Setting block state" : "Placing block"))
+                                             : (lava ? "Pouring lava" : water ? "Pouring water" : (plan.configure() ? "Setting block state" : "Placing block"))
                                        )
                                        + " at "
                                        + coordinates(this.current.pos);
@@ -945,17 +977,18 @@ public final class AutoBuilderController {
          // height is in: poured early, it flows into the cells where walls and pistons belong.
          int lowestSolid = Integer.MAX_VALUE;
          for (Target target : this.work) {
-            if (!waterSource(target.state) && !kelp(target.state)) {
+            if ((this.trait(target) & FLUID) == 0) {
                lowestSolid = target.pos.method_10264();
                break;
             }
          }
          for (class_2338 pos : this.deferred) {
             Integer index = this.indices.get(pos);
-            if (index != null && !waterSource(this.byIndex[index].state) && !kelp(this.byIndex[index].state)) {
+            if (index != null && (this.traits[index] & FLUID) == 0) {
                lowestSolid = Math.min(lowestSolid, pos.method_10264());
             }
          }
+         boolean solidsLeft = lowestSolid != Integer.MAX_VALUE;
          // Materials already in the hotbar: a block of one of those costs no inventory shuffle.
          Set<class_1792> hotbar = new HashSet<>();
          for (int slot = 0; slot < 9; slot++) {
@@ -963,22 +996,35 @@ public final class AutoBuilderController {
          }
          this.nearby.clear();
          this.nearbyScores.clear();
+         class_243 feet = client.field_1724.method_73189();
+         double px = feet.field_1352;
+         double py = feet.field_1351;
+         double pz = feet.field_1350;
 
          for (Target target : this.work) {
             if (++examined > BuildTempo.candidates() || target.pos.method_10264() > minimumY + BuildTempo.layers()) {
                break;
             }
-            if ((waterSource(target.state) || kelp(target.state)) && target.pos.method_10264() >= lowestSolid) {
+            int trait = this.trait(target);
+            if ((trait & FLUID) != 0 && target.pos.method_10264() >= lowestSolid) {
+               continue;
+            }
+            // Lava last of all: poured while any solid block is still missing, it flows into cells
+            // meant for blocks, and it sets wood, wool and leaves alight.
+            if ((trait & LAVA) != 0 && solidsLeft) {
                continue;
             }
 
-            double score = client.field_1724.method_73189().method_1025(class_243.method_24953(target.pos))
+            double dx = target.pos.method_10263() + 0.5 - px;
+            double dy = target.pos.method_10264() + 0.5 - py;
+            double dz = target.pos.method_10260() + 0.5 - pz;
+            double score = dx * dx + dy * dy + dz * dz
                + (target.pos.method_10264() - minimumY) * 64
-               + (MaterialTracker.isSecondary(target.state) ? 512 : 0)
-               + (hotbar.contains(MaterialTracker.requirement(target.state).item()) ? 0 : 12)
+               + ((trait & SECONDARY) != 0 ? 512 : 0)
+               + (target.index >= 0 && hotbar.contains(this.itemOf[target.index]) ? 0 : 12)
                // Blocks that face a way (pistons, observers, stairs) can be placed from far fewer
                // spots: build them first, while the spots are still open.
-               - (directional(target.state) ? 40 : 0);
+               - ((trait & DIRECTIONAL) != 0 ? 40 : 0);
             if (score < bestScore) {
                bestScore = score;
                best = target;
@@ -1240,7 +1286,8 @@ public final class AutoBuilderController {
                this.send(client, this.current, plan);
             } else {
                this.prepared = new Prepared(this.current, plan, this.tick + 1);
-               this.reason = (bucket ? "Aligning to pour water at " : "Aligning for placement at ") + coordinates(this.current.pos);
+               this.reason = (bucket ? (lavaSource(this.current.state) ? "Aligning to pour lava at " : "Aligning to pour water at ") : "Aligning for placement at ")
+                  + coordinates(this.current.pos);
             }
          }
       }
@@ -1256,6 +1303,17 @@ public final class AutoBuilderController {
    /** A water source, or a bubble column, which is a water source over soul sand or magma. */
    private static boolean waterSource(class_2680 state) {
       return state.method_27852(class_2246.field_10382) && state.method_26227().method_15771() || state.method_27852(class_2246.field_10422);
+   }
+
+   private static final byte FLUID = 1;
+   private static final byte DIRECTIONAL = 2;
+   private static final byte SECONDARY = 4;
+   private static final byte LAVA = 8;
+   private class_1792[] itemOf = new class_1792[0];
+   private byte[] traits = new byte[0];
+
+   private byte trait(Target target) {
+      return target.index >= 0 && target.index < this.traits.length ? this.traits[target.index] : 0;
    }
 
    private static boolean directional(class_2680 state) {
@@ -1284,6 +1342,8 @@ public final class AutoBuilderController {
          return true;
       } else if (waterSource(desired)) {
          return waterSource(actual);
+      } else if (lavaSource(desired)) {
+         return lavaSource(actual);
       } else if (kelp(desired)) {
          return kelp(actual);
       } else if (desired.method_26204() != actual.method_26204()) {
@@ -1314,6 +1374,15 @@ public final class AutoBuilderController {
    }
 
    /** A water cell with no source yet, or a kelp cell that needs its water before the kelp. */
+   /** A still lava source; flowing lava forms on its own and is never placed. */
+   private static boolean lavaSource(class_2680 state) {
+      return state.method_27852(class_2246.field_10164) && state.method_26227().method_15771();
+   }
+
+   private static boolean needsLava(class_2680 desired, class_2680 actual) {
+      return lavaSource(desired) && !lavaSource(actual);
+   }
+
    private static boolean needsWater(class_2680 desired, class_2680 actual) {
       return waterSource(desired) && !waterSource(actual) || kelp(desired) && !waterSource(actual) && !kelp(actual);
    }
@@ -1370,7 +1439,8 @@ public final class AutoBuilderController {
                class_243 delta = point.method_1020(eye);
                float yaw = (float)Math.toDegrees(Math.atan2(-delta.field_1352, delta.field_1350));
                float pitch = (float)Math.toDegrees(Math.atan2(-delta.field_1351, Math.hypot(delta.field_1352, delta.field_1350)));
-               return new PlacementPlanner.Plan(new class_3965(point, face, support, false), class_2246.field_10382.method_9564(), yaw, pitch, false);
+               class_2680 poured = lavaSource(target.state) ? class_2246.field_10164.method_9564() : class_2246.field_10382.method_9564();
+               return new PlacementPlanner.Plan(new class_3965(point, face, support, false), poured, yaw, pitch, false);
             }
          }
       }
@@ -1930,7 +2000,7 @@ public final class AutoBuilderController {
       class_746 player = client.field_1724;
       class_2680 actual = client.field_1687.method_8320(target.pos);
       class_1792 item = MaterialTracker.requirement(target.state).item();
-      if (!needsWater(target.state, actual) && actual.method_26215() && item instanceof class_1747) {
+      if (!needsWater(target.state, actual) && !needsLava(target.state, actual) && actual.method_26215() && item instanceof class_1747) {
          int slot = donut$findInventorySlot(client, item);
          class_1799 stack = slot >= 0 ? player.method_31548().method_5438(slot) : new class_1799(item);
          double x = player.method_23317();
@@ -1949,6 +2019,9 @@ public final class AutoBuilderController {
 
    private void requeueDeferredNear(class_2338 placed) {
       this.deferRounds = 0;
+      // A spot that did not work before may now: the build around it changed.
+      this.badPillarSpots.clear();
+      this.badSupports.clear();
       java.util.Iterator<class_2338> it = this.deferred.iterator();
       while (it.hasNext()) {
          class_2338 pos = it.next();
@@ -1972,6 +2045,8 @@ public final class AutoBuilderController {
          return false;
       }
       this.deferRounds++;
+      this.badPillarSpots.clear();
+      this.badSupports.clear();
       for (class_2338 pos : this.deferred) {
          Integer index = this.indices.get(pos);
          if (index != null && !this.correct.get(index)) {

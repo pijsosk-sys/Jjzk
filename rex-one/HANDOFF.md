@@ -4,12 +4,15 @@ Everything is on branch `claude/yo-b2792p` of `pijsosk-sys/Jjzk`, in `rex-one/`.
 new chat, tell it: *"Read rex-one/HANDOFF.md, rex-one/README.md and
 rex-one/HOW-I-RAN-MINECRAFT.md, then continue."*
 
-## What exists now (version 1.0.0-one.17)
+## What exists now (version 1.0.0-one.18)
 
 **Jar:** `rex-one/out/REX-One-1.21.11.jar`. Drop it into `mods/` in place of the old jar; it
 needs Fabric Loader 0.18.4+, Fabric API and Baritone, as before.
 
 **Auto Build:**
+- **one.18:** big farms no longer lag (ghost renderer 29% -> 8% of a frame, cached 3D preview),
+  lava sources are poured with lava buckets (after every solid block), an Options row and a
+  layer progress strip on the builder screen, and the screen no longer pauses the build.
 - **one.17:** finishes the bundled cabin on Fast (it stalled at half), removes its pillars and
   supports at the end (*Remove Supports*), pillars next to the block it needs, drops 2-3 blocks to
   get down, only walks to spots it can really place from, sprints, and aims smoothly
@@ -62,6 +65,9 @@ Driver options:
 - `-Drexsmoke.shader=true` takes shader screenshots.
 - `-Drexsmoke.thirdPerson=true` films from behind; `-Drexsmoke.clean=true` clears pop-ups.
 - `test/runtime/record.sh out.mp4 <run.sh args>` screen-records a run with ffmpeg.
+- `python3 test/make_house.py pools.schem pools` makes the lava and water basins test.
+- Profiling: add `-XX:StartFlightRecording=filename=x.jfr,settings=profile` to run.sh, then
+  `jfr print --stack-depth 80 --events jdk.ExecutionSample x.jfr`; the render thread is "main".
 - `-Drexsmoke.ui=true` screenshots the module menu, the builder screen and the Custom editor, then quits.
 - `-Drexsmoke.maxSeconds=N` and `-Drexsmoke.stallSeconds=N` set the time limits.
 - `GAME_DIR=...` runs two games side by side.

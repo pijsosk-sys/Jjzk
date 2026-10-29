@@ -121,6 +121,7 @@ public final class SmokeDriver implements ClientModInitializer {
             this.wait = 60;
          }
          case 21 -> {
+            this.log("fps in the world (module menu open): " + client.method_47599());
             class_318.method_22690(client.field_1697, "rexsmoke-menu.png", client.method_1522(), 1, message -> {});
             AutoBuilderController.get().setSchematic(this.schematic);
             AutoBuilderController.get().setTransform(new PlacementTransform(ORIGIN, 0, false));
@@ -130,6 +131,7 @@ public final class SmokeDriver implements ClientModInitializer {
             this.wait = 60;
          }
          case 22 -> {
+            this.log("fps with the builder screen open: " + client.method_47599());
             class_318.method_22690(client.field_1697, "rexsmoke-builder-screen.png", client.method_1522(), 1, message -> {});
             choose(Class.forName("rex.BuildTempo$Preset").getField("CUSTOM").get(null));
             Method open = AutoBuilderScreen.class.getDeclaredMethod("openTempo");
@@ -219,8 +221,8 @@ public final class SmokeDriver implements ClientModInitializer {
             if (this.ticks % 40 == 0) {
                // A heartbeat, so a long stretch of one reason (a stall) still shows where the player was.
                net.minecraft.class_746 p = client.field_1724;
-               this.transitions.addLast(String.format(Locale.ROOT, "%d   ... %s | at %.2f %.2f %.2f yaw %.0f pitch %.0f ground %s",
-                  this.ticks, reason, p.method_23317(), p.method_23318(), p.method_23321(), p.method_36454(), p.method_36455(), p.method_24828()));
+               this.transitions.addLast(String.format(Locale.ROOT, "%d   ... %s | at %.2f %.2f %.2f yaw %.0f pitch %.0f ground %s fps %d",
+                  this.ticks, reason, p.method_23317(), p.method_23318(), p.method_23321(), p.method_36454(), p.method_36455(), p.method_24828(), client.method_47599()));
                if (this.transitions.size() > 30) {
                   this.transitions.removeFirst();
                }
