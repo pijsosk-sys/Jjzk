@@ -4,12 +4,30 @@ Everything is on branch `ccr-20343ee0-s6lunp` of `pijsosk-sys/Jjzk`, in `rex-one
 new chat, tell it: *"Read rex-one/HANDOFF.md, rex-one/README.md and
 rex-one/HOW-I-RAN-MINECRAFT.md, then continue."*
 
-## What exists now (version 1.0.0-one.21)
+## What exists now (version 1.0.0-one.22)
 
 **Jar:** `rex-one/out/REX-One-1.21.11.jar`. Drop it into `mods/` in place of the old jar; it
 needs Fabric Loader 0.18.4+, Fabric API and Baritone, as before.
 
 **Auto Build:**
+- **one.22:**
+  - **Security audit** (SECURITY.md): nothing malicious. Spotify HUD's PowerShell calls are
+    removed by `tools/Harden.java`, which runs in `build.sh` and empties any method that starts a
+    process.
+  - **New module menu** `dev.donut.client.gui.OneMenuScreen`: it extends the old
+    `ClickGuiScreen`, and `Modules.add` swaps it into `KryptonClient.clickGui`. It has a sidebar
+    with categories, Active, Favorites (`config/rex-one-favorites.txt`) and search; module cards;
+    and a settings panel with native controls. Click areas are rebuilt every frame, and the last
+    one added wins a click. Classic mode falls back to the old panels.
+  - The builder screen shares its theme (accent from Krypton+).
+  - **Startup crash fixed:** the font atlas got slack for stb's overrun (`src/dev/krypton/render/FontAtlas.java`).
+  - **Seven new test builds** (`test/make_builds.py`).
+  - **Navigation fixes:** standing on a valid spot no longer reads as "no route", and nothing
+    reachable from a pillar is left behind. There's a movement watchdog that replanning can't
+    reset, failed searches are remembered until the world changes, and extra steps per tick
+    are capped at 6 ms or 2,500 search cells. Pillar spots are scored by coverage and searched
+    down to 16 below. Supports can sit beside a block, on anything solid. Beds are no longer
+    ground. Wall-mounted blocks don't keep the block under them.
 - **one.21:** lag-proof, plus a **Server** preset. Placements never click a block the server
   hasn't confirmed (a refused one made the next block land one off). Wrong blocks in spots that
   started empty are broken and re-placed (`startFix`, `startedEmpty`). No placing for one round
@@ -96,6 +114,9 @@ Driver options:
 - `-Drexsmoke.starts=true` presses the builder screen's real Start on every library file and logs
   what happened (and the screen's message). Add `creative=true` for creative.
 - `python3 test/make_farms.py` regenerates the bundled farm schematics.
+- `-Drexsmoke.ui=true` also clicks the new menu for real (a card's switch, its star, typing a
+  search) and logs the outcome; screenshots rexsmoke-menu*.png.
+- `python3 test/make_builds.py DIR` writes the seven new test builds.
 - Lag simulator: `-Drexsmoke.ping=200 -Drexsmoke.jitter=60` delays packets both ways (in order),
   `-Drexsmoke.rollback=0.03` has the server refuse that share of fresh blueprint blocks,
   `-Drexsmoke.rubberband=15` sets the player back a second every 15 s. Results get a `lag:` line.

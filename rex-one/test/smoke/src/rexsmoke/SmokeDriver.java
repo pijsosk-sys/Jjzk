@@ -203,13 +203,90 @@ public final class SmokeDriver implements ClientModInitializer {
                   this.log("render module: " + module.getClass().getMethod("getName").invoke(module));
                }
             }
-            client.method_1507((net.minecraft.class_437)Class.forName("dev.krypton.gui.ClickGuiScreen").getConstructor().newInstance());
-            this.phase = 21;
+            // The client's own menu instance, which this build swaps for the redesigned one.
+            Object menu = krypton.getClass().getField("clickGui").get(krypton);
+            this.log("menu screen: " + menu.getClass().getName());
+            client.method_1507((net.minecraft.class_437)menu);
+            this.phase = 25;
             this.wait = 60;
+         }
+         case 25 -> {
+            class_318.method_22690(client.field_1697, "rexsmoke-menu.png", client.method_1522(), 1, message -> {});
+            // a module with plenty of settings, picked as a click on its card would
+            Object krypton = Class.forName("dev.krypton.client.KryptonClient").getField("instance").get(null);
+            Object manager = krypton.getClass().getField("moduleManager").get(krypton);
+            Object pick = null;
+            int most = -1;
+            for (Object module : (List<?>)manager.getClass().getMethod("all").invoke(manager)) {
+               int count = ((List<?>)module.getClass().getMethod("getSettings").invoke(module)).size();
+               if (count > most) {
+                  most = count;
+                  pick = module;
+               }
+            }
+            if (client.field_1755 != null && client.field_1755.getClass().getSimpleName().equals("OneMenuScreen")) {
+               Method select = client.field_1755.getClass().getDeclaredMethod("select", Class.forName("dev.krypton.core.module.Module"));
+               select.setAccessible(true);
+               select.invoke(client.field_1755, pick);
+               Field view = client.field_1755.getClass().getDeclaredField("view");
+               view.setAccessible(true);
+               view.set(client.field_1755, String.valueOf(pick.getClass().getMethod("getCategory").invoke(pick)));
+            }
+            this.phase = 26;
+            this.wait = 40;
+         }
+         case 26 -> {
+            class_318.method_22690(client.field_1697, "rexsmoke-menu-settings.png", client.method_1522(), 1, message -> {});
+            net.minecraft.class_437 screen = client.field_1755;
+            if (screen != null && screen.getClass().getSimpleName().equals("OneMenuScreen")) {
+               // Real clicks, as a player makes them: the first card's switch, then its star, in the
+               // view the last frame drew (the click areas are rebuilt every frame).
+               Method shown = screen.getClass().getDeclaredMethod("shown");
+               shown.setAccessible(true);
+               // A card whose module switches freely (Auto Build, for one, will not turn on with no build).
+               List<?> cards = (List<?>)shown.invoke(screen);
+               Object first = cards.get(0);
+               int index = 0;
+               for (int i = 0; i < Math.min(8, cards.size()); i++) {
+                  Object module = cards.get(i);
+                  boolean was = (Boolean)module.getClass().getMethod("isEnabled").invoke(module);
+                  module.getClass().getMethod("toggle").invoke(module);
+                  boolean moved = (Boolean)module.getClass().getMethod("isEnabled").invoke(module) != was;
+                  if (moved) {
+                     module.getClass().getMethod("toggle").invoke(module);
+                     first = module;
+                     index = i;
+                     break;
+                  }
+               }
+               Method enabled = first.getClass().getMethod("isEnabled");
+               double sx = 200 + 16 + index % 2 * 180 + 172 - 24;
+               double sy = 52 + index / 2 * 60 + 15;
+               boolean before = (Boolean)enabled.invoke(first);
+               this.clickMenu(client, screen, sx, sy);
+               boolean after = (Boolean)enabled.invoke(first);
+               this.clickMenu(client, screen, sx, sy); // and back
+               this.log(String.format(Locale.ROOT, "menu click on the switch of %s: %s -> %s, back to %s",
+                  first.getClass().getMethod("getName").invoke(first), before, after, enabled.invoke(first)));
+               this.clickMenu(client, screen, 200 + 16 + 172 - 14, 52 + 40);
+               Method favorite = screen.getClass().getDeclaredMethod("favorite", Class.forName("dev.krypton.core.module.Module"));
+               favorite.setAccessible(true);
+               this.log("menu click on the star: favorite now " + favorite.invoke(null, first));
+               this.clickMenu(client, screen, 200 + 16 + 172 - 14, 52 + 40); // and back
+               // typing anywhere searches
+               for (char c : "esp".toCharArray()) {
+                  screen.method_25400(new net.minecraft.class_11905(c, 0));
+               }
+               Field query = screen.getClass().getDeclaredField("query");
+               query.setAccessible(true);
+               this.log("typed \"esp\": query is \"" + query.get(screen) + "\", " + ((List<?>)shown.invoke(screen)).size() + " modules shown");
+            }
+            this.phase = 21;
+            this.wait = 40;
          }
          case 21 -> {
             this.log("fps in the world (module menu open): " + client.method_47599());
-            class_318.method_22690(client.field_1697, "rexsmoke-menu.png", client.method_1522(), 1, message -> {});
+            class_318.method_22690(client.field_1697, "rexsmoke-menu-search.png", client.method_1522(), 1, message -> {});
             AutoBuilderController.get().setSchematic(this.schematic);
             AutoBuilderController.get().setTransform(new PlacementTransform(ORIGIN, 0, false));
             choose(Class.forName("rex.BuildTempo$Preset").getField("FAST").get(null));
@@ -431,6 +508,20 @@ public final class SmokeDriver implements ClientModInitializer {
          default -> {
          }
       }
+   }
+
+   /** A left click at a point of the menu's own 900x540 canvas, through the screen's real input path. */
+   private void clickMenu(class_310 client, net.minecraft.class_437 screen, double vx, double vy) throws Exception {
+      Field scale = screen.getClass().getDeclaredField("scale");
+      Field ox = screen.getClass().getDeclaredField("originX");
+      Field oy = screen.getClass().getDeclaredField("originY");
+      scale.setAccessible(true);
+      ox.setAccessible(true);
+      oy.setAccessible(true);
+      double x = (Float)ox.get(screen) + vx * (Float)scale.get(screen);
+      double y = (Float)oy.get(screen) + vy * (Float)scale.get(screen);
+      // The hit areas are rebuilt every frame; draw one first so they exist at this point.
+      screen.method_25402(new net.minecraft.class_11909(x, y, new net.minecraft.class_11910(0, 0)), false);
    }
 
    private int[] verify(class_3218 world) {

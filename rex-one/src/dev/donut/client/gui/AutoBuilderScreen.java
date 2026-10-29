@@ -41,13 +41,13 @@ import net.minecraft.class_746;
 public final class AutoBuilderScreen extends class_437 {
    private static final int W = 840;
    private static final int H = 510;
-   private static final int TEXT = -1250061;
-   private static final int MUTED = -6052942;
-   private static final int DIM = -9671552;
-   private static final int PANEL = -15724265;
-   private static final int CARD = -15657700;
-   private static final int BORDER = -14079434;
-   private static final int INSET = -16184044;
+   private static final int TEXT = 0xFFE9ECF2;
+   private static final int MUTED = 0xFF9AA1B2;
+   private static final int DIM = 0xFF666E80;
+   private static final int PANEL = 0xFF101219;
+   private static final int CARD = 0xFF171A23;
+   private static final int BORDER = 0xFF252A37;
+   private static final int INSET = 0xFF0A0C11;
    private static final int GOOD = 0xFF5BD68A;
    private static final int WARN = -14741;
    private static final int ROW = 30;
@@ -184,7 +184,7 @@ public final class AutoBuilderScreen extends class_437 {
 
             if (this.keyboardFocus >= 0 && this.keyboardFocus < this.hits.size()) {
                Hit h = this.hits.get(this.keyboardFocus);
-               UiPaint.outline(g, h.x - 1, h.y - 1, h.w + 2, h.h + 2, 5, UiPaint.alpha(this.config.accentColor, 0.85));
+               UiPaint.outline(g, h.x - 1, h.y - 1, h.w + 2, h.h + 2, 5, UiPaint.alpha(this.accent(), 0.85));
             }
          } finally {
             g.method_51448().popMatrix();
@@ -194,9 +194,9 @@ public final class AutoBuilderScreen extends class_437 {
    }
 
    private void drawHeader(class_332 g) {
-      UiPaint.round(g, 1, 1, W - 2, 51, 13, UiPaint.blend(PANEL, this.config.accentColor, 0.06));
-      UiPaint.round(g, 1, 40, W - 2, 12, 0, UiPaint.blend(PANEL, this.config.accentColor, 0.06));
-      UiPaint.cube(g, 22, 16, 17, UiPaint.alpha(this.config.accentColor, 1.0), 0.95, 0.25);
+      UiPaint.round(g, 1, 1, W - 2, 51, 13, UiPaint.blend(PANEL, this.accent(), 0.06));
+      UiPaint.round(g, 1, 40, W - 2, 12, 0, UiPaint.blend(PANEL, this.accent(), 0.06));
+      UiPaint.cube(g, 22, 16, 17, UiPaint.alpha(this.accent(), 1.0), 0.95, 0.25);
       UiPaint.strong(g, this.field_22793, "Auto Build", 52, 15, TEXT);
       UiPaint.text(g, this.field_22793, "REX One  /  schematics/donut", 52, 31, DIM);
       String status = statusLabel(this.builder.status());
@@ -262,17 +262,21 @@ public final class AutoBuilderScreen extends class_437 {
                Path file = shown.get(i);
                boolean selected = file.equals(this.selectedFile);
                boolean hover = this.inside(x + 10, ry, w - 22, ROW - 3) && this.mouseY >= top && this.mouseY < bottom;
-               UiPaint.round(g, x + 10, ry, w - 22, ROW - 3, 5, UiPaint.blend(CARD, this.config.accentColor, selected ? 0.26 : (hover ? 0.1 : 0.0)));
+               UiPaint.round(g, x + 10, ry, w - 22, ROW - 3, 5, UiPaint.blend(CARD, this.accent(), selected ? 0.26 : (hover ? 0.1 : 0.0)));
                if (selected) {
-                  UiPaint.round(g, x + 10, ry + 5, 3, ROW - 13, 1, UiPaint.alpha(this.config.accentColor, 1.0));
+                  UiPaint.round(g, x + 10, ry + 5, 3, ROW - 13, 1, UiPaint.alpha(this.accent(), 1.0));
                }
 
                String name = file.getFileName().toString();
                int dot = name.lastIndexOf('.');
                String base = dot > 0 ? name.substring(0, dot) : name;
-               String kind = dot > 0 ? name.substring(dot + 1).toUpperCase(Locale.ROOT) : "";
-               UiPaint.text(g, this.field_22793, this.ellipsize(base, w - 78), x + 20, ry + 9, selected ? TEXT : MUTED);
-               UiPaint.right(g, this.field_22793, this.ellipsize(kind, 44), x + w - 18, ry + 9, DIM);
+               boolean litematic = name.toLowerCase(Locale.ROOT).endsWith(".litematic");
+               String kind = litematic ? "litematic" : "schem";
+               int badge = UiPaint.smallWidth(this.field_22793, kind) + 10;
+               int tint = litematic ? 0xFF60A5FA : 0xFF34D399;
+               UiPaint.text(g, this.field_22793, this.ellipsize(base, w - 44 - badge), x + 20, ry + 9, selected ? TEXT : MUTED);
+               UiPaint.round(g, x + w - 18 - badge, ry + 7, badge, 13, 4, UiPaint.alpha(tint, 0.16));
+               UiPaint.smallText(g, this.field_22793, kind, x + w - 13 - badge, ry + 10, tint);
                this.hit("file" + i, x + 10, Math.max(top, ry), w - 22, Math.min(bottom, ry + ROW - 3) - Math.max(top, ry), () -> this.load(file));
             }
          }
@@ -404,7 +408,7 @@ public final class AutoBuilderScreen extends class_437 {
       int opacity = (int)Math.round(this.config.autoBuilder.previewOpacity * 100.0);
       this.button(g, "opacityDown", "-", x + 100, y + 120, 22, true, false, () -> this.setOpacity(-0.05));
       UiPaint.round(g, x + 128, y + 127, 80, 4, 2, INSET);
-      UiPaint.round(g, x + 128, y + 127, (int)(80.0 * Math.clamp(opacity / 100.0, 0.0, 1.0)), 4, 2, UiPaint.alpha(this.config.accentColor, 0.9));
+      UiPaint.round(g, x + 128, y + 127, (int)(80.0 * Math.clamp(opacity / 100.0, 0.0, 1.0)), 4, 2, UiPaint.alpha(this.accent(), 0.9));
       UiPaint.text(g, this.field_22793, opacity + "%", x + 214, y + 129, MUTED);
       this.button(g, "opacityUp", "+", x + 244, y + 120, 22, true, false, () -> this.setOpacity(0.05));
       if (this.builder.schematic() != null && !this.builder.schematic().warnings().isEmpty()) {
@@ -468,7 +472,7 @@ public final class AutoBuilderScreen extends class_437 {
          int bottom = y + h - (int)Math.round(i * step);
          int size = Math.max(1, bottom - top - (step >= 4.0 ? 1 : 0));
          double done = row[2] == 0 ? 1.0 : (double)row[1] / row[2];
-         int color = done >= 1.0 ? GOOD : UiPaint.blend(INSET, this.config.accentColor, 0.25 + 0.75 * done);
+         int color = done >= 1.0 ? GOOD : UiPaint.blend(INSET, this.accent(), 0.25 + 0.75 * done);
          UiPaint.round(g, x, top, w, size, 0, color);
          if (row[0] == working && this.builder.isRunning()) {
             UiPaint.round(g, x - 4, top, 3, size, 0, TEXT);
@@ -542,9 +546,9 @@ public final class AutoBuilderScreen extends class_437 {
          boolean selected = preset == current;
          String id = "preset" + i;
          double hover = this.animate(id, tempo && this.inside(px, py, cell, 20));
-         UiPaint.round(g, px, py, cell, 20, 5, UiPaint.blend(INSET, this.config.accentColor, selected ? 0.6 : hover * 0.2));
+         UiPaint.round(g, px, py, cell, 20, 5, UiPaint.blend(INSET, this.accent(), selected ? 0.6 : hover * 0.2));
          if (selected) {
-            UiPaint.outline(g, px, py, cell, 20, 5, UiPaint.alpha(this.config.accentColor, 0.9));
+            UiPaint.outline(g, px, py, cell, 20, 5, UiPaint.alpha(this.accent(), 0.9));
          }
 
          String label = preset.label();
@@ -560,11 +564,12 @@ public final class AutoBuilderScreen extends class_437 {
       }
 
       String ceiling = !tempo ? "Build Tempo is unavailable" : String.format(Locale.ROOT, "Up to %.0f blocks/s", BuildTempo.ceiling());
-      UiPaint.text(g, this.field_22793, ceiling, x + 12, sy + (current == BuildTempo.Preset.CUSTOM ? 60 : 64), MUTED);
       if (current == BuildTempo.Preset.CUSTOM) {
+         UiPaint.text(g, this.field_22793, ceiling, x + 12, sy + 62, MUTED);
          this.button(g, "editCustom", "Edit custom speed...", x + 12, sy + 73, w - 24, 17, true, false, this::openTempo);
       } else {
-         UiPaint.text(g, this.field_22793, presetNote(current), x + 12, sy + 77, DIM);
+         UiPaint.text(g, this.field_22793, ceiling, x + 12, sy + 66, TEXT);
+         UiPaint.smallText(g, this.field_22793, this.ellipsize(presetNote(current), w - 24), x + 12, sy + 79, MUTED);
       }
       int ay = y + 268;
       String action = this.builder.status() == AutoBuilderController.Status.PAUSED ? "Resume" : (this.builder.isRunning() ? "Pause" : "Start building");
@@ -636,14 +641,14 @@ public final class AutoBuilderScreen extends class_437 {
 
    private void card(class_332 g, int x, int y, int w, int h) {
       UiPaint.round(g, x, y, w, h, 9, BORDER);
-      UiPaint.round(g, x + 1, y + 1, w - 2, h - 2, 8, UiPaint.blend(CARD, this.config.accentColor, 0.035));
+      UiPaint.round(g, x + 1, y + 1, w - 2, h - 2, 8, UiPaint.blend(CARD, this.accent(), 0.035));
    }
 
    private int statusColor() {
       return switch (this.builder.status()) {
          case RUNNING -> GOOD;
          case PAUSED -> WARN;
-         case COMPLETED -> UiPaint.alpha(this.config.accentColor, 1.0);
+         case COMPLETED -> UiPaint.alpha(this.accent(), 1.0);
          case READY -> TEXT;
          default -> DIM;
       };
@@ -683,6 +688,21 @@ public final class AutoBuilderScreen extends class_437 {
       } else {
          return this.files.stream().filter(file -> file.getFileName().toString().toLowerCase(Locale.ROOT).contains(query)).toList();
       }
+   }
+
+   /**
+    * The client's accent (Krypton+ > Accent Color), the same one the module menu uses, so the
+    * whole client has one theme colour; the builder's own setting where that is unavailable.
+    */
+   private int accent() {
+      try {
+         dev.krypton.core.setting.ColorSetting color = dev.krypton.impl.modules.client.KryptonPlus.accentColor;
+         if (color != null) {
+            return 0xFF000000 | color.y() << 16 | color.qq() << 8 | color.d();
+         }
+      } catch (RuntimeException | LinkageError ignored) {
+      }
+      return this.config.accentColor;
    }
 
    private double animate(String id, boolean active) {
@@ -900,7 +920,7 @@ public final class AutoBuilderScreen extends class_437 {
       double fill = span <= 0.0 ? 0.0 : Math.clamp((knob.getDouble() - knob.getMin()) / span, 0.0, 1.0);
       boolean hover = this.inside(x, y, bar, 20) || this.dragKnob != null && id.equals(this.dragId);
       UiPaint.round(g, x, y + 8, bar, 4, 2, INSET);
-      UiPaint.round(g, x, y + 8, Math.max(4, (int)Math.round(bar * fill)), 4, 2, UiPaint.alpha(this.config.accentColor, hover ? 1.0 : 0.8));
+      UiPaint.round(g, x, y + 8, Math.max(4, (int)Math.round(bar * fill)), 4, 2, UiPaint.alpha(this.accent(), hover ? 1.0 : 0.8));
       UiPaint.round(g, x + (int)Math.round((bar - 8) * fill), y + 5, 8, 10, 3, hover ? TEXT : MUTED);
       Runnable fromMouse = () -> knob.set(knob.getMin() + Math.clamp((this.mouseX - x) / bar, 0.0, 1.0) * span);
       this.hit(id, x, y, bar, 20, () -> {
@@ -1134,8 +1154,8 @@ public final class AutoBuilderScreen extends class_437 {
 
    private void button(class_332 g, String id, String label, int x, int y, int w, int h, boolean enabled, boolean primary, Runnable action) {
       double hover = this.animate(id, enabled && this.inside(x, y, w, h));
-      UiPaint.round(g, x, y, w, h, 6, UiPaint.blend(CARD, this.config.accentColor, enabled ? (primary ? 0.55 : 0.09) + hover * 0.18 : 0.0));
-      UiPaint.outline(g, x, y, w, h, 6, UiPaint.blend(BORDER, this.config.accentColor, enabled ? (primary ? 0.45 : 0.0) + hover * 0.3 : 0.0));
+      UiPaint.round(g, x, y, w, h, 6, UiPaint.blend(CARD, this.accent(), enabled ? (primary ? 0.55 : 0.09) + hover * 0.18 : 0.0));
+      UiPaint.outline(g, x, y, w, h, 6, UiPaint.blend(BORDER, this.accent(), enabled ? (primary ? 0.45 : 0.0) + hover * 0.3 : 0.0));
       String shown = this.ellipsize(label, w - 10);
       UiPaint.text(g, this.field_22793, shown, x + (w - UiPaint.width(this.field_22793, shown)) / 2, y + (h - 6) / 2, enabled ? TEXT : DIM);
       if (enabled) {
@@ -1158,7 +1178,7 @@ public final class AutoBuilderScreen extends class_437 {
          int thumb = Math.max(18, h * h / content);
          UiPaint.round(g, x, y, 3, h, 1, -15657700);
          UiPaint.round(
-            g, x, y + (int)((double)scroll / (content - h) * (h - thumb)), 3, thumb, 1, UiPaint.alpha(this.config.accentColor, 0.6)
+            g, x, y + (int)((double)scroll / (content - h) * (h - thumb)), 3, thumb, 1, UiPaint.alpha(this.accent(), 0.6)
          );
       }
    }
@@ -1492,8 +1512,8 @@ public final class AutoBuilderScreen extends class_437 {
 
    private void donut$drawCreativeMode(class_332 g, int x, int y, int w) {
       double hover = this.animate("creativeMode", this.inside(x, y, w, 20));
-      UiPaint.round(g, x, y, w, 20, 5, UiPaint.blend(INSET, this.config.accentColor, 0.05 + hover * 0.12));
-      UiPaint.outline(g, x, y, w, 20, 5, UiPaint.alpha(this.config.accentColor, 0.55 + hover * 0.35));
+      UiPaint.round(g, x, y, w, 20, 5, UiPaint.blend(INSET, this.accent(), 0.05 + hover * 0.12));
+      UiPaint.outline(g, x, y, w, 20, 5, UiPaint.alpha(this.accent(), 0.55 + hover * 0.35));
       String label = this.ellipsize(CreativeBuildMode.label(this.config.autoBuilder), w - 12);
       UiPaint.text(g, this.field_22793, label, x + (w - UiPaint.width(this.field_22793, label)) / 2, y + 7, TEXT);
       this.hit("creativeMode", x, y, w, 20, new CreativeBuildMode(this.config.autoBuilder, this.save));

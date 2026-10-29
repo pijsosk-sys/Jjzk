@@ -27,6 +27,8 @@ public final class Modules {
    private static final Map<String, String[]> EXTRAS = Map.of("rex.FantasyWorld", new String[]{"rex.TuffShader", "rex.SchematicGhost"});
 
    public static void add(ModuleManager manager, String className) {
+      // The redesigned menu takes the old one's place once the client has made it.
+      dev.donut.client.gui.OneMenuScreen.install();
       addOne(manager, className);
       for (String extra : EXTRAS.getOrDefault(className, new String[0])) {
          addOne(manager, extra);

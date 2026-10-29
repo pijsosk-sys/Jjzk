@@ -127,6 +127,10 @@ public final class AutoBuilderController {
    private class_2338 escapeLanding;
    private int escapeTicks;
    private int escapes;
+   private int escapeChecked = -1000;
+   private final Map<class_2338, Integer> unseals = new HashMap<>();
+   private class_2338 hereCheckedAt;
+   private int hereCheckedPlacements = -1;
    /** When the server last set the player back; until it has the player's aim again, nothing is placed. */
    private int correctedTick = -1000;
    private boolean yielded;
@@ -489,6 +493,8 @@ public final class AutoBuilderController {
          this.escapeBreak = null;
          this.escapeLanding = null;
          this.escapes = 0;
+         this.escapeChecked = -1000;
+         this.unseals.clear();
          this.doors = null;
          this.doorsSkipped.clear();
          this.pillarSpot = null;
@@ -796,7 +802,7 @@ public final class AutoBuilderController {
                   }
 
                   if (this.current == null) {
-                     this.current = this.chooseTarget(client);
+                     this.current = this.unsealFirst(client, this.chooseTarget(client));
                   }
 
                   if (this.current == null && (!this.settling.isEmpty() || !this.inflight.isEmpty())) {
@@ -954,6 +960,16 @@ public final class AutoBuilderController {
                                              boolean blocked = movement == BuilderNavigator.Result.NO_PATH
                                                 || movement == BuilderNavigator.Result.STUCK
                                                 || this.noProgress > 80;
+                                             if (blocked && this.onPillar(client)) {
+                                                // Up a pillar: whatever can still be placed from up here goes in
+                                                // before climbing down, or a tall wall cost a climb per block.
+                                                Target here = this.reachableHere(client);
+                                                if (here != null) {
+                                                   this.current = here;
+                                                   this.navigator.reset();
+                                                   return;
+                                                }
+                                             }
                                              if (blocked && this.startDigDown(client)) {
                                                 return;
                                              }
@@ -990,7 +1006,10 @@ public final class AutoBuilderController {
                                  }
                               }
                            } else {
-                              Target support = this.necessarySupport(client, this.current);
+                              Target support = this.sideSupport(client, this.current);
+                              if (support == null) {
+                                 support = this.necessarySupport(client, this.current);
+                              }
                               if (support != null) {
                                  this.current = support;
                               } else {
@@ -1121,6 +1140,67 @@ public final class AutoBuilderController {
    private Target reachableAlternative(class_310 client, class_1792 item) {
       Target same = this.reachableAlternative(client, item, true);
       return same != null ? same : this.reachableAlternative(client, item, false);
+   }
+
+   private boolean onPillar(class_310 client) {
+      return client.field_1724.method_24828() && this.pillarCells.contains(client.field_1724.method_24515().method_10074());
+   }
+
+   /** A queued blueprint block that can be placed from exactly where the player stands. */
+   private Target reachableHere(class_310 client) {
+      // The planner is the costly part: a "nothing here" answer holds until the player moves or
+      // another block goes in. Asked every tick, it was most of a tall wall's slow ticks.
+      class_2338 feetNow = client.field_1724.method_24515();
+      if (feetNow.equals(this.hereCheckedAt) && this.placements == this.hereCheckedPlacements) {
+         return null;
+      }
+      this.hereCheckedAt = feetNow;
+      this.hereCheckedPlacements = this.placements;
+      int planned = 0;
+      boolean creative = client.field_1724.method_31549().field_7477;
+      class_243 eye = client.field_1724.method_33571();
+      double reach = placeReach(client.field_1724) + 0.9;
+      // The whole queue, nearest first: the rows above are not in the layer window yet, but from
+      // up here they are the ones in reach.
+      List<Target> close = new ArrayList<>();
+      for (Target candidate : this.work) {
+         if (eye.method_1025(class_243.method_24953(candidate.pos)) <= reach * reach) {
+            close.add(candidate);
+         }
+      }
+      close.sort(Comparator.comparingDouble(candidate -> eye.method_1025(class_243.method_24953(candidate.pos))));
+      for (Target candidate : close) {
+         if (candidate == this.current
+            || candidate.support
+            || !this.work.contains(candidate)
+            || this.deferred.contains(candidate.pos)
+            || this.unconfirmed.containsKey(candidate.pos)
+            || MaterialTracker.isSecondary(candidate.state)
+            || !MaterialTracker.isLoaded(client.field_1687, candidate.pos)) {
+            continue;
+         }
+         class_1792 needed = MaterialTracker.requirement(candidate.state).item();
+         int slot = donut$findInventorySlot(client, needed);
+         if (!(needed instanceof class_1747) || slot < 0 && !creative) {
+            continue;
+         }
+         class_1799 hand = slot >= 0 ? client.field_1724.method_31548().method_5438(slot) : new class_1799(needed);
+         class_2680 actual = client.field_1687.method_8320(candidate.pos);
+         if (!actual.method_45474()
+            || manualStateReason(candidate.state, actual) != null
+            || !candidate.state.method_26184(client.field_1687, candidate.pos)
+            || !hasNeighborSupport(client, candidate.pos)) {
+            continue;
+         }
+         if (planWithin(client, candidate.pos, candidate.state, hand) != null || planSampled(client, candidate, hand) != null) {
+            this.hereCheckedAt = null;
+            return candidate;
+         }
+         if (++planned >= 12) {
+            break;
+         }
+      }
+      return null;
    }
 
    private Target reachableAlternative(class_310 client, class_1792 item, boolean sameOnly) {
@@ -1618,6 +1698,7 @@ public final class AutoBuilderController {
          this.unconfirmed.put(secondary, sequence);
       }
 
+      this.navigator.worldChanged();
       this.pending = new Pending(target, before, plan.prediction(), this.tick, sequence);
       this.pending.bucket = bucket;
       this.bucketPlan = null;
@@ -1710,9 +1791,23 @@ public final class AutoBuilderController {
       List<long[]> options = new ArrayList<>();
       // Only spots the player can walk to: one flood from here instead of a failed search per spot.
       Set<class_2338> reachable = this.navigator.reachable(client, 6000);
+      // What else is still to build round here: a spot whose top reaches more of it saves climbs.
+      // Scored on short walks alone, a tall wall got a new pillar for every two blocks.
+      List<class_2338> around = new ArrayList<>();
+      for (Target other : this.work) {
+         if (!other.support && Math.abs(other.pos.method_10263() - target.pos.method_10263()) <= 7
+            && Math.abs(other.pos.method_10264() - target.pos.method_10264()) <= 5
+            && Math.abs(other.pos.method_10260() - target.pos.method_10260()) <= 7) {
+            around.add(other.pos);
+            if (around.size() >= 160) {
+               break;
+            }
+         }
+      }
       for (int dx = -3; dx <= 3; dx++) {
          for (int dz = -3; dz <= 3; dz++) {
-            for (int dy = -10; dy <= 0; dy++) {
+            // Down to 16 below: the top of a 16-high wall had no spot on the ground in range.
+            for (int dy = -16; dy <= 0; dy++) {
                class_2338 feet = target.pos.method_10069(dx, dy, dz);
                if (this.badPillarSpots.contains(feet) || !reachable.contains(feet) || !this.standable(client, feet)) {
                   continue;
@@ -1721,10 +1816,22 @@ public final class AutoBuilderController {
                // ridge, seen past its end).
                int lowest = pillarGoal(target, feet.method_10264());
                for (int goal = lowest; goal <= lowest + 5; goal++) {
-                  if (goal - feet.method_10264() > 14 || !this.pillarColumnFree(client, feet, goal)) {
+                  if (goal - feet.method_10264() > 18 || !this.pillarColumnFree(client, feet, goal)) {
                      break;
                   }
-                  double score = (goal - feet.method_10264()) * 4.0 + Math.sqrt(at.method_1025(class_243.method_24955(feet)));
+                  double ex = feet.method_10263() + 0.5;
+                  double ey = goal + 1.62;
+                  double ez = feet.method_10260() + 0.5;
+                  int covered = 0;
+                  for (class_2338 other : around) {
+                     double ox = other.method_10263() + 0.5 - ex;
+                     double oy = other.method_10264() + 0.5 - ey;
+                     double oz = other.method_10260() + 0.5 - ez;
+                     if (ox * ox + oy * oy + oz * oz <= 16.0) {
+                        covered++;
+                     }
+                  }
+                  double score = (goal - feet.method_10264()) * 4.0 + Math.sqrt(at.method_1025(class_243.method_24955(feet))) - Math.min(covered, 24) * 0.6;
                   options.add(new long[]{Double.doubleToLongBits(score), feet.method_10063(), goal});
                }
             }
@@ -1788,7 +1895,7 @@ public final class AutoBuilderController {
    private void walkToPillarSpot(class_310 client) {
       class_2338 spot = this.pillarSpot;
       class_746 player = client.field_1724;
-      if (player.method_24515().equals(spot) && player.method_24828()) {
+      if (player.method_24515().equals(spot) && player.method_24828() && client.field_1687.method_8320(spot).method_45474()) {
          this.pillarSpot = null;
          if (this.pillarColumnFree(client, spot, this.pillarSpotGoal) && this.placeableFromTop(client, spot, this.pillarSpotGoal, this.current)) {
             this.startPillar(client, this.current);
@@ -1861,9 +1968,11 @@ public final class AutoBuilderController {
     * build. Returns false when the player is not walled in or there is no way out.
     */
    private boolean startEscape(class_310 client) {
-      if (this.escapes >= 3 || this.targets.isEmpty() || client.field_1724 == null) {
+      if (this.escapes >= 3 || this.targets.isEmpty() || client.field_1724 == null || this.tick - this.escapeChecked < 40) {
          return false;
       }
+      // The flood below is the costly part; asked every tick while stuck, it was a third of the builder's time.
+      this.escapeChecked = this.tick;
       int minX = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE, maxX = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
       for (Target target : this.targets) {
          minX = Math.min(minX, target.pos.method_10263());
@@ -1927,6 +2036,40 @@ public final class AutoBuilderController {
       this.escapes++;
       this.navigator.reset();
       return true;
+   }
+
+   /**
+    * A block that would close the last open side of a missing neighbour gives way to that
+    * neighbour: once walled in on all sides, a skipped block can never be placed (a hole left in
+    * the middle of a castle tower). At most three times per neighbour, so one that truly cannot
+    * go in does not hold up the block forever.
+    */
+   private Target unsealFirst(class_310 client, Target chosen) {
+      if (chosen == null || chosen.support) {
+         return chosen;
+      }
+      for (class_2350 direction : class_2350.values()) {
+         class_2338 neighbor = chosen.pos.method_10093(direction);
+         Integer index = this.indices.get(neighbor);
+         if (index == null || this.correct.get(index) || this.byIndex[index] == null || this.unconfirmed.containsKey(neighbor)
+            || !MaterialTracker.isLoaded(client.field_1687, neighbor) || !client.field_1687.method_8320(neighbor).method_45474()) {
+            continue;
+         }
+         int open = 0;
+         for (class_2350 side : class_2350.values()) {
+            class_2338 around = neighbor.method_10093(side);
+            if (!around.equals(chosen.pos) && client.field_1687.method_8320(around).method_45474()) {
+               open++;
+            }
+         }
+         if (open == 0 && this.unseals.merge(neighbor, 1, Integer::sum) <= 3) {
+            Target hole = this.byIndex[index];
+            this.deferred.remove(neighbor);
+            this.work.add(hole);
+            return hole;
+         }
+      }
+      return chosen;
    }
 
    /** Whether some block was put aside because there was no way to it, rather than for want of material. */
@@ -2054,6 +2197,7 @@ public final class AutoBuilderController {
       }
       client.field_1761.method_2902(pos, face);
       player.method_6104(class_1268.field_5808);
+      this.navigator.worldChanged();
       return true;
    }
 
@@ -2170,6 +2314,7 @@ public final class AutoBuilderController {
 
    public void serverBlockUpdate(class_2338 pos, class_2680 state) {
       StabilityGate.invalidate(this, pos);
+      this.navigator.worldChanged();
       this.unconfirmed.remove(pos);
       Integer predicted = this.inflight.remove(pos);
       if (this.session != null) {
@@ -2875,11 +3020,23 @@ public final class AutoBuilderController {
          return false;
       }
       if (fromSupport == class_2350.field_11036) {
-         // Above the support, unless it hangs from the block over it instead.
+         // Above the support, unless it hangs from the block over it, or from a wall behind it
+         // (wall torches, signs and banners, ladders): those kept the block under them for nothing.
+         String id = net.minecraft.class_7923.field_41175.method_10221(block).method_12832();
+         if (id.contains("wall_") || id.equals("ladder") || id.equals("tripwire_hook")) {
+            return false;
+         }
+         // Sturdy things half a block tall or more (hoppers, chests, barrels) stand on their own;
+         // doors and lanterns are the exceptions that pop off without the block under them.
+         class_265 body = state.method_26220(net.minecraft.class_2682.field_12294, class_2338.field_10980);
+         if (!body.method_1110() && body.method_1107().field_1325 - body.method_1107().field_1322 >= 0.5
+            && !(block instanceof net.minecraft.class_2323) && !(block instanceof net.minecraft.class_3749)) {
+            return false;
+         }
          for (net.minecraft.class_2769<?> property : state.method_28501()) {
             Object value = state.method_11654(property);
             if (property.method_11899().equals("hanging") && Boolean.TRUE.equals(value)
-               || property.method_11899().equals("face") && value.toString().equals("ceiling")) {
+               || property.method_11899().equals("face") && !value.toString().equals("floor")) {
                return false;
             }
          }
@@ -3023,6 +3180,54 @@ public final class AutoBuilderController {
       }
    }
 
+   /** Solid enough to stand a temporary block on: anything with a collision shape that isn't replaceable. */
+   private boolean carries(class_310 client, class_2338 pos) {
+      class_2680 state = client.field_1687.method_8320(pos);
+      return !state.method_45474() && !state.method_26220(client.field_1687, pos).method_1110();
+   }
+
+   /**
+    * One temporary block beside a block that has nothing to be clicked against, standing on
+    * something solid already there: the cheapest way to give it a face. A spiral staircase's
+    * corner steps touch the steps before and after them only at the edges, and the step below
+    * carries this block.
+    */
+   private Target sideSupport(class_310 client, Target target) {
+      if (target.support || !target.state.method_26184(client.field_1687, target.pos)) {
+         return null;
+      }
+      class_1792 material = null;
+      for (class_1792 candidate : List.of(class_1802.field_8831, class_1802.field_20412, class_1802.field_20391, class_1802.field_8328)) {
+         if (findSlot(client, candidate) >= 0) {
+            material = candidate;
+            break;
+         }
+      }
+      if (!(material instanceof class_1747 item)) {
+         return null;
+      }
+      class_243 feet = client.field_1724.method_73189();
+      class_2338 best = null;
+      double bestDistance = Double.MAX_VALUE;
+      for (class_2350 direction : class_2353.field_11062) {
+         class_2338 neighbor = target.pos.method_10093(direction);
+         if (this.indices.containsKey(neighbor)
+            || this.badSupports.contains(neighbor)
+            || this.keepClear(neighbor)
+            || !MaterialTracker.isLoaded(client.field_1687, neighbor)
+            || !client.field_1687.method_8320(neighbor).method_45474()
+            || !this.carries(client, neighbor.method_10074())) {
+            continue;
+         }
+         double distance = feet.method_1025(class_243.method_24953(neighbor));
+         if (distance < bestDistance) {
+            bestDistance = distance;
+            best = neighbor;
+         }
+      }
+      return best == null ? null : new Target(best, item.method_7711().method_9564(), -1, true);
+   }
+
    private Target necessarySupport(
       class_310 client, Target target
    ) {
@@ -3058,7 +3263,9 @@ public final class AutoBuilderController {
                   return null;
                }
 
-               if (client.field_1687.method_8320(foundation).method_26234(client.field_1687, foundation)) {
+               // Anything solid carries a support, a stair or slab of the build included; only full
+               // blocks did, so a column that met a lower stair gave up ("Missing support").
+               if (this.carries(client, foundation)) {
                   return new Target(var10, item.method_7711().method_9564(), -1, true);
                }
 
@@ -3252,7 +3459,11 @@ public final class AutoBuilderController {
       this.yielded = false;
       this.step(client, true);
 
-      for (int done = 1; done < steps && this.isRunning() && this.idle(); done++) {
+      long searchedBefore = BuilderPathfinder.visited;
+      // Extra steps only while the tick is cheap: retrying skipped blocks ran several failing
+      // walking searches in one tick and dropped the game to a frame or two a second.
+      for (int done = 1; done < steps && this.isRunning() && this.idle()
+         && System.nanoTime() - started < 6_000_000L && BuilderPathfinder.visited - searchedBefore < 2500; done++) {
          this.step(client, false);
       }
       if (this.isRunning()) {

@@ -47,6 +47,10 @@ public final class BuilderNavigator {
    private java.util.function.Predicate<class_2338> placeable;
    /** When a door was last clicked: the server needs a moment to answer, or a second click undoes it. */
    private long doorClicked;
+   /** Where each destination's last search failed from; cleared whenever the world changes. */
+   private final java.util.Map<class_2338, BuilderPathfinder.Cell> failedFrom = new java.util.HashMap<>();
+   private class_243 watchPos;
+   private int watchTicks;
    private int progressIndex = -1;
    private double progressGap = Double.POSITIVE_INFINITY;
 
@@ -142,6 +146,11 @@ public final class BuilderNavigator {
       this.lastPosition = null;
    }
 
+   /** Something was built or broken: routes that failed may exist now. */
+   public void worldChanged() {
+      this.failedFrom.clear();
+   }
+
    public void replan() {
       this.route = List.of();
       this.index = 0;
@@ -187,6 +196,7 @@ public final class BuilderNavigator {
             this.rejectedGoals.clear();
             this.fullReach = false;
             this.replan();
+            this.watchPos = null;
          }
 
          BuilderPathfinder.Cell feet = feetCell(client.field_1724);
@@ -199,18 +209,44 @@ public final class BuilderNavigator {
             if (this.route.isEmpty() || this.index >= this.route.size()) {
                BuilderPathfinder.Terrain terrain = terrain(client);
                int maxDrop = maxDrop(client.field_1724);
-               this.route = BuilderPathfinder.find(feet, cell(destination), terrain, arrived, 6000, 96, maxDrop);
+               // The same search from the same cell fails the same way until something is built or
+               // broken: a block retried every tick searched thousands of cells twice each time.
+               if (feet.equals(this.failedFrom.get(destination))) {
+                  return BuilderNavigator.Result.NO_PATH;
+               }
+               // Spots within the closer walking reach are near when they exist: a short look first.
+               this.route = BuilderPathfinder.find(feet, cell(destination), terrain, arrived, stand || this.fullReach ? 6000 : 2500, 96, maxDrop);
                this.index = 0;
                if (this.route.isEmpty() && !stand && !this.fullReach && this.walkReach < 4.25) {
                   this.fullReach = true;
                   this.route = BuilderPathfinder.find(feet, cell(destination), terrain, arrived, 6000, 96, maxDrop);
                }
+               if (this.route.isEmpty() && !stand && this.goal(client, feet, destination)) {
+                  // With the full reach the spot the player stands on already works: an empty route
+                  // here is "you are there", not "no way there". Read as no way, it sent the player
+                  // down a pillar to look for a route, then straight back up the same pillar.
+                  return BuilderNavigator.Result.ARRIVED;
+               }
 
                if (this.route.isEmpty()) {
+                  this.failedFrom.put(destination.method_10062(), feet);
                   return BuilderNavigator.Result.NO_PATH;
                }
             }
 
+            // A watchdog replanning cannot reset: a route planned again every tick (a cell that never
+            // reads as open, a step out of reach) kept the stall count at zero while the player stood
+            // still for good, on a bed beside a wall.
+            class_243 here = client.field_1724.method_73189();
+            if (this.watchPos == null || Math.hypot(here.field_1352 - this.watchPos.field_1352, here.field_1350 - this.watchPos.field_1350) > 0.3
+               || Math.abs(here.field_1351 - this.watchPos.field_1351) > 0.5) {
+               this.watchPos = here;
+               this.watchTicks = 0;
+            } else if (++this.watchTicks > 60) {
+               this.watchPos = null;
+               this.rejectCurrent(client);
+               return BuilderNavigator.Result.STUCK;
+            }
             BuilderPathfinder.Cell next = this.route.get(this.index);
             if (!stillOpen(client, next) || client.field_1724.method_24828() && next.y() > client.field_1724.method_23318() + 1.2) {
                // Something was built into the route since it was planned (often by this builder),
@@ -540,7 +576,11 @@ public final class BuilderNavigator {
          return false;
       }
       class_238 box = shape.method_1107();
-      return box.field_1325 >= 0.5 && box.field_1323 <= 0.0 && box.field_1321 <= 0.0 && box.field_1320 >= 1.0 && box.field_1324 >= 1.0;
+      // Half-height ground only for slabs and stairs, built to be walked on; beds and the like are
+      // furniture to go round (walked across, a bed confused where the feet were and the player
+      // paced back and forth on it).
+      boolean walkway = ground.method_26204() instanceof net.minecraft.class_2482 || ground.method_26204() instanceof net.minecraft.class_2510;
+      return box.field_1325 >= (walkway ? 0.5 : 0.8) && box.field_1323 <= 0.0 && box.field_1321 <= 0.0 && box.field_1320 >= 1.0 && box.field_1324 >= 1.0;
    }
 
    /** Whether a planned route cell still has room for the player's body. */

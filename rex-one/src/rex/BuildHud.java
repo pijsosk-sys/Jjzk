@@ -42,9 +42,9 @@ public final class BuildHud extends Module {
    public final BooleanSetting idle = new BooleanSetting("Show Without A Build", false)
       .describe("Keeps the panel up when no schematic is loaded.");
    public final BooleanSetting overScreens = new BooleanSetting("Over Screens", true);
-   public final ColorSetting background = new ColorSetting("Background", 18, 11, 26, 225);
+   public final ColorSetting background = new ColorSetting("Background", 16, 18, 25, 225);
    public final ColorSetting accent = new ColorSetting("Accent", 120, 180, 255, 255);
-   public final ColorSetting text = new ColorSetting("Text", 242, 226, 208, 255);
+   public final ColorSetting text = new ColorSetting("Text", 233, 236, 242, 255);
    public final ColorSetting shortage = new ColorSetting("Shortage", 255, 120, 110, 255);
 
    private Object scan;

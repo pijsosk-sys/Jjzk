@@ -5,10 +5,10 @@
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 BASE=${1:?usage: build.sh <base REX-One jar>}
-VERSION=1.0.0-one.21
+VERSION=1.0.0-one.22
 CACHE="$HERE/.cache"
-WORK="$HERE/.work"
-OUT="$HERE/out/REX-One-1.21.11.jar"
+WORK="${REX_WORK:-$HERE/.work}"
+OUT="${REX_OUT:-$HERE/out/REX-One-1.21.11.jar}"
 
 [ -s "$CACHE/client-intermediary.jar" ] && [ -s "$CACHE/asm-tree.jar" ] && [ -s "$CACHE/fabric/fabric-api.jar" ] || "$HERE/tools/setup.sh"
 CP="$BASE:$CACHE/client-intermediary.jar:$(ls "$CACHE"/libs/*.jar "$CACHE"/fabric/fabric-*-v1-*.jar "$CACHE"/fabric/fabric-api-base-*.jar | tr '\n' ':')"
@@ -90,7 +90,8 @@ with zipfile.ZipFile(base) as zin, zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATE
 print(f"replaced {dropped} classes with {len(built)} built ones -> {out}")
 PY
 
-javac -nowarn -cp "$CACHE/asm.jar:$CACHE/asm-tree.jar" -d "$WORK/tools" "$HERE/tools/LinkCheck.java" "$HERE/tools/FixMixinAt.java"
+javac -nowarn -cp "$CACHE/asm.jar:$CACHE/asm-tree.jar" -d "$WORK/tools" "$HERE/tools/LinkCheck.java" "$HERE/tools/FixMixinAt.java" "$HERE/tools/Harden.java"
 java -cp "$WORK/tools:$CACHE/asm.jar:$CACHE/asm-tree.jar" FixMixinAt "$OUT"
+java -cp "$WORK/tools:$CACHE/asm.jar:$CACHE/asm-tree.jar" Harden "$OUT"
 java -cp "$WORK/tools:$CACHE/asm.jar:$CACHE/asm-tree.jar" LinkCheck "$OUT" $REPLACED
 echo "built $OUT"

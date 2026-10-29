@@ -8,8 +8,10 @@ public final class Huds {
    }
 
    public static void overlay(class_332 graphics, float delta) {
-      // The Auto Build screen shows the same figures itself; panels on top of it only cover it.
-      if (net.minecraft.class_310.method_1551().field_1755 instanceof dev.donut.client.gui.AutoBuilderScreen) {
+      // The Auto Build screen shows the same figures itself, and the menu fills the screen: panels
+      // on top of either only cover them.
+      net.minecraft.class_437 screen = net.minecraft.class_310.method_1551().field_1755;
+      if (screen instanceof dev.donut.client.gui.AutoBuilderScreen || screen instanceof dev.donut.client.gui.OneMenuScreen) {
          return;
       }
       try {

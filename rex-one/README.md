@@ -1,6 +1,6 @@
 # REX One: faster Auto Build, climbing, water, a new builder screen and a shader
 
-Sources and tooling for REX One `1.0.0-one.21` (Minecraft 1.21.11, Fabric). The build takes the
+Sources and tooling for REX One `1.0.0-one.22` (Minecraft 1.21.11, Fabric). The build takes the
 released `1.0.0-one.13` jar, replaces or adds these classes, and adds the shader files:
 
 | Class | What changed |
@@ -19,6 +19,72 @@ released `1.0.0-one.13` jar, replaces or adds these classes, and adds the shader
 
 Classes that shipped only as bytecode were decompiled first, and each was committed unchanged
 before being edited, so `git log -p` shows exactly what changed.
+
+## New in one.22: safety audit, a new menu, and seven new test builds
+
+**Safety.** Every class in the jar was checked for anything that could harm your computer or
+account. Full report in [SECURITY.md](SECURITY.md).
+- Nothing malicious: no RAT, nothing that reads your login token, no hidden webhook, no
+  downloaded code, nothing that deletes your files.
+- The one risky thing, Spotify HUD running PowerShell with "ExecutionPolicy Bypass" every few
+  seconds, is now switched off. The build empties any method that starts another program
+  (`tools/Harden.java`) and lists what it emptied.
+
+**A new menu.** The old module menu was six draggable columns that overlapped and ran off the
+screen. Now it's one window:
+- **Left:** categories with module counts, "All" and "Active", and a search box (you can also just
+  start typing). Buttons for Auto Build, Configs, and the classic menu.
+- **Middle:** modules as cards with a switch, short description and keybind. Click a card for its
+  settings; right-click or double-click toggles it.
+- **Right:** the module's settings, each with its own control: switches, sliders, range sliders,
+  choices, text fields, keybinds, and colours with RGBA sliders. Item, block and macro lists open
+  in the classic menu.
+- Keybinds are set in the panel (Esc clears one). There's also a Reset button, and tooltips wait
+  for the pointer to rest.
+
+The Auto Build screen now uses the same colours and the same accent (Krypton+ > Accent Color),
+shows file types as badges, and no HUD panel draws over either screen.
+
+**New test builds** (`test/make_builds.py`), each testing something the old ones didn't:
+| Build | What it tests | Fast | Server |
+| --- | --- | --- | --- |
+| `castle-gate` (191) | crenellations, an arch of upside-down stairs, iron bars, wall torches | complete | complete |
+| `sky-bridge` (133) | a deck 13 blocks across open air, wall railings | complete | complete |
+| `pixel-art` (256) | a 16x16 wool wall one block thick (tall pillaring) | complete | complete |
+| `garden` (182) | grass, saplings, flowers, leaf hedges, lanterns on fences, a fountain | complete | complete |
+| `storage-room` (161) | chests, barrels, furnaces, a smoker, hoppers in three facings | complete | complete |
+| `modern-house` (276) | concrete and glass, door, bed, carpets, flower pot, ladder, roof trapdoor | complete | complete |
+| `spiral-tower` (232) | a spiral staircase of floating corner steps inside a closed round tower | complete (supports left inside) | can stall |
+
+All but the spiral tower are in the builder's library now. The spiral tower stays a test only.
+Its corner steps float, and the closed roof leaves temporary blocks inside where nothing can
+reach them afterwards.
+
+Bugs they found, now fixed:
+- A tall wall made the builder climb a pillar, place a block, climb down and climb the same pillar
+  again. Standing in a spot that already works read as "no route", and nothing reachable from the
+  top of a pillar was placed before climbing down.
+- Floating blocks (spiral stair corners) found no support when a straight column below hit
+  another part of the build. Now one block beside them, on anything solid, will do.
+- A wall torch kept the temporary block under it.
+- Retrying skipped blocks could drop the game to 1-2 fps:
+  - A costly check ran every tick while it was stuck. Now it runs at most every 2 seconds.
+  - The same failing walking search was repeated, and several searches ran in one tick. Failed
+    searches are now remembered until something changes, and a tick stops taking extra steps
+    after 6 ms. On the spiral tower, the average builder tick went from 8.7 ms to about 1 ms.
+- A missing block could get walled in by its neighbours and never be placed (a hole in a castle
+  tower). A block that would close a missing neighbour's last open side now waits for it.
+- Pillar spots were only searched 10 blocks below the target, so the top of anything taller had
+  none. Now 16 below, preferring spots whose top reaches the most remaining blocks.
+- A player that never moved while the route was re-planned every tick never counted as stuck. A
+  watchdog now catches it, and beds no longer count as ground to walk on.
+- Hoppers, chests and other sturdy blocks no longer keep the temporary block under them.
+
+**Known issue (test machine only so far).** About 1 launch in 15 crashed at start inside the
+client's original font loader (`dev.krypton.render.Fonts`, native code in LWJGL's stb). It only
+happened with 2-3 games running at once on this machine. A standalone test of the same font
+packing shows no overrun, so the cause isn't known yet and nothing was changed there. If the
+game ever closes at the loading screen, start it again.
 
 ## New in one.21: a Server preset, and it holds up on a laggy server
 

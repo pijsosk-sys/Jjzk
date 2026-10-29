@@ -14,6 +14,8 @@ import net.fabricmc.api.Environment;
 
 @Environment(EnvType.CLIENT)
 public final class BuilderPathfinder {
+   /** Cells examined by every search so far: the builder spends at most so many per tick. */
+   public static long visited;
    private BuilderPathfinder() {
    }
 
@@ -59,6 +61,7 @@ public final class BuilderPathfinder {
       while (!open.isEmpty() && closed.size() < maxVisited) {
          BuilderPathfinder.Cell current = open.remove().cell;
          if (closed.add(current)) {
+            visited++;
             if (explored != null) {
                explored.add(current);
             }
