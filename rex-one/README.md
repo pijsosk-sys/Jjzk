@@ -1,6 +1,6 @@
 # REX One: faster Auto Build, climbing, water, a new builder screen and a shader
 
-Sources and tooling for REX One `1.0.0-one.16` (Minecraft 1.21.11, Fabric). The build takes the
+Sources and tooling for REX One `1.0.0-one.17` (Minecraft 1.21.11, Fabric). The build takes the
 released `1.0.0-one.13` jar, replaces or adds these classes, and adds the shader files:
 
 | Class | What changed |
@@ -19,6 +19,77 @@ released `1.0.0-one.13` jar, replaces or adds these classes, and adds the shader
 
 Classes that shipped only as bytecode were decompiled first, and each was committed unchanged
 before being edited, so `git log -p` shows exactly what changed.
+
+## New in one.17: finishes real builds, cleans up after itself, looks human
+
+Tested in the real game on the bundled Cozy Oak Cabin (284 blocks, a gable roof with eaves that
+overhang the walls) and the bundled starter house (3,201 blocks).
+
+- **Cozy Oak Cabin on Fast: complete, 284/284 exact, every temporary support removed** (95-130 s
+  across runs, including while being screen-recorded). one.16 stalled at 140/284 on Fast and on
+  Safe, walking back and forth under the roof.
+- **Compact kelp farm: complete, 85/85, 29 s.**
+- **Remove Supports** (on): once everything else is built and verified, every pillar and support
+  block it placed is broken, top down, so only the schematic is left. Standing on a pillar it digs
+  straight down; it walks over to supports out of reach; it picks the quickest hotbar tool (any
+  non-weapon in creative). A support that a torch, lantern, sign or other non-full blueprint block
+  might hang from is left, and the completion message says why.
+- **Pillars go where they help.** It used to pillar wherever it stood, often in the middle of a
+  room, out of reach of the block it was for, and then it was stuck on top. Now it picks the
+  nearest open column beside the target whose top can actually place it, walks there, then climbs.
+  Stuck on one of its own pillars, it digs down a block at a time.
+- **It can come back down.** The pathfinder only stepped one block up or down, so once on a roof
+  or a pillar it could never reach the ground again. It now drops off edges: up to three blocks
+  always (no damage), up to twelve in creative, and up to six in survival only while health is
+  well above the low-health pause. Longer drops cost more in route choice, so it prefers stairs.
+- **It only walks to spots it can place from.** "In reach" used to mean "close to the block". Now
+  a spot counts only if a face the block can be placed against is in reach and actually in sight,
+  sampled at five points the way a click and the server's reach check need, and the real
+  placement planner agrees it would come out in the right state from there (the player is moved
+  to the spot for the check and straight back, within the tick). A piston, stair or upright log
+  now gets walked to a spot where it faces the right way, instead of arrive / fail / walk on. If
+  no spot passes the planner, any spot with a visible face is used, as before.
+- **Water waits for its walls.** Water and kelp go in only once every solid block at or below
+  their height is built (skipped ones included), so nothing floods the cells meant for pistons
+  and glass.
+- **No more hopping in place.** A player blocked mid-route (a block placed into its path, or a
+  fall off a narrow landing) jumped forever, since height changes counted as progress. Progress
+  now means getting closer to the next step; a route cell that filled up or went out of jumping
+  reach is replanned; and it does not sprint into a drop.
+- **Pillars start centred.** Standing off-centre, the player overlapped the next column and hit
+  its head on it every jump. It now sneaks to the middle of the block it stands on first, and
+  gives a pillar up after eight seconds without gaining height.
+- **Blocks that need a neighbour first** (upside-down stairs, open trapdoors hanging off a block
+  that is not built yet) are put aside after three failed tries and retried when something next
+  to them is placed. Every skipped block used to be re-queued after every placement, sending the
+  builder back to the same unplaceable blocks after each block.
+- **Builds what is in reach first.** When the nearest block needs a walk, any other block it can
+  place from where it stands goes first, in any material already in the hotbar.
+- **Sprint** (on) on longer walks.
+- **Old schematics load.** Pre-1.17 `cauldron[level=N]` becomes a water cauldron, renamed blocks
+  (`chain`, `grass`, `grass_path`) map to today's names, and a property a block no longer has is
+  ignored instead of refusing the whole file. The bundled starter house did not load before.
+- **Fixes its own mistakes.** If a block it is building comes out as the right block in the wrong
+  state (a piston facing the wrong way), it breaks it and places it again, twice per spot at most.
+  Only the blueprint's own block type is ever broken.
+- **Picky blocks first.** Blocks that face a way (pistons, observers, logs, stairs) can be placed
+  from far fewer spots, so within the layers being built they go first, while those spots are
+  still open.
+- An unreachable stepping block no longer pauses the build; that plan is dropped and the block it
+  was for finds another way.
+
+### Looks like a player now (Smooth Aim, on)
+
+The builder used to snap the view to each new angle at the start of the client tick, before the
+player ticked, so the game had no previous angle to blend from and the camera jumped twenty times
+a second. Now every view change goes through `BuilderLook`: a turn is capped at *Turn Speed*
+degrees per tick (Safe 30, Balanced 50, Fast 80; small corrections between neighbouring blocks
+still land in one tick), and at the end of the tick the previous-tick rotation is put back, so the
+frames in between glide from the old angle to the new one the way mouse look does. The server
+still gets the new angle in the same tick, so it costs nothing. Walking, it looks along the way
+and turns to the block for the last couple of steps; movement is steered relative to the view, so
+the path is followed exactly while the camera is still turning. Pillaring tilts down smoothly
+instead of snapping to straight down.
 
 ## Why Auto Build was slow
 

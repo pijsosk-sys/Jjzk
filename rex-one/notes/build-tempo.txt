@@ -57,6 +57,14 @@ Auto Build screen
   speed presets with the rate each allows, Start/Pause/Resume, Materials, Cancel, the builder's
   current reason (click for the full text) and the creative-mode switch.
 
+one.17
+  Remove Supports  on: pillars and supports come down, top first, once the build is complete.
+  Smooth Aim       on: the view turns toward each block (Turn Speed degrees per tick at most:
+                   Safe 30, Balanced 50, Fast 80) and glides between ticks, like a player.
+  Sprint           on: sprints on longer walks.
+  It pillars next to the block it needs, drops 2-3 blocks to get down, digs down its own pillar
+  when stuck on it, and only walks to spots from which the block can really be placed.
+
 Finishing big builds (one.15)
   Pillar Up      jump and place a pillar block (dirt, cobblestone, cobbled deepslate, netherrack,
                  stone) under yourself when the next block is above and walking cannot reach it.

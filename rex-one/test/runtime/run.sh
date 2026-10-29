@@ -15,7 +15,7 @@ cp "$REX" "$GAME/mods/rex-one.jar"
 cp "$RT/mods/fabric-api.jar" "$GAME/mods/"
 cp -r "$RT/world" "$GAME/saves/smoke"
 # Skip the first-launch accessibility prompt, which would sit in front of quick play.
-printf "onboardAccessibility:false\nskipMultiplayerWarning:true\njoinedFirstServer:true\nrenderDistance:5\nsimulationDistance:5\nmaxFps:60\n" > "$GAME/options.txt"
+printf "onboardAccessibility:false\ntutorialStep:none\nskipMultiplayerWarning:true\njoinedFirstServer:true\nrenderDistance:5\nsimulationDistance:5\nmaxFps:60\n" > "$GAME/options.txt"
 cd "$GAME"
 exec env LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a -s "-screen 0 1280x720x24" java -Xmx4G -Drexsmoke.schem="$SCHEM" "$@" -cp "$(launch_classpath)" \
   net.fabricmc.loader.impl.launch.knot.KnotClient --version "$MC_VERSION" --gameDir "$GAME" --assetsDir "$RT/assets" \

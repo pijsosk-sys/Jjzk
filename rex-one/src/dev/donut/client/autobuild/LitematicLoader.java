@@ -313,8 +313,24 @@ public final class LitematicLoader {
       }
    }
 
+   /** Blocks a newer Minecraft renamed, as older schematics (and the bundled starter house) still name them. */
+   private static final java.util.Map<String, String> RENAMED = java.util.Map.of(
+      "minecraft:chain", "minecraft:iron_chain",
+      "minecraft:grass", "minecraft:short_grass",
+      "minecraft:grass_path", "minecraft:dirt_path"
+   );
+
    private static class_2680 readState(class_2487 tag) throws IOException {
       String name = tag.method_10558("Name").orElseThrow(() -> invalid("Palette block has no Name"));
+      // Schematics from before 1.17 store a filled cauldron as cauldron[level=1..3]; it is a
+      // separate block now, and an empty one has no level at all.
+      if (name.equals("minecraft:cauldron") && tag.method_10545("Properties")) {
+         String level = compound(tag, "Properties").method_10558("level").orElse("0");
+         if (!level.equals("0")) {
+            name = "minecraft:water_cauldron";
+         }
+      }
+      name = RENAMED.getOrDefault(name, name);
       class_2960 id = class_2960.method_12829(name);
       if (id != null && class_7923.field_41175.method_10250(id)) {
          class_2248 block = class_7923.field_41175.method_63535(id);
@@ -325,11 +341,15 @@ public final class LitematicLoader {
             for (String key : properties.method_10541()) {
                class_2769<?> property = block.method_9595().method_11663(key);
                if (property == null) {
-                  throw invalid("Unknown property " + key + " on " + name);
+                  // A property this version no longer has (renamed or dropped). The block itself is
+                  // still right, so keep its default for that property instead of refusing the file.
+                  continue;
                }
 
                String value = properties.method_10558(key).orElseThrow(() -> invalid("Invalid property value " + key));
-               state = setProperty(state, property, value);
+               if (property.method_11900(value).isPresent()) {
+                  state = setProperty(state, property, value);
+               }
             }
          }
 

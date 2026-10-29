@@ -57,6 +57,8 @@ public final class SmokeDriver implements ClientModInitializer {
    private String lastReason = "";
    private static final String[] SHOTS = {"OFF", "SOFT", "TUFF", "VIVID", "OFF"};
    private int shot;
+   private String viewShot;
+   private int afterView;
    private boolean shotArmed;
 
    @Override
@@ -77,6 +79,9 @@ public final class SmokeDriver implements ClientModInitializer {
    }
 
    private void step(class_310 client) throws Exception {
+      if (Boolean.getBoolean("rexsmoke.clean")) {
+         client.method_1566().method_2000(); // recipe and tutorial pop-ups, for recordings
+      }
       if (this.wait > 0) {
          this.wait--;
          return;
@@ -177,6 +182,7 @@ public final class SmokeDriver implements ClientModInitializer {
             } else {
                commands.addAll(List.of(SURVIVAL));
             }
+            commands.add("time set noon");
             for (String command : commands) {
                server.execute(() -> server.method_3734().method_44252(server.method_3739(), command));
             }
@@ -188,6 +194,10 @@ public final class SmokeDriver implements ClientModInitializer {
             builder.setSchematic(this.schematic);
             builder.setTransform(new PlacementTransform(ORIGIN, 0, false));
             choose(this.modes.get(this.mode));
+            if (Boolean.getBoolean("rexsmoke.thirdPerson")) {
+               // For recordings: the camera behind the player shows the builder at work.
+               client.field_1690.method_31043(net.minecraft.class_5498.field_26665);
+            }
             builder.start();
             this.ticks = 0;
             this.still = 0;
@@ -201,13 +211,24 @@ public final class SmokeDriver implements ClientModInitializer {
             if (!reason.equals(this.lastReason)) {
                this.lastReason = reason;
                this.transitions.addLast(this.ticks + " " + reason + " | player " + client.field_1724.method_24515().method_23854());
+               System.out.println("[rexsmoke-trace] " + this.ticks + " " + reason + " | player " + client.field_1724.method_24515().method_23854());
+               if (this.transitions.size() > 30) {
+                  this.transitions.removeFirst();
+               }
+            }
+            if (this.ticks % 40 == 0) {
+               // A heartbeat, so a long stretch of one reason (a stall) still shows where the player was.
+               net.minecraft.class_746 p = client.field_1724;
+               this.transitions.addLast(String.format(Locale.ROOT, "%d   ... %s | at %.2f %.2f %.2f yaw %.0f pitch %.0f ground %s",
+                  this.ticks, reason, p.method_23317(), p.method_23318(), p.method_23321(), p.method_36454(), p.method_36455(), p.method_24828()));
                if (this.transitions.size() > 30) {
                   this.transitions.removeFirst();
                }
             }
             int cut = reason.indexOf(" at ");
             this.reasons.merge(cut > 0 ? reason.substring(0, cut) : reason.replaceAll("[0-9]+", "#"), 1, Integer::sum);
-            int confirmed = builder.confirmedBlocks();
+            // Removing temporary supports adds no blueprint blocks, but it is progress all the same.
+            int confirmed = builder.confirmedBlocks() * 4096 + builder.supportsPlaced();
             if (confirmed != this.lastConfirmed) {
                this.lastConfirmed = confirmed;
                this.still = 0;
@@ -240,15 +261,35 @@ public final class SmokeDriver implements ClientModInitializer {
             this.lastReason = "";
             String name = "rexsmoke-" + (current == null ? "default" : current.toString().toLowerCase(Locale.ROOT)) + ".png";
             class_318.method_22690(client.field_1697, name, client.method_1522(), 1, message -> {});
+            if (builder.status() == AutoBuilderController.Status.COMPLETED) {
+               // Step back for a picture of the finished build from outside.
+               class_2338 size = this.schematic.dimensions();
+               double distance = Math.max(size.method_10263(), size.method_10260()) * 1.1 + 6;
+               String view = String.format(Locale.ROOT, "tp @a %.1f %.1f %.1f -35 25", size.method_10263() / 2.0 - distance * 0.55,
+                  -60 + size.method_10264() * 0.7 + 3, size.method_10260() / 2.0 - distance * 0.8);
+               server.execute(() -> server.method_3734().method_44252(server.method_3739(), view));
+               this.viewShot = "rexsmoke-" + (current == null ? "default" : current.toString().toLowerCase(Locale.ROOT)) + "-view.png";
+            }
             if (this.mode == this.modes.size() - 2 || this.modes.size() == 1) {
                // Leave the last preset run on screen for the builder screen shot.
                this.phase = 5;
                this.wait = 10;
-               return;
+            } else {
+               builder.cancel();
+               this.phase = 1;
+               this.wait = 10;
             }
-            builder.cancel();
-            this.phase = 1;
-            this.wait = 10;
+            if (this.viewShot != null) {
+               this.afterView = this.phase;
+               this.phase = 30;
+               this.wait = 40;
+            }
+         }
+         case 30 -> {
+            class_318.method_22690(client.field_1697, this.viewShot, client.method_1522(), 1, message -> {});
+            this.viewShot = null;
+            this.phase = this.afterView;
+            this.wait = 5;
          }
          case 5 -> {
             client.method_1507(new AutoBuilderScreen(null, new ClientConfig(), () -> {}));

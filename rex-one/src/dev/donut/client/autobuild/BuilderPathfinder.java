@@ -23,7 +23,8 @@ public final class BuilderPathfinder {
       BuilderPathfinder.Terrain terrain,
       Predicate<BuilderPathfinder.Cell> goal,
       int maxVisited,
-      int maxDistance
+      int maxDistance,
+      int maxDrop
    ) {
       PriorityQueue<BuilderPathfinder.Entry> open = new PriorityQueue<>(
          Comparator.comparingDouble(BuilderPathfinder.Entry::score)
@@ -63,6 +64,30 @@ public final class BuilderPathfinder {
                         costs.put(next, cost);
                         previous.put(next, current);
                         open.add(new BuilderPathfinder.Entry(next, cost + Math.max(0.0, next.distance(target) - 4.0)));
+                     }
+                  }
+               }
+
+               // Step off an edge and drop: up to three blocks costs nothing, more only where the
+               // navigator says the fall is affordable (creative, or survival with health to spare).
+               // Without it a player who climbed onto a roof or a pillar never got back down.
+               if (terrain.headroom(current.offset(axis[0], 0, axis[1]))) {
+                  for (int drop = 2; drop <= maxDrop; drop++) {
+                     BuilderPathfinder.Cell next = current.offset(axis[0], -drop, axis[1]);
+                     if (!terrain.headroom(next.offset(0, 1, 0))) {
+                        break; // something solid in the way: no deeper drop here either
+                     }
+                     if (Math.abs(next.x - start.x) > maxDistance || Math.abs(next.z - start.z) > maxDistance || Math.abs(next.y - start.y) > 24 || closed.contains(next)) {
+                        continue;
+                     }
+                     if (terrain.standable(next)) {
+                        double cost = costs.get(current) + 1.5 + 0.5 * drop + (drop > 3 ? 4.0 * (drop - 3) : 0.0);
+                        if (cost < costs.getOrDefault(next, Double.POSITIVE_INFINITY)) {
+                           costs.put(next, cost);
+                           previous.put(next, current);
+                           open.add(new BuilderPathfinder.Entry(next, cost + Math.max(0.0, next.distance(target) - 4.0)));
+                        }
+                        break; // landed: there is nothing deeper to fall to
                      }
                   }
                }

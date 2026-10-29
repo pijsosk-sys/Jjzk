@@ -33,4 +33,9 @@ PY
 fi
 fetch https://maven.fabricmc.net/net/fabricmc/fabric-loader/0.18.4/fabric-loader-0.18.4.jar libs/fabric-loader.jar
 for a in asm asm-tree; do fetch https://repo1.maven.org/maven2/org/ow2/asm/$a/9.9/$a-9.9.jar $a.jar; done
+# Fabric API's lifecycle events (the builder's end-of-tick hook), compile-time only: the game gets
+# Fabric API from mods/. Kept out of libs/, which the test launcher puts on the game classpath.
+mkdir -p fabric
+fetch https://maven.fabricmc.net/net/fabricmc/fabric-api/fabric-api/0.141.4+1.21.11/fabric-api-0.141.4+1.21.11.jar fabric/fabric-api.jar
+[ -n "$(ls fabric/fabric-lifecycle-events-v1-*.jar 2>/dev/null)" ] || unzip -oqj fabric/fabric-api.jar 'META-INF/jars/fabric-lifecycle-events-v1-*.jar' 'META-INF/jars/fabric-api-base-*.jar' -d fabric
 echo "classpath ready in $CACHE"

@@ -22,21 +22,23 @@ public final class BuildTempo extends Module {
 
    public enum Preset {
       /** Waits for the server on every block. For strict servers and high packet loss. */
-      SAFE(2, 1, 60, 2, 1, 4096, 64, false, 0, 2, 1, 2, 4.25),
+      SAFE(2, 1, 60, 2, 1, 4096, 64, false, 0, 2, 1, 2, 4.25, 30),
       /** Trusts the client's prediction one tick after sending, two placements unconfirmed at most. */
-      BALANCED(3, 1, 60, 1, 2, 16384, 64, true, 1, 0, 2, 0, 3.25),
+      BALANCED(3, 1, 60, 1, 2, 16384, 64, true, 1, 0, 2, 0, 3.25, 50),
       /** One block per tick, the protocol floor for a placement that needs its own rotation. */
-      FAST(4, 0, 80, 1, 2, 16384, 96, true, 0, 0, 4, 0, 3.0),
-      CUSTOM(0, 0, 0, 0, 0, 0, 0, false, 0, 0, 0, 0, 0.0);
+      FAST(4, 0, 80, 1, 2, 16384, 96, true, 0, 0, 4, 0, 3.0, 80),
+      CUSTOM(0, 0, 0, 0, 0, 0, 0, false, 0, 0, 0, 0, 0.0, 0);
 
       final int steps, arm, ack, swap, layers, candidates, revalidate;
       final boolean trust;
       final int trustDelay, settle, inflight, interval;
       final double walk;
+      final int turn;
 
       Preset(int steps, int arm, int ack, int swap, int layers, int candidates, int revalidate, boolean trust, int trustDelay, int settle,
-            int inflight, int interval, double walk) {
+            int inflight, int interval, double walk, int turn) {
          this.walk = walk;
+         this.turn = turn;
          this.steps = steps;
          this.arm = arm;
          this.ack = ack;
@@ -88,6 +90,17 @@ public final class BuildTempo extends Module {
       .describe("Predicted placements the server may leave unanswered before the builder waits for it.");
    public final NumberSetting revalidate = new NumberSetting("Revalidate", 0.0, 512.0, 64.0, 16.0)
       .describe("Blueprint positions re-checked against the world each tick.");
+   public final NumberSetting turn = new NumberSetting("Turn Speed", 10.0, 180.0, 50.0, 5.0)
+      .describe("With Smooth Aim, the most the view turns in one tick, in degrees. Lower looks calmer, higher wastes fewer "
+         + "ticks on big turns. Small corrections between neighbouring blocks are always made in one tick.");
+   public final BooleanSetting smooth = new BooleanSetting("Smooth Aim", true)
+      .describe("Turns the view toward each block and along the walk instead of snapping to it, and lets the camera glide "
+         + "between ticks, so building looks like a player doing it. A placement still waits until the server has the aim.");
+   public final BooleanSetting sprint = new BooleanSetting("Sprint", true)
+      .describe("Sprints on longer walks between blocks. Off walks at normal speed everywhere.");
+   public final BooleanSetting removeSupports = new BooleanSetting("Remove Supports", true)
+      .describe("When the build is complete, breaks every temporary pillar and support block it placed, top down, so only "
+         + "the schematic is left.");
    public final BooleanSetting pillar = new BooleanSetting("Pillar Up", true)
       .describe("When a block is too high to walk up to, jump and place dirt, cobblestone, cobbled deepslate, netherrack or "
          + "stone under yourself until it is in reach. The pillar stays unless Remove Supports is on.");
@@ -111,13 +124,13 @@ public final class BuildTempo extends Module {
       super("Build Tempo", "Placement pacing and automatic retry for Auto Build.", -1, Category.MISC);
       for (Setting knob : new Setting[]{
             this.steps, this.arm, this.ack, this.swap, this.settle, this.interval, this.walk, this.layers, this.candidates, this.trust,
-            this.trustDelay, this.inflight, this.revalidate}) {
+            this.trustDelay, this.inflight, this.revalidate, this.turn}) {
          knob.visibleWhen(() -> this.preset.get() == Preset.CUSTOM);
       }
       this.addSettings(
          new Setting[]{
             this.preset, this.steps, this.arm, this.ack, this.swap, this.settle, this.interval, this.walk, this.layers, this.candidates, this.trust,
-            this.trustDelay, this.inflight, this.revalidate, this.pillar, this.restock, this.lowHealth, this.health, this.hunger, this.nearPlayers,
+            this.trustDelay, this.inflight, this.revalidate, this.turn, this.smooth, this.sprint, this.pillar, this.removeSupports, this.restock, this.lowHealth, this.health, this.hunger, this.nearPlayers,
             this.radius, this.resume, this.delay, this.retries
          }
       );
@@ -129,13 +142,13 @@ public final class BuildTempo extends Module {
    public Setting[] customRows() {
       return new Setting[]{
          this.steps, this.arm, this.ack, this.swap, this.settle, this.interval, this.walk, this.layers, this.candidates, this.trust,
-         this.trustDelay, this.inflight, this.revalidate
+         this.trustDelay, this.inflight, this.revalidate, this.turn
       };
    }
 
    /** The switches that apply on every preset, for the same editor. */
    public BooleanSetting[] behaviourRows() {
-      return new BooleanSetting[]{this.pillar, this.restock, this.lowHealth, this.nearPlayers, this.resume};
+      return new BooleanSetting[]{this.smooth, this.sprint, this.pillar, this.removeSupports, this.restock, this.lowHealth, this.nearPlayers, this.resume};
    }
 
    /** Copies a fixed preset's numbers into the Custom rows, as a starting point for editing. */
@@ -156,6 +169,7 @@ public final class BuildTempo extends Module {
       this.trustDelay.set(from.trustDelay);
       this.inflight.set(from.inflight);
       this.revalidate.set(from.revalidate);
+      this.turn.set(from.turn);
    }
 
    /** Puts every Custom row back to its default. */
@@ -304,6 +318,27 @@ public final class BuildTempo extends Module {
    /** Pillaring is the one climbing method; off restores the original walk-only builder. */
    public static boolean pillar() {
       return on() && instance.pillar.get();
+   }
+
+   /** Degrees the view may turn in one tick, or 360 (no limit) with Smooth Aim off or this module off. */
+   public static float turnSpeed() {
+      if (!smoothAim()) {
+         return 360.0F;
+      }
+      Preset p = fixed();
+      return (float)(p != null ? p.turn : instance.turn.getDouble());
+   }
+
+   public static boolean smoothAim() {
+      return on() && instance.smooth.get();
+   }
+
+   public static boolean sprint() {
+      return on() && instance.sprint.get();
+   }
+
+   public static boolean removeSupports() {
+      return on() && instance.removeSupports.get();
    }
 
    public static boolean restock() {

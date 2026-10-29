@@ -750,10 +750,10 @@ public final class AutoBuilderScreen extends class_437 {
 
       for (int i = 0; i < rows.length; i++) {
          Setting row = rows[i];
-         int ry = y + 60 + i * 26;
-         if (this.inside(x + 16, ry - 2, 452, 24)) {
+         int ry = y + 60 + i * 24;
+         if (this.inside(x + 16, ry - 2, 452, 23)) {
             hovered = row.getDescription();
-            UiPaint.round(g, x + 16, ry - 2, 452, 24, 4, CARD);
+            UiPaint.round(g, x + 16, ry - 2, 452, 23, 4, CARD);
          }
 
          UiPaint.text(g, this.field_22793, row.getName(), x + 24, ry + 7, TEXT);
@@ -790,7 +790,7 @@ public final class AutoBuilderScreen extends class_437 {
 
       for (int i = 0; i < switches.length; i++) {
          BooleanSetting toggle = switches[i];
-         int ry = y + 138 + i * 26;
+         int ry = y + 138 + i * 24;
          if (this.inside(rx, ry, rw, 20)) {
             hovered = toggle.getDescription();
          }
@@ -799,12 +799,12 @@ public final class AutoBuilderScreen extends class_437 {
          this.button(g, "switch" + i, on ? "On" : "Off", rx + rw - 56, ry, 56, 20, true, on, () -> toggle.set(!toggle.get()));
       }
 
-      int dy = y + 278;
-      UiPaint.round(g, rx, dy, rw, 122, 6, INSET);
+      int dy = y + 334;
+      UiPaint.round(g, rx, dy, rw, 74, 6, INSET);
       String help = hovered == null || hovered.isEmpty() ? "Point at a row to see what it does. Changes apply right away, even mid-build." : hovered;
       List<String> lines = this.wrap(help, rw - 20);
 
-      for (int i = 0; i < Math.min(8, lines.size()); i++) {
+      for (int i = 0; i < Math.min(5, lines.size()); i++) {
          UiPaint.text(g, this.field_22793, lines.get(i), rx + 10, dy + 9 + i * 13, hovered == null ? DIM : MUTED);
       }
    }

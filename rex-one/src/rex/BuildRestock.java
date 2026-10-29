@@ -205,8 +205,7 @@ public final class BuildRestock {
       class_243 delta = point.method_1020(player.method_33571());
       float yaw = (float)Math.toDegrees(Math.atan2(-delta.field_1352, delta.field_1350));
       float pitch = (float)Math.toDegrees(Math.atan2(-delta.field_1351, Math.hypot(delta.field_1352, delta.field_1350)));
-      player.method_36456(yaw);
-      player.method_36457(pitch);
+      dev.donut.client.autobuild.BuilderLook.toward(player, yaw, pitch);
       return Math.abs(class_3532.method_15393(sent.donut$lastSentYaw() - yaw)) < 0.5F
          && Math.abs(sent.donut$lastSentPitch() - pitch) < 0.5F
          && sent.donut$lastSentInput() != null

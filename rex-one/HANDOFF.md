@@ -4,12 +4,19 @@ Everything is on branch `claude/yo-b2792p` of `pijsosk-sys/Jjzk`, in `rex-one/`.
 new chat, tell it: *"Read rex-one/HANDOFF.md, rex-one/README.md and
 rex-one/HOW-I-RAN-MINECRAFT.md, then continue."*
 
-## What exists now (version 1.0.0-one.16)
+## What exists now (version 1.0.0-one.17)
 
 **Jar:** `rex-one/out/REX-One-1.21.11.jar`. Drop it into `mods/` in place of the old jar; it
 needs Fabric Loader 0.18.4+, Fabric API and Baritone, as before.
 
 **Auto Build:**
+- **one.17:** finishes the bundled cabin on Fast (it stalled at half), removes its pillars and
+  supports at the end (*Remove Supports*), pillars next to the block it needs, drops 2-3 blocks to
+  get down, only walks to spots it can really place from, sprints, and aims smoothly
+  (*Smooth Aim*, *Turn Speed*). It asks the real placement planner whether a spot works before
+  walking there, pours water only after the walls around it, builds direction-sensitive blocks
+  first, and breaks and re-places its own block if one comes out facing the wrong way. Old
+  schematics (pre-1.17 cauldrons, `chain`) load. See README.
 - **Custom speed editor (one.16):** clicking Custom on the builder screen opens an editor for
   every Custom number (drag bars, -/+), Start from Safe/Balanced/Fast, Reset, and the
   every-preset switches. *Edit custom speed...* reopens it.
@@ -53,6 +60,8 @@ Driver options:
 - `-Drexsmoke.creative=true` uses creative.
 - `-Drexsmoke.restock=true` tests the shulker restock.
 - `-Drexsmoke.shader=true` takes shader screenshots.
+- `-Drexsmoke.thirdPerson=true` films from behind; `-Drexsmoke.clean=true` clears pop-ups.
+- `test/runtime/record.sh out.mp4 <run.sh args>` screen-records a run with ffmpeg.
 - `-Drexsmoke.ui=true` screenshots the module menu, the builder screen and the Custom editor, then quits.
 - `-Drexsmoke.maxSeconds=N` and `-Drexsmoke.stallSeconds=N` set the time limits.
 - `GAME_DIR=...` runs two games side by side.
@@ -72,6 +81,9 @@ The full story of how the real game runs headless is in `HOW-I-RAN-MINECRAFT.md`
   baselines are each in their own commit; `git log -p` shows every change.
 
 ## Known gaps / next ideas
+
+- one.17 test status is in README ("New in one.17"). The starter house (3,201 blocks, many
+  materials) builds but slowly; the test house still boxes the player in under its roof.
 
 - A player boxed inside a closed room with a planned roof can't pillar out (the test house).
 - The big kelp farm: the last full run reached about half before the test cut it off on a long
