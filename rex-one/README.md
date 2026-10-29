@@ -1,6 +1,6 @@
 # REX One: faster Auto Build, climbing, water, a new builder screen and a shader
 
-Sources and tooling for REX One `1.0.0-one.20` (Minecraft 1.21.11, Fabric). The build takes the
+Sources and tooling for REX One `1.0.0-one.21` (Minecraft 1.21.11, Fabric). The build takes the
 released `1.0.0-one.13` jar, replaces or adds these classes, and adds the shader files:
 
 | Class | What changed |
@@ -19,6 +19,72 @@ released `1.0.0-one.13` jar, replaces or adds these classes, and adds the shader
 
 Classes that shipped only as bytecode were decompiled first, and each was committed unchanged
 before being edited, so `git log -p` shows exactly what changed.
+
+## New in one.21: a Server preset, and it holds up on a laggy server
+
+Singleplayer never lags, so every earlier test missed what a real server does. The test driver can
+now make the local world behave like one (`-Drexsmoke.ping`, `jitter`, `rollback`, `rubberband`;
+see HANDOFF). At 200 ms ping with 60 ms jitter, 3% of blocks refused by the server and a setback
+every 15 seconds, one.20 put blocks in the wrong places and stopped on most builds. one.21
+finishes them.
+
+**What was wrong under lag, and what it does now:**
+- **Blocks landed one off.** With prediction on, the next block was often clicked against one the
+  server had not confirmed yet. If the server had refused that one, the click hit empty space and
+  the new block went *there* instead (glass where redstone belonged, an observer in a wall). Now
+  it never clicks a block the server hasn't confirmed; it waits a moment for that one, or uses
+  another face.
+- **Wrong blocks are repaired.** A wrong block in a spot that was empty when the build started is
+  the build's own mistake, so it is broken and placed again, as wrong-facing blocks already were.
+- **Setbacks turned blocks the wrong way.** After the server moves the player back, it ignores
+  the player's turns until the client answers, so a block placed in that moment faced wherever the
+  player looked before (the observer that came out facing north). It now waits one round trip
+  after any setback before placing.
+- **Lag spikes no longer pause the build.** The wait for the server is at least ten seconds plus
+  three round trips (from the player list's ping), so a slow server answers late instead of
+  pausing the build.
+- **It slows down by itself** when the server refuses blocks (an anticheat, a plugin, a busy
+  tick): more time between placements, easing back as blocks go in.
+- **Walled in.** A house with no door, or walls finished with the player inside, used to leave it
+  stuck. Now, like a player, it breaks a wall block and the one above it, steps out, and puts them
+  back from outside. At most three times a build.
+- Shulker restock waits for the box's contents to arrive instead of closing an "empty" box, and
+  more pauses resume by themselves ("Needs a neighbouring block", "Server rejected").
+- A block is broken or reached from any visible face, not only its exact centre (a block whose
+  centre hid behind a neighbour was walked to and given up on again and again).
+
+**The Server preset** (builder screen, Speed; Build Tempo, Preset):
+- at most one placement every three ticks (about six blocks a second);
+- one layer at a time;
+- calm, eased turns (45° a tick);
+- clicks no farther than 4.1 blocks from the eye, under the game's 4.5.
+
+Everything above that protects against lag applies to every preset. The builder screen shows the
+**Ping**, and "slowed" while it is easing off.
+
+**Tested with lag** (200 ms ping, 60 ms jitter, 3% refused, a setback every 15 s, creative):
+
+| Build | Server | Fast | Balanced | Safe |
+| --- | --- | --- | --- | --- |
+| Compact kelp farm (85) | complete | complete | complete | complete |
+| Cozy Oak Cabin (284) | complete, 173 s | complete, 113 s | complete | |
+| Test house (260) | complete, 232 s | complete, 176 s | | |
+| Tower (224) | complete, 94 s | | | |
+| Sweet berry farm (135) | complete, 47 s | complete, 34 s | | |
+| Cactus farm (129) | complete, 57 s | complete, 39 s | | |
+| Nether wart farm (90) | complete, 29 s | complete, 21 s | | |
+| Lava and water pools (90) | complete, 34 s | complete, 27 s | | |
+
+In survival with lag, the test house was fully built on Server (260/260). Cleanup was still
+breaking temporary blocks when the 5-minute test limit ran out: survival digging plus 20 setbacks
+takes a while.
+
+Without lag, everything that passed before still passes. The test house completes on Fast, Safe
+and Server; the tower, the three farms and the pools on Fast and Server; the cabin on Fast and
+Server; and the compact kelp farm on all four presets. The Start test behaves as in one.20.
+
+This is a simulation. A real server's anticheat may still disagree with things the simulation
+can't show, and some servers ban building mods outright; check the server's rules first.
 
 ## New in one.20: Start always starts, three new farms, farms and houses finish, more natural
 

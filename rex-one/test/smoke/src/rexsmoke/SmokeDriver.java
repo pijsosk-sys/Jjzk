@@ -69,6 +69,7 @@ public final class SmokeDriver implements ClientModInitializer {
    public void onInitializeClient() {
       if (System.getProperty("rexsmoke.schem") != null) {
          ClientTickEvents.END_CLIENT_TICK.register(this::tick);
+         LagSim.register();
       }
    }
 
@@ -87,6 +88,7 @@ public final class SmokeDriver implements ClientModInitializer {
          class_318.method_22690(client.field_1697, this.pendingShot, client.method_1522(), 1, message -> {});
          this.pendingShot = null;
       }
+      LagSim.install(client);
       if (Boolean.getBoolean("rexsmoke.clean")) {
          client.method_1566().method_2000(); // recipe and tutorial pop-ups, for recordings
       }
@@ -286,6 +288,8 @@ public final class SmokeDriver implements ClientModInitializer {
                client.field_1690.method_31043(net.minecraft.class_5498.field_26665);
             }
             builder.start();
+            LagSim.schematic = this.schematic;
+            LagSim.running = true;
             this.ticks = 0;
             this.still = 0;
             this.lastConfirmed = -1;
@@ -326,6 +330,7 @@ public final class SmokeDriver implements ClientModInitializer {
             if (!done) {
                return;
             }
+            LagSim.running = false;
             if (this.verified == null) {
                server.execute(() -> this.verified = this.verify(server.method_30002()));
                return;
@@ -337,6 +342,11 @@ public final class SmokeDriver implements ClientModInitializer {
             this.log(String.format(Locale.ROOT, "%-9s %-9s %6.1fs  %5.1f placed/s  placements sent %s  server: %d/%d match (%d exact), %d wrong  | %s",
                current == null ? "default" : current, builder.status(), seconds, result[1] / seconds, sent(builder), result[1],
                this.schematic.blocks().size(), result[0], result[2], builder.reason()));
+            if (LagSim.active()) {
+               this.log("  lag: " + LagSim.describe());
+               LagSim.rollbacks = 0;
+               LagSim.setbacks = 0;
+            }
             try {
                this.log("  " + AutoBuilderController.class.getMethod("tickReport").invoke(builder));
             } catch (ReflectiveOperationException none) {
@@ -432,6 +442,11 @@ public final class SmokeDriver implements ClientModInitializer {
          class_2680 desired = transform.apply(block.state());
          class_2338 pos = transform.apply(block.pos());
          class_2680 actual = world.method_8320(pos);
+         if (!desired.method_26227().method_15769() && !desired.method_26227().method_15771() && desired.method_26204() instanceof net.minecraft.class_2404) {
+            // Flowing water or lava: never placed, it runs there on its own, given time.
+            matching++;
+            continue;
+         }
          if (actual.equals(desired)) {
             exact++;
          }

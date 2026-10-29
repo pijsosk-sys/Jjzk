@@ -5,7 +5,7 @@
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 BASE=${1:?usage: build.sh <base REX-One jar>}
-VERSION=1.0.0-one.20
+VERSION=1.0.0-one.21
 CACHE="$HERE/.cache"
 WORK="$HERE/.work"
 OUT="$HERE/out/REX-One-1.21.11.jar"

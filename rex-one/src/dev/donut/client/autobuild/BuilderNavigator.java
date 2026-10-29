@@ -344,13 +344,37 @@ public final class BuilderNavigator {
                // reach and in sight. Distance alone sent it to spots that show every such face its back
                // (an eave seen from the roof above it), where it arrived, found nothing and walked on.
                return canClickFrom(client, eye, destination, reach) && (this.placeable == null || this.placeable.test(pos(at)));
-            } else {
+            } else if (client.field_1687.method_8320(destination).method_26218(client.field_1687, destination).method_1110()) {
+               // Water and the like: nothing to see, only the way there must be clear.
                class_3965 hit = client.field_1687
                   .method_17742(new class_3959(eye, class_243.method_24953(destination), class_3960.field_17559, class_242.field_1348, client.field_1724));
                return hit.method_17783() == class_240.field_1333 || hit.method_17777().equals(destination);
+            } else {
+               return visibleFace(client, eye, destination, reach) != null;
             }
          }
       }
+   }
+
+   /**
+    * A face of the block that a click or a dig from this eye would land on, or null: the block's
+    * centre first, then the middle of each face, in reach and in plain sight. The centre alone
+    * missed blocks whose middle hides behind a neighbour while a face shows, so it walked up to
+    * them and found nothing to break, again and again.
+    */
+   public static class_2350 visibleFace(class_310 client, class_243 eye, class_2338 pos, double reach) {
+      class_243 center = class_243.method_24953(pos);
+      for (int i = -1; i < 6; i++) {
+         class_243 point = i < 0 ? center : center.method_1019(class_243.method_24954(class_2350.values()[i].method_62675()).method_1021(0.499));
+         if (eye.method_1025(point) > reach * reach) {
+            continue;
+         }
+         class_3965 hit = client.field_1687.method_17742(new class_3959(eye, point, class_3960.field_17559, class_242.field_1348, client.field_1724));
+         if (hit.method_17783() == class_240.field_1332 && hit.method_17777().equals(pos)) {
+            return hit.method_17780();
+         }
+      }
+      return null;
    }
 
    private static final double[][] FACE_POINTS = {{0.5, 0.5}, {0.2, 0.2}, {0.8, 0.2}, {0.2, 0.8}, {0.8, 0.8}};

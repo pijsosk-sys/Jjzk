@@ -4,12 +4,20 @@ Everything is on branch `ccr-20343ee0-s6lunp` of `pijsosk-sys/Jjzk`, in `rex-one
 new chat, tell it: *"Read rex-one/HANDOFF.md, rex-one/README.md and
 rex-one/HOW-I-RAN-MINECRAFT.md, then continue."*
 
-## What exists now (version 1.0.0-one.20)
+## What exists now (version 1.0.0-one.21)
 
 **Jar:** `rex-one/out/REX-One-1.21.11.jar`. Drop it into `mods/` in place of the old jar; it
 needs Fabric Loader 0.18.4+, Fabric API and Baritone, as before.
 
 **Auto Build:**
+- **one.21:** lag-proof, plus a **Server** preset. Placements never click a block the server
+  hasn't confirmed (a refused one made the next block land one off). Wrong blocks in spots that
+  started empty are broken and re-placed (`startFix`, `startedEmpty`). No placing for one round
+  trip after a setback (`correctedTick`). The server-wait windows scale with ping
+  (`ackWindow`, `latencyTicks`). It backs off when blocks are refused (`backoff`, `slowDown`).
+  When walled in, it breaks out (`startEscape`, `escapeStep`). Faces count as visible from any
+  face midpoint (`BuilderNavigator.visibleFace`). Restock waits for container contents. There is
+  a Ping tile on the screen. Tested with the new lag simulator (`test/smoke/src/rexsmoke/LagSim.java`).
 - **one.20:** Start always starts: blocks with no material are set aside and built when the item
   turns up, with a full missing list at the end (`setAsideMissing`, `checkMissing`,
   `missingSummary`). If you carry none of the materials, the screen says so. Grown plants and
@@ -88,6 +96,9 @@ Driver options:
 - `-Drexsmoke.starts=true` presses the builder screen's real Start on every library file and logs
   what happened (and the screen's message). Add `creative=true` for creative.
 - `python3 test/make_farms.py` regenerates the bundled farm schematics.
+- Lag simulator: `-Drexsmoke.ping=200 -Drexsmoke.jitter=60` delays packets both ways (in order),
+  `-Drexsmoke.rollback=0.03` has the server refuse that share of fresh blueprint blocks,
+  `-Drexsmoke.rubberband=15` sets the player back a second every 15 s. Results get a `lag:` line.
 - Run at most two games at once: four starve the CPU (10 fps) and runs time out.
 
 The full story of how the real game runs headless is in `HOW-I-RAN-MINECRAFT.md`.
@@ -106,11 +117,13 @@ The full story of how the real game runs headless is in `HOW-I-RAN-MINECRAFT.md`
 
 ## Known gaps / next ideas
 
-- Rare: Balanced on the compact kelp farm stops two blocks short about one run in twelve (a
-  piston in a cramped water spot; one.19 does it too). Also rare: an observer comes out facing the
-  wrong way and is re-placed three times, then set aside.
+- Never run on a real server: the lag simulator stands in for one. Some servers ban building mods
+  outright; check the rules first. Use the **Server** preset there.
+- A doorless room can keep the supports used inside it once the walls close: it breaks out of a
+  closed room, but doesn't break back in to fetch them. Seen on the cabin with lag.
+- Rare: Balanced on the compact kelp farm can stop two blocks short at a piston in a cramped water
+  spot.
 - Iron doors can't be opened by hand, so the builder treats them as walls.
 - The starter house (3,201 blocks, many materials) builds but slowly.
-- Not tested on a real server or against an anticheat; start with **Balanced** there.
-- Ideas: refill water buckets in survival, build in strips to cut walking further, more farm
-  schematics (crops need tilled farmland, which needs a hoe step the builder doesn't have yet).
+- Ideas: refill water buckets in survival, build in strips to cut walking further, crop farms
+  (they need a hoe step for farmland).

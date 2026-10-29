@@ -155,6 +155,11 @@ public final class BuildRestock {
                   clicks++;
                }
             }
+            // The box's contents follow its screen from the server: on a laggy server the screen is
+            // open but still empty for a moment, which read as "nothing to take".
+            if (clicks == 0 && ticks < 4 + dev.donut.client.autobuild.AutoBuilderController.latencyTicks(client)) {
+               return null;
+            }
             if (clicks == 0) {
                player.method_7346();
                phase = Phase.BREAK;

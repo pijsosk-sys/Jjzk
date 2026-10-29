@@ -117,6 +117,18 @@ public final class AutoBuilderController {
    private int finalCheckIndex;
    private int originalSlot = -1;
    private boolean scanned;
+   /** Blueprint positions that were empty when the build started: a wrong block there is the build's own. */
+   private final BitSet startedEmpty = new BitSet();
+   /** Extra ticks between placements while the server refuses them; eases off as blocks go in. */
+   private int backoff;
+   private final Map<class_2338, Integer> supportStuck = new HashMap<>();
+   /** Breaking out of a room the build closed around the player: blocks to break, and where to step. */
+   private List<class_2338> escapeBreak;
+   private class_2338 escapeLanding;
+   private int escapeTicks;
+   private int escapes;
+   /** When the server last set the player back; until it has the player's aim again, nothing is placed. */
+   private int correctedTick = -1000;
    private boolean yielded;
    private PlacementPlanner.Plan bucketPlan;
    private int signTick = Integer.MIN_VALUE / 2;
@@ -240,6 +252,12 @@ public final class AutoBuilderController {
    }
 
    /** Placement packets sent since the build started. */
+   /** The round trip to the server, and whether the builder is easing off because blocks were refused. */
+   public String connection(class_310 client) {
+      int ms = latencyMs(client);
+      return (ms == 0 && client.method_1542() ? "local" : ms + " ms") + (this.backoff > 0 ? ", slowed" : "");
+   }
+
    public int placementsSent() {
       return this.placements;
    }
@@ -372,6 +390,7 @@ public final class AutoBuilderController {
       this.inflight.clear();
       this.scanIndex = 0;
       this.scanned = false;
+      this.startedEmpty.clear();
       this.work.clear();
       this.revalidateIndex = 0;
       this.finalCheckIndex = 0;
@@ -443,6 +462,7 @@ public final class AutoBuilderController {
          this.inflight.clear();
          this.scanIndex = 0;
          this.scanned = false;
+         this.startedEmpty.clear();
          this.work.clear();
          this.work.addAll(this.targets);
          this.revalidateIndex = 0;
@@ -463,6 +483,12 @@ public final class AutoBuilderController {
          this.fixing = null;
          this.fixes.clear();
          this.missing.clear();
+         this.backoff = 0;
+         this.correctedTick = -1000;
+         this.supportStuck.clear();
+         this.escapeBreak = null;
+         this.escapeLanding = null;
+         this.escapes = 0;
          this.doors = null;
          this.doorsSkipped.clear();
          this.pillarSpot = null;
@@ -511,6 +537,7 @@ public final class AutoBuilderController {
                this.start();
             } else {
                this.failures.clear();
+               this.fixes.clear();
                this.deferred.clear();
                this.arrivals.clear();
                this.climbs.clear();
@@ -606,6 +633,7 @@ public final class AutoBuilderController {
       this.inflight.clear();
       this.scanIndex = 0;
       this.scanned = false;
+      this.startedEmpty.clear();
       this.unconfirmed.clear();
       this.predictionLevel = null;
       this.previewVisible = false;
@@ -690,7 +718,7 @@ public final class AutoBuilderController {
 
             if (this.pending != null) {
                this.navigator.hold(client, false);
-               if (this.pending.acknowledged || this.tick - this.pending.sentTick > BuildTempo.ack()) {
+               if (this.pending.acknowledged || this.tick - this.pending.sentTick > this.ackWindow(client)) {
                   this.finishPending(client);
                } else if (BuildTempo.earlyFinish(this.waited())) {
                   this.finishPredicted(client);
@@ -698,7 +726,7 @@ public final class AutoBuilderController {
             } else if (this.prepared != null) {
                this.navigator.hold(client, shouldSneak(client, this.prepared.target, this.prepared.plan));
                aim(client, this.prepared.plan);
-               if (this.tick >= this.prepared.readyTick && this.tick - this.placedTick >= BuildTempo.interval()) {
+               if (this.tick >= this.prepared.readyTick && this.tick - this.placedTick >= BuildTempo.interval() + this.backoff) {
                   this.sendPrepared(client);
                   if (this.pending != null && BuildTempo.earlyFinish(0)) {
                      // The client applied its prediction inside the interaction call, so with no
@@ -727,6 +755,9 @@ public final class AutoBuilderController {
                         && matches(target.state, client.field_1687.method_8320(target.pos))) {
                         this.markCorrect(target);
                      }
+                     if (MaterialTracker.isLoaded(client.field_1687, target.pos) && client.field_1687.method_8320(target.pos).method_45474()) {
+                        this.startedEmpty.set(target.index);
+                     }
                   }
 
                   if (this.scanIndex < this.targets.size()) {
@@ -748,6 +779,11 @@ public final class AutoBuilderController {
                      return;
                   }
 
+                  if (this.escapeLanding != null) {
+                     this.escapeStep(client);
+                     return;
+                  }
+
                   if (this.pillarFor != null) {
                      this.pillarStep(client);
                      return;
@@ -765,6 +801,11 @@ public final class AutoBuilderController {
 
                   if (this.current == null && (!this.settling.isEmpty() || !this.inflight.isEmpty())) {
                      this.reason = "Confirming " + (this.settling.size() + this.inflight.size()) + " placed blocks...";
+                     this.yielded = true;
+                  } else if (this.current == null && this.blockedByAccess() && this.startEscape(client)) {
+                     // Walled in with blocks put aside for want of a way to them: retrying from in here
+                     // cannot help, so get out first.
+                     this.reason = "Walled in: breaking out";
                      this.yielded = true;
                   } else if (this.current == null && this.requeueAllDeferred()) {
                      this.reason = "Retrying skipped blocks...";
@@ -848,9 +889,9 @@ public final class AutoBuilderController {
                                  client.field_1724.method_31548().method_61496(slot);
                                  PlacementPlanner.Plan plan = water
                                     ? planWater(client, this.current)
-                                    : (configuring ? PlacementPlanner.plan(client, this.current.pos, this.current.state, client.field_1724.method_6047()) : planNearest(client, this.current));
+                                    : (configuring ? planWithin(client, this.current.pos, this.current.state, client.field_1724.method_6047()) : planNearest(client, this.current));
                                  if (plan == null && !water) {
-                                    plan = PlacementPlanner.plan(client, this.current.pos, this.current.state, client.field_1724.method_6047());
+                                    plan = planWithin(client, this.current.pos, this.current.state, client.field_1724.method_6047());
                                  }
                                  this.bucketPlan = water ? plan : null;
                                  Target alternative;
@@ -1116,7 +1157,7 @@ public final class AutoBuilderController {
             continue;
          }
 
-         if (PlacementPlanner.plan(client, candidate.pos, candidate.state, hand) != null) {
+         if (planWithin(client, candidate.pos, candidate.state, hand) != null) {
             return candidate;
          }
       }
@@ -1140,7 +1181,7 @@ public final class AutoBuilderController {
       double pitchRad = Math.toRadians(pitch);
       class_243 look = new class_243(-Math.sin(yawRad) * Math.cos(pitchRad), -Math.sin(pitchRad), Math.cos(yawRad) * Math.cos(pitchRad));
       class_243 eye = player.method_33571();
-      double reach = player.method_55754() - 0.05;
+      double reach = placeReach(player);
       class_3965 hit = client.field_1687.method_17742(new class_3959(eye, eye.method_1019(look.method_1021(reach)), class_3960.field_17559, class_242.field_1348, player));
       if (hit.method_17783() != class_240.field_1332 || hit.method_17781()) {
          return null;
@@ -1170,6 +1211,18 @@ public final class AutoBuilderController {
     * banners, skulls, stairs) can need a particular angle, so this samples a grid across every
     * face that could hold the block and keeps the first point that predicts the wanted state.
     */
+   /** How far from the eye a click may land: the game's reach, less a margin on the Server preset. */
+   private static double placeReach(class_746 player) {
+      return Math.min(player.method_55754() - 0.05, BuildTempo.placeReach());
+   }
+
+   /** The placement planner's plan, unless its click lands beyond {@link #placeReach}. */
+   private static PlacementPlanner.Plan planWithin(class_310 client, class_2338 pos, class_2680 state, class_1799 stack) {
+      PlacementPlanner.Plan plan = PlacementPlanner.plan(client, pos, state, stack);
+      double reach = placeReach(client.field_1724);
+      return plan != null && !plan.configure() && client.field_1724.method_33571().method_1025(plan.hit().method_17784()) > reach * reach ? null : plan;
+   }
+
    private static PlacementPlanner.Plan planSampled(class_310 client, Target target) {
       return planSampled(client, target, client.field_1724.method_6047());
    }
@@ -1199,7 +1252,7 @@ public final class AutoBuilderController {
       }
 
       class_243 eye = player.method_33571();
-      double reach = player.method_55754() - 0.05;
+      double reach = placeReach(player);
       float oldYaw = player.method_36454();
       float oldPitch = player.method_36455();
       try {
@@ -1317,7 +1370,7 @@ public final class AutoBuilderController {
          boolean bucket = action.plan == this.bucketPlan;
          PlacementPlanner.Plan plan = bucket
             ? planWater(client, this.current)
-            : PlacementPlanner.plan(client, this.current.pos, this.current.state, client.field_1724.method_6047());
+            : planWithin(client, this.current.pos, this.current.state, client.field_1724.method_6047());
          if (plan == null && !action.plan.configure() && !bucket) {
             plan = planSampled(client, this.current);
          }
@@ -1341,7 +1394,20 @@ public final class AutoBuilderController {
                }
             }
 
-            if (!(Math.abs(class_3532.method_15393(sent.donut$lastSentYaw() - plan.yaw())) > 0.001F)
+            class_2338 clicked = plan.hit().method_17777();
+            if (this.tick - this.correctedTick <= latencyTicks(client) + 4) {
+               // Set back by the server: it ignores the player's turns until the client has answered
+               // the teleport, so a block placed now would face wherever the player looked before.
+               this.prepared = new Prepared(this.current, plan, this.tick + 1);
+               this.reason = "Waiting for the server after it moved the player";
+               this.yielded = true;
+            } else if (!bucket && !plan.configure() && (this.unconfirmed.containsKey(clicked) || this.inflight.containsKey(clicked))) {
+               // The block it would click is only the client's prediction so far. If the server
+               // refused it, the click would land in that empty spot instead, one block off.
+               this.prepared = new Prepared(this.current, plan, this.tick + 1);
+               this.reason = "Waiting for the server to confirm the block at " + coordinates(clicked);
+               this.yielded = true;
+            } else if (!(Math.abs(class_3532.method_15393(sent.donut$lastSentYaw() - plan.yaw())) > 0.001F)
                && !(Math.abs(sent.donut$lastSentPitch() - plan.pitch()) > 0.001F)
                && sent.donut$lastSentInput() != null
                && sent.donut$lastSentInput().comp_3164() == sneak) {
@@ -1476,7 +1542,7 @@ public final class AutoBuilderController {
    private static PlacementPlanner.Plan planWater(class_310 client, Target target) {
       class_746 player = client.field_1724;
       class_243 eye = player.method_33571();
-      double reach = player.method_55754() - 0.05;
+      double reach = placeReach(player);
       for (class_2350 face : class_2350.values()) {
          class_2338 support = target.pos.method_10093(face.method_10153());
          if (!MaterialTracker.isLoaded(client.field_1687, support)) {
@@ -1788,8 +1854,158 @@ public final class AutoBuilderController {
     * can be placed again. Only ever the blueprint's own block type, so nothing else is touched,
     * and twice per spot at most; after that it is left for the player as before.
     */
+   /**
+    * The build closed its walls around the player, so nothing left can be reached (a house with no
+    * door, built with the player inside). As a player would: break a wall block and the one above it,
+    * step outside and carry on; the two blocks go back in later from outside. At most three times a
+    * build. Returns false when the player is not walled in or there is no way out.
+    */
+   private boolean startEscape(class_310 client) {
+      if (this.escapes >= 3 || this.targets.isEmpty() || client.field_1724 == null) {
+         return false;
+      }
+      int minX = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE, maxX = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
+      for (Target target : this.targets) {
+         minX = Math.min(minX, target.pos.method_10263());
+         maxX = Math.max(maxX, target.pos.method_10263());
+         minZ = Math.min(minZ, target.pos.method_10260());
+         maxZ = Math.max(maxZ, target.pos.method_10260());
+      }
+      Set<class_2338> reach = this.navigator.reachable(client, 6000);
+      if (reach.size() > 4000) {
+         return false; // a big open area, not a closed room (or too big to tell): never break walls for it
+      }
+      for (class_2338 at : reach) {
+         if (at.method_10263() < minX || at.method_10263() > maxX || at.method_10260() < minZ || at.method_10260() > maxZ) {
+            return false; // can already walk out of the footprint
+         }
+      }
+      class_2338 feet = client.field_1724.method_24515();
+      class_2338 bestWall = null;
+      class_2338 bestLanding = null;
+      double best = Double.MAX_VALUE;
+      for (class_2338 at : reach) {
+         for (class_2350 direction : class_2350.class_2353.field_11062) {
+            class_2338 wall = at.method_10093(direction);
+            class_2338 out = wall.method_10093(direction);
+            if (out.method_10263() >= minX && out.method_10263() <= maxX && out.method_10260() >= minZ && out.method_10260() <= maxZ) {
+               continue; // still inside the footprint
+            }
+            if (!this.solidAt(client, wall) || !this.breakable(client, wall) || this.solidAt(client, wall.method_10084()) && !this.breakable(client, wall.method_10084())) {
+               continue;
+            }
+            if (!this.openAt(client, out) || !this.openAt(client, out.method_10084())) {
+               continue;
+            }
+            class_2338 landing = out;
+            int drop = 0;
+            while (drop < 3 && this.openAt(client, landing.method_10074())) {
+               landing = landing.method_10074();
+               drop++;
+            }
+            if (this.openAt(client, landing.method_10074())) {
+               continue; // a long fall
+            }
+            double distance = at.method_10262(feet);
+            if (distance < best) {
+               best = distance;
+               bestWall = wall;
+               bestLanding = landing;
+            }
+         }
+      }
+      if (bestWall == null) {
+         return false;
+      }
+      this.escapeBreak = new ArrayList<>();
+      if (this.solidAt(client, bestWall.method_10084())) {
+         this.escapeBreak.add(bestWall.method_10084());
+      }
+      this.escapeBreak.add(bestWall);
+      this.escapeLanding = bestLanding;
+      this.escapeTicks = 0;
+      this.escapes++;
+      this.navigator.reset();
+      return true;
+   }
+
+   /** Whether some block was put aside because there was no way to it, rather than for want of material. */
+   private boolean blockedByAccess() {
+      for (class_2338 pos : this.deferred) {
+         String why = this.deferReasons.get(pos);
+         if (why != null && (why.startsWith("No walking route") || why.startsWith("Missing support") || why.startsWith("Cannot reach")
+            || why.startsWith("Needs a neighbouring"))) {
+            return true;
+         }
+      }
+      return false;
+   }
+
+   private void escapeStep(class_310 client) {
+      this.yielded = true;
+      if (++this.escapeTicks > 1200) {
+         client.field_1761.method_2925();
+         this.escapeLanding = null;
+         this.escapeBreak = null;
+         return;
+      }
+      for (class_2338 pos : this.escapeBreak) {
+         if (this.solidAt(client, pos)) {
+            this.reason = "Walled in: breaking out at " + coordinates(pos);
+            class_2350 face = this.breakFace(client, pos, client.field_1724.method_55754() - 0.25);
+            if (face == null) {
+               client.field_1761.method_2925();
+               this.navigator.walkReach(BuildTempo.walkReach());
+               this.navigator.placeableFrom(null);
+               if (this.navigator.moveTo(client, pos) == BuilderNavigator.Result.NO_PATH) {
+                  this.escapeLanding = null;
+                  this.escapeBreak = null;
+               }
+            } else {
+               this.breakBlock(client, pos, face);
+            }
+            return;
+         }
+      }
+      client.field_1761.method_2925();
+      this.reason = "Stepping out of the walled-in space";
+      BuilderNavigator.Result movement = this.navigator.standAt(client, this.escapeLanding);
+      if (movement == BuilderNavigator.Result.ARRIVED) {
+         // Outside: everything put aside for want of a route gets another go from here.
+         this.escapeLanding = null;
+         this.escapeBreak = null;
+         this.deferRounds = 0;
+         this.requeueAllDeferred();
+      } else if (movement == BuilderNavigator.Result.NO_PATH || movement == BuilderNavigator.Result.STUCK) {
+         this.escapeLanding = null;
+         this.escapeBreak = null;
+      }
+   }
+
+   private boolean solidAt(class_310 client, class_2338 pos) {
+      class_2680 state = client.field_1687.method_8320(pos);
+      return !state.method_45474() && !state.method_26220(client.field_1687, pos).method_1110();
+   }
+
+   private boolean openAt(class_310 client, class_2338 pos) {
+      class_2680 state = client.field_1687.method_8320(pos);
+      return state.method_26220(client.field_1687, pos).method_1110() && state.method_26227().method_15769();
+   }
+
+   /** A block the build itself placed (blueprint or support), which it may take out and put back. */
+   private boolean breakable(class_310 client, class_2338 pos) {
+      class_2680 state = client.field_1687.method_8320(pos);
+      return (this.indices.containsKey(pos) || this.supportBlocks.contains(pos)) && state.method_26214(client.field_1687, pos) >= 0.0F
+         && client.field_1687.method_8321(pos) == null;
+   }
+
    private boolean startFix(class_310 client, class_2680 actual) {
-      if (actual.method_26204() != this.current.state.method_26204() || this.fixes.merge(this.current.pos, 1, Integer::sum) > 2) {
+      // The same block facing the wrong way, or any block in a spot that was empty when the build
+      // started: on a laggy server a click can land one block off, into a support the server had
+      // not placed yet. Either is the build's own doing, so it is broken and placed again.
+      boolean own = actual.method_26204() == this.current.state.method_26204()
+         || this.current.index >= 0 && this.startedEmpty.get(this.current.index) && !actual.method_45474() && actual.method_26227().method_15769();
+      if (!own || this.fixes.merge(this.current.pos, 1, Integer::sum) > 2) {
          return false;
       }
       this.fixing = this.current.pos;
@@ -1966,6 +2182,9 @@ public final class AutoBuilderController {
                if (predicted != null) {
                   this.failures.remove(pos);
                }
+               if (this.backoff > 0) {
+                  this.backoff--;
+               }
             } else {
                this.correct.clear(index);
                this.unsettle(this.byIndex[index]);
@@ -1994,6 +2213,7 @@ public final class AutoBuilderController {
       if (this.isRunning()) {
          this.navigator.replan();
          this.prepared = null;
+         this.correctedTick = this.tick;
          this.reason = "Server corrected the position. Replanning...";
       }
    }
@@ -2034,6 +2254,7 @@ public final class AutoBuilderController {
             || !PlacementPlanner.canAdd(action.target.state, actual)
                && !PlacementPlanner.needsConfiguration(action.target.state, actual)) {
             int attempts = this.failures.merge(action.target.pos, 1, Integer::sum);
+            this.slowDown();
             this.navigator.rejectCurrent(client);
             this.cooldown = 4;
             this.reason = "Server rejected placement at " + coordinates(action.target.pos) + " (" + attempts + "/3). Replanning...";
@@ -2130,7 +2351,7 @@ public final class AutoBuilderController {
          double z = player.method_23321();
          try {
             player.method_5814(feet.method_10263() + 0.5, feet.method_10264(), feet.method_10260() + 0.5);
-            result = PlacementPlanner.plan(client, target.pos, target.state, stack) != null || planSampled(client, target, stack) != null;
+            result = planWithin(client, target.pos, target.state, stack) != null || planSampled(client, target, stack) != null;
          } finally {
             player.method_5814(x, y, z);
          }
@@ -2282,6 +2503,7 @@ public final class AutoBuilderController {
    /** The server answered a predicted placement with a different block. */
    private void predictionRefused(class_2338 pos) {
       int attempts = this.failures.merge(pos, 1, Integer::sum);
+      this.slowDown();
       if (this.isRunning()) {
          this.prepared = null;
          this.cooldown = Math.max(this.cooldown, 4);
@@ -2300,8 +2522,38 @@ public final class AutoBuilderController {
     * Predicted placements the server never answers would otherwise sit in flight forever. This
     * pauses the build the same way an unacknowledged placement always has.
     */
+   /**
+    * A refused placement: on a server that limits placing (an anticheat, a plugin, a busy tick) the
+    * next ones would be refused too, so leave more time between them for a while.
+    */
+   private void slowDown() {
+      this.backoff = Math.min(20, this.backoff * 2 + 2);
+   }
+
+   /**
+    * Ticks to wait for the server before a placement counts as unanswered: the preset's window,
+    * but never under ten seconds plus three round trips. A busy server answers late, not never,
+    * and pausing on every lag spike stopped builds that would have carried on by themselves.
+    */
+   private int ackWindow(class_310 client) {
+      return Math.max(BuildTempo.ack(), 200 + 3 * latencyTicks(client));
+   }
+
+   /** The round trip to the server in ticks, from the player list's ping. */
+   public static int latencyTicks(class_310 client) {
+      return latencyMs(client) / 50;
+   }
+
+   public static int latencyMs(class_310 client) {
+      if (client.field_1724 == null || client.method_1562() == null) {
+         return 0;
+      }
+      net.minecraft.class_640 entry = client.method_1562().method_2871(client.field_1724.method_5667());
+      return entry == null ? 0 : Math.max(0, entry.method_2959());
+   }
+
    private boolean checkInflight() {
-      int window = BuildTempo.ack();
+      int window = this.ackWindow(class_310.method_1551());
       for (Map.Entry<class_2338, Integer> entry : this.inflight.entrySet()) {
          if (this.tick - entry.getValue() > window) {
             class_2338 pos = entry.getKey();
@@ -2344,7 +2596,7 @@ public final class AutoBuilderController {
          if (this.correct.get(target.index)) {
             this.settling.remove(target.pos);
          } else if (this.unconfirmed.containsKey(target.pos)) {
-            if (this.tick - entry.since() > BuildTempo.ack() * 2) {
+            if (this.tick - entry.since() > this.ackWindow(client) * 2) {
                // The same pause the builder always made for a position the server never confirmed.
                this.pauseWith("Still waiting for server confirmation at " + coordinates(target.pos) + ". Resume after the connection recovers.");
                return;
@@ -2485,6 +2737,10 @@ public final class AutoBuilderController {
          this.stopClearing(client);
          return false;
       }
+      if (this.escapeLanding != null) {
+         this.escapeStep(client);
+         return true;
+      }
 
       class_746 player = client.field_1724;
       this.supportBlocks.removeIf(pos -> {
@@ -2544,7 +2800,10 @@ public final class AutoBuilderController {
          this.navigator.walkReach(BuildTempo.walkReach());
          BuilderNavigator.Result movement = this.navigator.moveTo(client, pos);
          this.reason = "Walking to temporary support at " + coordinates(pos) + " / " + this.navigator.routeLength() + " steps";
-         if (movement == BuilderNavigator.Result.NO_PATH || movement == BuilderNavigator.Result.STUCK || ++this.breakTicks > 600) {
+         // A server setback or a jostle makes a walk report stuck once in a while: only give up on a
+         // support after a few of those, or when there is really no route.
+         boolean stuck = movement == BuilderNavigator.Result.STUCK && this.supportStuck.merge(pos, 1, Integer::sum) >= 3;
+         if (movement == BuilderNavigator.Result.NO_PATH || stuck || ++this.breakTicks > 600) {
             this.breaking = null;
             // The column top cannot be reached, but blocks lower down often can: its top is out of
             // sight behind the block under it. Take what is in reach, highest first, before giving up.
@@ -2557,6 +2816,11 @@ public final class AutoBuilderController {
                   this.breakTicks = 0;
                   break;
                }
+            }
+            if (this.breaking == null && movement == BuilderNavigator.Result.NO_PATH && this.startEscape(client)) {
+               // Shut in with supports still outside: break out, and the wall goes back in after.
+               this.reason = "Walled in: breaking out";
+               return true;
             }
             if (this.breaking == null) {
                this.supportsKept.put(pos, "no way to reach " + coordinates(pos));
@@ -2578,13 +2842,7 @@ public final class AutoBuilderController {
 
    /** The face to break a block from where the player stands, or null when it is out of reach or hidden. */
    private class_2350 breakFace(class_310 client, class_2338 pos, double reach) {
-      class_243 eye = client.field_1724.method_33571();
-      class_243 center = class_243.method_24953(pos);
-      if (eye.method_1025(center) > reach * reach) {
-         return null;
-      }
-      class_3965 hit = client.field_1687.method_17742(new class_3959(eye, center, class_3960.field_17559, class_242.field_1348, client.field_1724));
-      return hit.method_17783() == class_240.field_1332 && hit.method_17777().equals(pos) ? hit.method_17780() : null;
+      return BuilderNavigator.visibleFace(client, client.field_1724.method_33571(), pos, reach);
    }
 
    /** Why a support has to stay, or null when it can go. */

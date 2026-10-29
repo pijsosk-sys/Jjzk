@@ -19,7 +19,9 @@ public final class BuildPatience {
       "is nearby. Resumes when they leave",
       "Paired block",
       "Missing support",
-      "Occupied or incorrect"
+      "Occupied or incorrect",
+      "Needs a neighbouring block",
+      "Server rejected"
    };
 
    private static Status previous = Status.IDLE;

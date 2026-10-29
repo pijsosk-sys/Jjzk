@@ -8,7 +8,7 @@ REX=$(cd "$(dirname "$1")" && pwd)/$(basename "$1"); SCHEM=$(cd "$(dirname "$2")
 GAME="${GAME_DIR:-$RT/game}"   # GAME_DIR lets two runs go side by side
 DRIVER="$GAME.driver"
 rm -rf "$GAME" "$DRIVER" && mkdir -p "$GAME/mods" "$GAME/saves" "$DRIVER"
-javac -nowarn -proc:none -cp "$REX:$(compile_classpath)" -d "$DRIVER" "$HERE/test/smoke/src/rexsmoke/SmokeDriver.java"
+javac -nowarn -proc:none -cp "$REX:$(compile_classpath)" -d "$DRIVER" "$HERE"/test/smoke/src/rexsmoke/*.java
 cp "$HERE/test/smoke/fabric.mod.json" "$DRIVER/"
 (cd "$DRIVER" && zip -qr "$GAME/mods/rexsmoke.jar" .)
 cp "$REX" "$GAME/mods/rex-one.jar"

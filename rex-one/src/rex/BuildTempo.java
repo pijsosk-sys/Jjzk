@@ -27,6 +27,12 @@ public final class BuildTempo extends Module {
       BALANCED(3, 1, 60, 1, 2, 16384, 64, true, 1, 0, 2, 0, 3.25, 50),
       /** One block per tick, the protocol floor for a placement that needs its own rotation. */
       FAST(4, 0, 80, 1, 2, 16384, 96, true, 0, 0, 4, 0, 3.0, 120),
+      /**
+       * For public servers: a placement every three ticks at most, one layer at a time, calm turns,
+       * and a wide window for a busy server's answers. Never clicks a block the server has not
+       * confirmed, as every preset now does, and slows down further while the server refuses blocks.
+       */
+      SERVER(2, 1, 120, 2, 1, 16384, 64, true, 1, 1, 2, 3, 3.25, 45),
       CUSTOM(0, 0, 0, 0, 0, 0, 0, false, 0, 0, 0, 0, 0.0, 0);
 
       final int steps, arm, ack, swap, layers, candidates, revalidate;
@@ -61,7 +67,8 @@ public final class BuildTempo extends Module {
 
    public final EnumSetting<Preset> preset = new EnumSetting<>("Preset", Preset.BALANCED, Preset.class)
       .describe("Safe waits for the server on every block, Balanced trusts the client's prediction with two placements "
-         + "unconfirmed, Fast places a block every tick. Custom uses the rows below.");
+         + "unconfirmed, Fast places a block every tick, Server is paced for public servers (about six blocks a second at "
+         + "most, calm turns, patient with lag). Custom uses the rows below.");
    public final NumberSetting steps = new NumberSetting("Steps Per Tick", 1.0, 6.0, 3.0, 1.0)
       .describe("Decisions per client tick while nothing is armed or in flight. Walking and placements still take a tick each.");
    public final NumberSetting arm = new NumberSetting("Arm Delay", 0.0, 4.0, 1.0, 1.0)
@@ -338,7 +345,15 @@ public final class BuildTempo extends Module {
          return 1.0;
       }
       Preset p = instance.chosen();
-      return p == Preset.SAFE ? 0.5 : p == Preset.FAST ? 0.8 : 0.65;
+      return p == Preset.SAFE || p == Preset.SERVER ? 0.5 : p == Preset.FAST ? 0.8 : 0.65;
+   }
+
+   /**
+    * The farthest a placement click may land from the eye. The Server preset keeps a margin under
+    * the game's 4.5 so a strict server never sees a click at the edge of reach.
+    */
+   public static double placeReach() {
+      return current() == Preset.SERVER ? 4.1 : 16.0;
    }
 
    public static boolean smoothAim() {

@@ -511,7 +511,7 @@ public final class AutoBuilderScreen extends class_437 {
          {"Rate", rate > 0.0 ? String.format(Locale.ROOT, "%.1f/s", rate) : "-"},
          {"Time left", eta < 0 ? "-" : duration(eta)},
          {"In flight", Integer.toString(this.builder.inflightPlacements())},
-         {"Settling", number(this.builder.settlingBlocks())},
+         {"Ping", this.builder.connection(this.field_22787)},
          {"Supports", number(this.builder.supportsPlaced())},
          {"Skipped", number(this.builder.deferredBlocks())}
       };
@@ -533,12 +533,12 @@ public final class AutoBuilderScreen extends class_437 {
       BuildTempo.Preset current = BuildTempo.current();
       boolean tempo = BuildTempo.instance != null;
       BuildTempo.Preset[] presets = BuildTempo.Preset.values();
-      int cell = (w - 24 - 4) / 2;
+      int cell = (w - 24 - 8) / 3;
 
       for (int i = 0; i < presets.length; i++) {
          BuildTempo.Preset preset = presets[i];
-         int px = x + 12 + (i % 2) * (cell + 4);
-         int py = sy + 13 + (i / 2) * 24;
+         int px = x + 12 + (i % 3) * (cell + 4);
+         int py = sy + 13 + (i / 3) * 24;
          boolean selected = preset == current;
          String id = "preset" + i;
          double hover = this.animate(id, tempo && this.inside(px, py, cell, 20));
@@ -663,6 +663,7 @@ public final class AutoBuilderScreen extends class_437 {
          case SAFE -> "Waits for the server each block";
          case BALANCED -> "Prediction, 2 unconfirmed";
          case FAST -> "One block per tick";
+         case SERVER -> "Paced and patient, for public servers";
          case CUSTOM -> "Your own numbers";
       };
    }
@@ -852,8 +853,8 @@ public final class AutoBuilderScreen extends class_437 {
       int rx = x + 492;
       int rw = w - 512;
       UiPaint.text(g, this.field_22793, "START FROM", rx, y + 46, DIM);
-      BuildTempo.Preset[] fixed = {BuildTempo.Preset.SAFE, BuildTempo.Preset.BALANCED, BuildTempo.Preset.FAST};
-      int third = (rw - 8) / 3;
+      BuildTempo.Preset[] fixed = {BuildTempo.Preset.SAFE, BuildTempo.Preset.BALANCED, BuildTempo.Preset.FAST, BuildTempo.Preset.SERVER};
+      int third = (rw - 12) / 4;
 
       for (int i = 0; i < fixed.length; i++) {
          BuildTempo.Preset from = fixed[i];
