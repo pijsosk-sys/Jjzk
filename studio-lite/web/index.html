@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Studio Lite</title>
+<link rel="stylesheet" href="style.css">
+<script type="importmap">{"imports": {"three": "./vendor/three.module.min.js"}}</script>
+</head>
+<body>
+<header id="bar">
+  <strong class="brand">Studio Lite</strong>
+  <select id="project" title="Project"></select>
+  <button id="new" title="New project">New</button>
+  <span class="sep"></span>
+  <div class="menu">
+    <button id="add">Add ▾</button>
+    <div id="addMenu" class="dropdown" hidden></div>
+  </div>
+  <div class="seg" id="modes">
+    <button data-mode="translate" class="on" title="Move">Move</button>
+    <button data-mode="rotate" title="Rotate">Rotate</button>
+    <button data-mode="scale" title="Resize">Size</button>
+  </div>
+  <button id="dup" title="Duplicate the selected object">Copy</button>
+  <button id="del" title="Delete the selected object">Delete</button>
+  <span class="sep"></span>
+  <button id="check" title="Check every script for errors">Check</button>
+  <button id="export" title="Save a .rbxlx file to Downloads">Export</button>
+  <button id="publish" class="primary" title="Publish to your Roblox game">Publish</button>
+  <button id="play" title="Open the game in the Roblox app">Play</button>
+  <button id="settings" title="Game settings">⚙</button>
+  <span id="status"></span>
+</header>
+<main>
+  <aside id="explorer"><div class="title">Explorer</div><div id="tree"></div></aside>
+  <section id="center">
+    <nav id="tabs"></nav>
+    <div id="viewport"><canvas id="scene"></canvas><div id="noGl" hidden>3D view needs WebGL, which this browser doesn't have. You can still edit everything with Explorer and Properties.</div></div>
+    <div id="editor" hidden><div id="gutter"></div><textarea id="code" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea></div>
+    <div id="output"><div class="title">Output <button id="clearOut">Clear</button></div><pre id="log"></pre></div>
+  </section>
+  <aside id="props"><div class="title">Properties</div><div id="propList"></div></aside>
+</main>
+<dialog id="settingsDlg">
+  <form method="dialog">
+    <h3>Game settings</h3>
+    <p>To publish, make a game on create.roblox.com, then copy its IDs here.</p>
+    <label>Universe ID <input id="universe" inputmode="numeric"></label>
+    <label>Place ID <input id="place" inputmode="numeric"></label>
+    <label>Open Cloud API key <input id="apikey" type="password" placeholder="(saved only on this device)"></label>
+    <p class="hint">Make the key at create.roblox.com → Open Cloud → API Keys, with
+      <b>universe-places: write</b> for this game. It is stored in ~/.config/studio-lite, readable only by you.</p>
+    <menu><button value="cancel">Cancel</button><button id="saveSettings" value="ok" class="primary">Save</button></menu>
+  </form>
+</dialog>
+<script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,57 @@
+[hidden] { display: none !important; }
+:root {
+  --bg: #1e1f22; --panel: #2b2d31; --line: #3a3c42; --text: #e6e6e6; --dim: #9a9ca3;
+  --accent: #3b82f6; --sel: #2f4a77; --bad: #f87171; --good: #4ade80;
+  font: 13px/1.35 system-ui, "DejaVu Sans", sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); overflow: hidden; }
+button, select, input { font: inherit; color: var(--text); background: #383a40; border: 1px solid var(--line); border-radius: 4px; padding: 4px 8px; min-height: 30px; }
+button:active { background: #44464d; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.on { background: var(--sel); border-color: var(--accent); }
+#bar { display: flex; align-items: center; gap: 4px; padding: 4px 6px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.brand { margin-right: 4px; }
+.sep { width: 1px; height: 22px; background: var(--line); margin: 0 2px; }
+.seg { display: flex; } .seg button { border-radius: 0; } .seg button:first-child { border-radius: 4px 0 0 4px; } .seg button:last-child { border-radius: 0 4px 4px 0; }
+#status { margin-left: auto; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 30vw; }
+.menu { position: relative; }
+.dropdown { position: absolute; z-index: 10; top: 100%; left: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; display: grid; min-width: 150px; }
+.dropdown button { border: 0; border-radius: 0; text-align: left; background: none; }
+.dropdown button:hover { background: var(--sel); }
+main { display: grid; grid-template-columns: minmax(150px, 18%) 1fr minmax(180px, 22%); height: calc(100% - var(--bar, 40px)); }
+aside { background: var(--panel); overflow: auto; border-right: 1px solid var(--line); }
+#props { border-right: 0; border-left: 1px solid var(--line); }
+.title { font-weight: 600; padding: 4px 8px; border-bottom: 1px solid var(--line); color: var(--dim); display: flex; justify-content: space-between; align-items: center; }
+#tree { padding: 2px 0; }
+.row { display: flex; align-items: center; gap: 3px; padding: 3px 4px; white-space: nowrap; cursor: pointer; user-select: none; }
+.row.sel { background: var(--sel); }
+.row .tw { width: 14px; text-align: center; color: var(--dim); }
+.row .ic { width: 16px; text-align: center; }
+.row.bad .nm { color: var(--bad); }
+#center { display: flex; flex-direction: column; min-width: 0; }
+#tabs { display: flex; gap: 2px; background: var(--panel); border-bottom: 1px solid var(--line); overflow-x: auto; }
+#tabs .tab { padding: 4px 10px; cursor: pointer; white-space: nowrap; border-right: 1px solid var(--line); }
+#tabs .tab.on { background: var(--bg); }
+#tabs .x { margin-left: 6px; color: var(--dim); }
+#viewport { position: relative; flex: 1; min-height: 0; }
+#scene { width: 100%; height: 100%; display: block; touch-action: none; }
+#noGl { position: absolute; inset: 0; display: grid; place-items: center; padding: 20px; text-align: center; color: var(--dim); }
+#editor { flex: 1; min-height: 0; display: flex; background: #1b1c1f; }
+#gutter { padding: 6px 6px 6px 4px; color: #6b6e75; text-align: right; font: 13px/1.45 "DejaVu Sans Mono", monospace; overflow: hidden; user-select: none; min-width: 34px; white-space: pre; }
+#code { flex: 1; border: 0; outline: 0; resize: none; padding: 6px; background: transparent; color: var(--text); font: 13px/1.45 "DejaVu Sans Mono", monospace; tab-size: 4; white-space: pre; overflow: auto; }
+#output { height: 22%; min-height: 60px; border-top: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; }
+#output button { min-height: 22px; padding: 0 6px; }
+#log { margin: 0; padding: 4px 8px; overflow: auto; flex: 1; font: 12px/1.4 "DejaVu Sans Mono", monospace; white-space: pre-wrap; }
+#log .err { color: var(--bad); } #log .ok { color: var(--good); }
+#propList { display: grid; grid-template-columns: auto 1fr; gap: 4px 6px; padding: 6px; align-items: center; }
+#propList label { color: var(--dim); }
+#propList input, #propList select { width: 100%; min-width: 0; }
+.vec { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; }
+.vec input { padding: 4px 3px; }
+#propList input[type=checkbox] { width: 20px; height: 20px; justify-self: start; }
+#propList input[type=color] { padding: 0 2px; height: 30px; }
+dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px; max-width: 460px; }
+dialog label { display: grid; gap: 2px; margin: 8px 0; }
+dialog .hint { color: var(--dim); font-size: 12px; }
+dialog menu { display: flex; justify-content: flex-end; gap: 6px; padding: 0; }
