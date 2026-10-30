@@ -377,6 +377,20 @@ def install_box64_wine():
  (stage/'.version').write_text(version)
  shutil.rmtree(WINE_X64,ignore_errors=True);stage.rename(WINE_X64)
  return [box64,str(wine)]
+def startup_reason(code,output):
+ """One line saying why Windows stopped, for the list of every way that was tried."""
+ box64=box64_path()
+ if 'virtual_setup_exception' in output or '0xecec' in output:return 'Wine crashed on code Box64 will not run (its "no execute" check)'
+ if 'Connection reset by peer' in output:return "Wine's background process (wineserver) stopped as soon as Windows started"
+ if runtime()=='box64' and box64!=BOX64_BIN:return 'the Android build of Box64 is not installed (using %s)'%box64
+ if code==-signal.SIGKILL or code==137:return 'it was stopped, most likely because the phone ran out of memory'
+ if code<0:return 'it crashed (%s)'%signal.Signals(-code).name
+ for pattern,why in [('Illegal instruction','the phone\'s chip could not run an instruction (Illegal instruction)'),
+  ('Segmentation fault','it crashed (Segmentation fault)'),('Bus error','it crashed (Bus error)'),
+  ('could not load','Wine could not load one of its own files'),('Unsupported','the emulator met something it does not support')]:
+  if pattern in output:return why
+ lines=[l.strip() for l in output.splitlines() if l.strip() and not l.startswith('Running: ')]
+ return 'Windows stopped with exit code %d%s'%(code,': '+lines[-1][:160] if lines else ' and printed nothing')
 def startup_help(output=''):
  # "wine client error: recvmsg: Connection reset by peer" in the log above this means wineserver
  # died. Box64 must be built with BAD_SIGNAL=ON to run Wine under proot (Box64's own build notes
@@ -768,7 +782,7 @@ def start_windows():
   code,out=run_logged([*wine,'cmd.exe','/c','echo','BODDY_WINE_STARTUP_OK'],1800,env)
   if not code:(prefix/'.boddy-tested').touch();return wine,env,prefix
   # A Windows setup left half-made by an earlier, stopped attempt can be the problem: start it again once.
-  if not existed:raise RuntimeError(startup_help(out))
+  if not existed:raise RuntimeError(startup_reason(code,out)+'\n'+startup_help(out))
   say('Windows did not start in the existing setup; trying once more with a fresh one (the old one is kept as a backup)')
   prefix.rename(ROOT/('prefix-backup-'+str(time.time_ns())));existed=False
 if __name__=='__main__':

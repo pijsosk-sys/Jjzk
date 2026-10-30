@@ -112,7 +112,14 @@ setsid bash -c 'echo $$ >"$1"; "$2" "${@:4}"; echo $? >"$3"' _ \
     exec 3>"$work/progress"
     trap '' PIPE
     say() { printf '%s\n' "$@" >&3 2>/dev/null; }
+    failing=
     while IFS= read -r line; do
+        # An error can run over several lines; everything after "LAUNCH FAILED:" belongs to it, apart
+        # from the launcher's own closing notes about where the log is.
+        if [ -n "$failing" ]; then
+            case "$line" in "Launcher log: "*|"Log copied to Downloads"*) ;; *) printf '%s\n' "$line" >>"$work/error" ;; esac
+            continue
+        fi
         case "$line" in
             "Download progress: "*)  # "Download progress: 42% Downloading Roblox Studio: 610 MB of 1.5 GB at ..."
                 rest=${line#Download progress: }
@@ -128,7 +135,7 @@ setsid bash -c 'echo $$ >"$1"; "$2" "${@:4}"; echo $? >"$3"' _ \
             "Could not check for Studio updates"*) say "# Offline: opening the installed Studio..." ;;
             "Desktop enlarged"*) say 95 "# Making room on the desktop..." ;;
             "Launching real Roblox Studio"*) touch "$work/started"; say 100 ;;
-            "LAUNCH FAILED: "*) printf '%s\n' "${line#LAUNCH FAILED: }" >>"$work/error" ;;
+            "LAUNCH FAILED: "*) failing=1; printf '%s\n' "${line#LAUNCH FAILED: }" >>"$work/error" ;;
             "Studio process exited with code "*) printf '%s\n' "${line#Studio process exited with code }" >"$work/exit" ;;
         esac
     done
@@ -154,7 +161,7 @@ status=$(cat "$work/status" 2>/dev/null || echo 1)
 [ "$status" = 0 ] && exit 0
 
 if [ -s "$work/error" ]; then
-    text="Roblox Studio could not start:\n\n$(head -c 1500 "$work/error")"
+    text="Roblox Studio could not start:\n\n$(head -c 3000 "$work/error")"
 else
     text="Roblox Studio closed unexpectedly (exit code $(cat "$work/exit" 2>/dev/null || echo "$status"))."
 fi
