@@ -3,6 +3,7 @@
 export PATH="/root/.local/bin:$PATH"
 action=$(zenity --list --title="Roblox Tools" --width=520 --height=300 \
     --text="What do you want to do?" --column=Action \
+    "Open Roblox Studio" \
     "Start a new game I can edit with an AI agent" \
     "Build my game into a Roblox file" \
     "Open a Roblox file and look at its scripts" \
@@ -12,6 +13,8 @@ start=/root/Phone/Download/; [ -d "$start" ] || start=/root/
 pick() { zenity --file-selection --filename="$start" --title="$1" --file-filter="Roblox files | *.rbxl *.rbxlx *.rbxm *.rbxmx" 2>/dev/null; }
 
 case "$action" in
+    # Studio has its own desktop icon, but people look for it here too, so hand over to it.
+    "Open Roblox Studio") exec /opt/boddy/studio-app.sh ;;
     Start*)
         name=$(zenity --entry --title="New game" --width=420 \
             --text="Name for the new game (letters, numbers and dashes):" 2>/dev/null) || exit 0
