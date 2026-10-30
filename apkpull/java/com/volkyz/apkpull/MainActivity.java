@@ -7,8 +7,8 @@ import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
-import android.graphics.Color;
 import android.graphics.Typeface;
+import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -37,8 +37,10 @@ import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.regex.Pattern;
 import java.util.zip.Deflater;
 import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 import java.util.zip.ZipOutputStream;
 
 /**
@@ -212,66 +214,148 @@ public class MainActivity extends Activity {
         body.append("base.apk\n");
         for (String split : entry.splits) body.append(new File(split).getName()).append('\n');
         body.append("\n").append(String.format(Locale.US, "%.1f MB total", entry.bytes / 1e6));
+        body.append("\n\nslim = manifest + dex + arm64 .so + assets, recompressed and cut into "
+                + (PART_LIMIT / 1000000) + " MB parts.\nfull = every apk byte for byte.");
 
         new AlertDialog.Builder(this)
                 .setTitle(entry.label)
                 .setMessage(body.toString())
-                .setPositiveButton("pull", (dialog, which) -> worker.execute(() -> pull(entry)))
+                .setPositiveButton("slim", (dialog, which) -> worker.execute(() -> pull(entry, true)))
+                .setNeutralButton("full", (dialog, which) -> worker.execute(() -> pull(entry, false)))
                 .setNegativeButton("cancel", null)
                 .show();
     }
 
-    private void pull(Entry entry) {
-        String safeVersion = entry.version.replaceAll("[^A-Za-z0-9._-]", "_");
-        File out = new File(outputDir(this), entry.pkg + "-" + safeVersion + ".xapk");
-        try {
-            ZipOutputStream zip = new ZipOutputStream(new java.io.FileOutputStream(out));
-            // apk entries are already deflated; recompressing them only burns phone battery
-            zip.setLevel(Deflater.NO_COMPRESSION);
+    /** Upload limits are per file, so output rolls over into parts at this size. */
+    private static final long PART_LIMIT = 25_000_000L;
 
-            copy(zip, new File(entry.base), "base.apk", entry, 0);
-            for (int i = 0; i < entry.splits.length; i++) {
-                File split = new File(entry.splits[i]);
-                copy(zip, split, split.getName(), entry, i + 1);
+    private static final Pattern DEX = Pattern.compile("classes\\d*\\.dex");
+
+    /**
+     * What a static analysis actually reads. Dropping res/, resources.arsc and the density and
+     * language splits is most of the download on a play-store app and costs nothing here.
+     */
+    private static boolean keepForAnalysis(String name) {
+        if (name.equals("AndroidManifest.xml")) return true;
+        if (DEX.matcher(name).matches()) return true;
+        if (name.startsWith("lib/") && name.endsWith(".so")) {
+            return name.startsWith("lib/arm64-v8a/") || name.startsWith("lib/armeabi-v7a/");
+        }
+        if (name.startsWith("assets/")) {
+            String low = name.toLowerCase(Locale.US);
+            return !(low.endsWith(".png") || low.endsWith(".jpg") || low.endsWith(".jpeg")
+                    || low.endsWith(".webp") || low.endsWith(".gif") || low.endsWith(".ogg")
+                    || low.endsWith(".mp3") || low.endsWith(".wav") || low.endsWith(".mp4")
+                    || low.endsWith(".ttf") || low.endsWith(".otf"));
+        }
+        return name.endsWith(".json") && !name.contains("/");
+    }
+
+    private void pull(Entry entry, boolean slim) {
+        String safeVersion = entry.version.replaceAll("[^A-Za-z0-9._-]", "_");
+        String stem = entry.pkg + "-" + safeVersion + (slim ? "-slim" : "");
+
+        List<File> sources = new ArrayList<>();
+        sources.add(new File(entry.base));
+        for (String split : entry.splits) sources.add(new File(split));
+
+        List<File> parts = new ArrayList<>();
+        ZipOutputStream zip = null;
+        long written = 0;
+        int part = 1;
+
+        try {
+            for (File source : sources) {
+                String apkName = source == sources.get(0) ? "base.apk" : source.getName();
+                ui.post(() -> status.setText("reading " + apkName + " …"));
+
+                ZipFile apk = new ZipFile(source);
+                java.util.Enumeration<? extends ZipEntry> entries = apk.entries();
+                while (entries.hasMoreElements()) {
+                    ZipEntry source_entry = entries.nextElement();
+                    if (source_entry.isDirectory()) continue;
+                    if (slim && !keepForAnalysis(source_entry.getName())) continue;
+
+                    if (zip == null) {
+                        File file = new File(outputDir(this), stem + ".part" + part + ".zip");
+                        zip = new ZipOutputStream(new java.io.FileOutputStream(file));
+                        // slim recompresses (dex deflates ~3x); full is already-compressed apk bytes
+                        zip.setLevel(slim ? Deflater.BEST_COMPRESSION : Deflater.NO_COMPRESSION);
+                        parts.add(file);
+                        written = 0;
+                    }
+
+                    zip.putNextEntry(new ZipEntry(apkName + "/" + source_entry.getName()));
+                    InputStream in = apk.getInputStream(source_entry);
+                    byte[] buffer = new byte[1 << 16];
+                    int read;
+                    while ((read = in.read(buffer)) > 0) {
+                        zip.write(buffer, 0, read);
+                        written += read;
+                    }
+                    in.close();
+                    zip.closeEntry();
+
+                    final int shown_part = part;
+                    final long shown_written = written;
+                    ui.post(() -> status.setText(String.format(Locale.US,
+                            "part %d · %.1f MB · %s", shown_part, shown_written / 1e6,
+                            source_entry.getName())));
+
+                    // rolls over on entry boundaries; one entry bigger than the limit gets its own part
+                    if (written >= PART_LIMIT) {
+                        zip.close(); zip = null; part++;
+                    }
+                }
+                apk.close();
             }
 
+            if (zip == null) {
+                File file = new File(outputDir(this), stem + ".part" + part + ".zip");
+                zip = new ZipOutputStream(new java.io.FileOutputStream(file));
+                parts.add(file);
+            }
             zip.putNextEntry(new ZipEntry("info.json"));
             Writer writer = new OutputStreamWriter(zip, "UTF-8");
             writer.write("{\n  \"package\": \"" + entry.pkg + "\",\n"
                     + "  \"label\": \"" + entry.label.replace("\"", "\\\"") + "\",\n"
                     + "  \"versionName\": \"" + entry.version + "\",\n"
                     + "  \"splits\": " + entry.splits.length + ",\n"
+                    + "  \"slim\": " + slim + ",\n"
+                    + "  \"parts\": " + parts.size() + ",\n"
                     + "  \"abi\": \"" + android.os.Build.SUPPORTED_ABIS[0] + "\",\n"
                     + "  \"sdk\": " + android.os.Build.VERSION.SDK_INT + "\n}\n");
             writer.flush();
             zip.closeEntry();
             zip.close();
         } catch (IOException failure) {
+            try { if (zip != null) zip.close(); } catch (IOException ignored) {}
             ui.post(() -> status.setText("failed: " + failure));
             return;
         }
 
         ui.post(() -> {
-            status.setText("done: " + out.getName() + String.format(Locale.US,
-                    "  (%.1f MB)", out.length() / 1e6));
-            Intent send = new Intent(Intent.ACTION_SEND);
-            send.setType("application/zip");
-            send.putExtra(Intent.EXTRA_STREAM, ApkProvider.uriFor(out));
-            send.putExtra(Intent.EXTRA_SUBJECT, out.getName());
-            send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            startActivity(Intent.createChooser(send, "send " + out.getName()));
-        });
-    }
+            StringBuilder summary = new StringBuilder("done · ");
+            ArrayList<Uri> uris = new ArrayList<>();
+            for (File file : parts) {
+                uris.add(ApkProvider.uriFor(file));
+                summary.append(String.format(Locale.US, "%s (%.1f MB)  ",
+                        file.getName(), file.length() / 1e6));
+            }
+            status.setText(summary.toString());
 
-    private void copy(ZipOutputStream zip, File file, String name, Entry entry, int index)
-            throws IOException {
-        ui.post(() -> status.setText("packing " + name + " …"));
-        zip.putNextEntry(new ZipEntry(name));
-        InputStream in = new FileInputStream(file);
-        byte[] buffer = new byte[1 << 16];
-        int read;
-        while ((read = in.read(buffer)) > 0) zip.write(buffer, 0, read);
-        in.close();
-        zip.closeEntry();
+            Intent send;
+            if (uris.size() == 1) {
+                send = new Intent(Intent.ACTION_SEND);
+                send.putExtra(Intent.EXTRA_STREAM, uris.get(0));
+            } else {
+                send = new Intent(Intent.ACTION_SEND_MULTIPLE);
+                send.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris);
+            }
+            send.setType("application/zip");
+            send.putExtra(Intent.EXTRA_SUBJECT, stem);
+            send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(Intent.createChooser(send, "send " + parts.size() + " file(s)"));
+        });
     }
 }

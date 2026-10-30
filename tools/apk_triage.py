@@ -49,20 +49,24 @@ def expand(paths, work):
     """xapk/apks containers -> the apks inside them."""
     out = []
     for p in paths:
-        if p.lower().endswith(('.xapk','.apks','.apkm')):
+        if p.lower().endswith(('.xapk','.apks','.apkm','.zip')):
             d = os.path.join(work, 'container_' + os.path.basename(p))
             os.makedirs(d, exist_ok=True)
             with zipfile.ZipFile(p) as z:
                 for n in z.namelist():
                     if n.lower().endswith('.apk'):
                         z.extract(n, d); out.append(os.path.join(d, n))
+            if not out:          # slim bundle: dex/so/assets, no nested apk files
+                out.append(p)
         else:
             out.append(p)
     return out
 
 def manifest_strings(z):
-    try: raw = z.read('AndroidManifest.xml')
-    except KeyError: return [], []
+    # a slim bundle holds base.apk/AndroidManifest.xml instead of one at the root
+    names = [n for n in z.namelist() if n.endswith('AndroidManifest.xml')]
+    if not names: return [], []
+    raw = b''.join(z.read(n) for n in names)
     # binary AXML: pooled strings are UTF-16LE; this is grep, not a parser.
     flat = raw.replace(b'\x00', b'')
     perms = sorted(set(m.decode() for m in PERM_RE.findall(flat)))
@@ -75,10 +79,12 @@ def scan(path, hits, inventory):
         inventory['entries'] += len(names)
         for n in names:
             low = n.lower()
-            if low.startswith('lib/'):               inventory['libs'].add(n)
+            tail = n.split('.apk/', 1)[1] if '.apk/' in n else n
+            low = tail.lower()
+            if tail.startswith('lib/'):              inventory['libs'].add(tail)
             if low.endswith(('.mcpack','.mcaddon','.mcworld','.mctemplate')): inventory['packs'].add(n)
-            if low.endswith('.js') and low.startswith('assets/'):             inventory['js'].add(n)
-            if re.fullmatch(r'classes\d*\.dex', n):  inventory['dex'].add(n)
+            if low.endswith('.js') and low.startswith('assets/'):             inventory['js'].add(tail)
+            if re.fullmatch(r'classes\d*\.dex', tail): inventory['dex'].add(n)
             if low.endswith('manifest.json'):        inventory['pack_manifests'].add(n)
         perms, pkgs = manifest_strings(z)
         inventory['perms'].update(perms)
@@ -155,7 +161,7 @@ def main():
     print('\n== next ==')
     for p in apks:
         with zipfile.ZipFile(p) as z:
-            dexed = any(re.fullmatch(r'classes\d*\.dex', n) for n in z.namelist())
+            dexed = any(re.search(r'classes\d*\.dex$', n) for n in z.namelist())
         if dexed:
             tgt = os.path.join(a.out, 'jadx_' + os.path.splitext(os.path.basename(p))[0])
             cmd = f'jadx -d {tgt} --no-res {p}'
