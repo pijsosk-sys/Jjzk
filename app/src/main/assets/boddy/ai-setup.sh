@@ -70,18 +70,29 @@ Boddy is in the background. `phone-status` says if it's on and which app is on s
   DroidBridge world opened to LAN (the port shows in chat), then `mcbot follow|come|goto X Y Z|
   mine BLOCK N|attack|say TEXT|status|stop|quit`. It needs online mode off (offline name
   BoddyBot) or a second Microsoft account. Only use it in the user's own worlds.
-- Roblox: `roblox-studio` is an EXPERIMENTAL attempt to run Windows Studio under Hangover
-  Wine; it probably won't work well (no GPU). Don't rely on it. Never automate playing Roblox:
-  bots break Roblox's rules. Roblox files can be
-  read and edited without it:
-  - `roblox-extract game.rbxl` unpacks every script (Script = .server.luau, LocalScript =
-    .client.luau, ModuleScript = .luau) into `game-scripts/`, plus `tree.txt` with the layout.
-  - Edit the .luau files, then `roblox-apply game.rbxl game-scripts` writes game-edited.rbxl.
+- Roblox: make games as FILES. That is the path that works here, and it is the one to use when
+  the user asks to make a Roblox game. Studio's editor is not needed for any of it.
+  - `roblox-new my-game` creates a working place in /root/roblox/my-game: `src/server`
+    (server scripts), `src/client` (each player's device), `src/shared` (code both use).
+    Scripts are Luau: `.server.luau` = Script, `.client.luau` = LocalScript, `.luau` =
+    ModuleScript. Edit them like any other source files.
+  - `roblox-build /root/roblox/my-game` writes my-game.rbxl. Then `phone-save` it and tell the
+    user to upload it at https://create.roblox.com (Create > Upload) to put the game online.
+    Build after each change so the user can try it; the build is the only way to check the
+    files are valid, since there is no Roblox engine here to run them.
+  - Existing files: `roblox-extract game.rbxl` unpacks every script into `game-scripts/` plus
+    `tree.txt` with the layout; edit those, then `roblox-apply game.rbxl game-scripts` writes
+    game-edited.rbxl.
+  - `roblox-serve /root/roblox/my-game` live-syncs into Studio's Rojo plugin, if Studio runs.
+  - `roblox-studio` tries to run the real Windows Studio through Box64 and Wine. Treat it as
+    unproven: the phone has no GPU, so expect it to be very slow or not to start. Never make the
+    user depend on it, and never say a game "works" because Studio opened: only they can confirm
+    that, in Roblox.
   - The phone's storage is at /root/Phone when the user allowed file access in the Boddy app
     (downloads are in /root/Phone/Download). If it's missing, ask them to tap "Allow phone files".
-  - For new games: Rojo (`roblox-setup` installs it) builds a place from files
-    (`rojo build -o game.rbxl`), and Roblox Open Cloud can publish it without Studio.
-  - Save results to the phone with `phone-save`.
+  - Never automate playing Roblox, and don't write scripts whose purpose is to cheat in or
+    exploit someone else's game: bots and exploits break Roblox's rules. Making the user's own
+    game, including its own gameplay code, is fine.
 MD
 
 mkdir -p /root/.claude /root/.claude-deepseek /root/.codex /root/.gemini /root/.qwen /root/.config/opencode

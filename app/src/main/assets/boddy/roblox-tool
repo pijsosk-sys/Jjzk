@@ -3,6 +3,10 @@
 #   roblox-extract FILE [DIR]   unpack every script in a .rbxl/.rbxlx/.rbxm/.rbxmx into DIR
 #                               (default: next to FILE), plus tree.txt with the game's layout
 #   roblox-apply FILE DIR [OUT] put edited scripts from DIR back into the file (default: FILE-edited.rbxl)
+#   roblox-new NAME [DIR]       start a new game as files: scripts an AI agent can edit, which
+#                               roblox-build turns into a .rbxl you can upload to Roblox
+#   roblox-build [DIR] [OUT]    build the project in DIR (default: here) into a .rbxl place file
+#   roblox-serve [DIR]          serve the project to the Roblox Studio Rojo plugin (live sync)
 #   roblox-setup                download Lune and Rojo (done automatically on first use)
 set -e
 BIN=/root/.local/bin
@@ -26,7 +30,15 @@ fetch_tool() { # repo binary
 
 setup() {
     fetch_tool lune-org/lune lune
-    fetch_tool rojo-rbx/rojo rojo || echo "(Rojo is optional; Lune is enough to open files.)"
+    fetch_tool rojo-rbx/rojo rojo || echo "(Rojo is only needed to build a new game; Lune alone opens existing files.)"
+}
+
+# A project is the folder holding default.project.json; the build commands default to the current one.
+project_dir() {
+    local d
+    d=$(readlink -f "${1:-.}")
+    [ -f "$d/default.project.json" ] || { echo "No default.project.json in $d. Run roblox-new NAME first." >&2; exit 2; }
+    echo "$d"
 }
 
 case "$cmd" in
@@ -45,5 +57,41 @@ case "$cmd" in
         ext=${file##*.}
         lune run /opt/boddy/roblox.luau apply "$file" "$(readlink -f "$2")" "${3:-${file%.*}-edited.$ext}"
         ;;
-    *) sed -n '2,7p' "$0"; exit 2 ;;
+    roblox-new)
+        [ -n "${1:-}" ] || { echo "usage: roblox-new NAME [DIR]" >&2; exit 2; }
+        case "$1" in */*|.*) echo "Use a plain name, e.g. roblox-new my-game" >&2; exit 2 ;; esac
+        fetch_tool rojo-rbx/rojo rojo
+        dir=$(readlink -f "${2:-/root/roblox}")/$1
+        [ -e "$dir" ] && { echo "$dir already exists." >&2; exit 2; }
+        mkdir -p "$dir"
+        # Rojo's own "place" template: a baseplate plus server, client and shared scripts that already run.
+        rojo init --kind place "$dir"
+        cat <<INFO
+
+Your new game is at $dir
+  src/server/init.server.luau   runs on the server
+  src/client/init.client.luau   runs on each player's device
+  src/shared/Hello.luau         code both sides can use
+
+Edit those files (Claude Code can), then:
+  roblox-build $dir             makes $1.rbxl
+  phone-save $dir/$1.rbxl       copies it to your phone's Downloads
+Upload that file on https://create.roblox.com to put the game online.
+INFO
+        ;;
+    roblox-build)
+        fetch_tool rojo-rbx/rojo rojo
+        dir=$(project_dir "${1:-.}")
+        out=${2:-"$dir/$(basename "$dir").rbxl"}
+        ( cd "$dir" && rojo build -o "$out" )
+        echo "Built $out"
+        echo "Send it to your phone with: phone-save $out"
+        ;;
+    roblox-serve)
+        fetch_tool rojo-rbx/rojo rojo
+        dir=$(project_dir "${1:-.}")
+        echo "Serving $dir. In Roblox Studio, open the Rojo plugin and press Connect."
+        ( cd "$dir" && rojo serve )
+        ;;
+    *) sed -n '2,10p' "$0"; exit 2 ;;
 esac

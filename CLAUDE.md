@@ -48,8 +48,9 @@ AI coding agents that can see and drive it, sound, and bridges to the phone's ow
 | `ai-setup.sh` | The guide every AI agent gets (CLAUDE.md, AGENTS.md, GEMINI.md, QWEN.md inside Linux) |
 | `boddy-ctl` | `boddy-screen/click/type/key/scroll`, `phone-save/open/app/apps`, phone control (`phone-screen/ui/tap/hold/swipe/do/key/type/split/status`, saved button spots `phone-spot(s)` in `/root/.boddy/spots`) |
 | `claude-code.sh`, `codex.sh`, `deepseek-code.sh`, `free-ai.sh` | AI agent launchers (Gemini, Qwen, OpenCode via free-ai.sh) |
-| `roblox-tool`, `roblox.luau`, `roblox-tools-app.sh` | Roblox file extract/apply via Lune |
-| `studio`, `studio-app.sh` | Experimental Roblox Studio under Hangover Wine |
+| `roblox-tool`, `roblox.luau`, `roblox-tools-app.sh` | Roblox games as files: `roblox-new`/`roblox-build`/`roblox-serve` via Rojo, extract/apply via Lune |
+| `studio`, `studio-app.sh` | Experimental Roblox Studio: x86-64 WineHQ under Box64 by default, Hangover kept for comparison |
+| `tests/` | `test_launcher.py` (Studio launcher, and that `studio-app.sh` still matches its output), `test_roblox_tool.sh` (project commands). CI runs both |
 | `mcbot`, `mcbot.js`, `mcbot-app.sh` | Minecraft Java helper bot (Mineflayer, HTTP on 7320) |
 | `phone-apps-app.sh` | Pick and open any phone app |
 | `scripts/fetch-proot.sh` | CI: bundles Termux's proot + libs as `lib*.so` |
@@ -63,7 +64,9 @@ AI coding agents that can see and drive it, sound, and bridges to the phone's ow
   `assets/boddy` are re-copied on every desktop start.
 - **Added a package?** Put it in `assets/boddy/packages.txt`. That changes the image hash, so CI
   rebuilds the system image (about 15–25 minutes under qemu) and existing phones get it via Update.
-- Tools the owner might not use (Lune, Rojo, Gemini/Qwen/OpenCode, Mineflayer, Hangover) are
+- **Changed `studio`?** Run `python3 tests/test_launcher.py`; it fails if `studio-app.sh` no longer
+  matches the messages the launcher prints (its progress window reads them).
+- Tools the owner might not use (Lune, Rojo, Gemini/Qwen/OpenCode, Mineflayer, Box64, Hangover) are
   downloaded on first use, not baked in. The owner doesn't want a bigger download.
 - Android can only exec binaries from `nativeLibraryDir`, so native tools ship as `lib*.so`.
 - Under proot: no systemd, no kernel modules, no GPU, no Unix-socket-heavy daemons (e.g. Codex
@@ -96,8 +99,9 @@ Locally you can still check scripts with `bash -n`, JS with `node --check`, and 
 
 Confirmed working by the owner: install, the desktop, touch controls, and Claude Code with
 sign-in. Built and compiled but not reported tested: Codex after the `--no-daemon` fix, sound,
-Roblox Tools, Phone Apps, the Minecraft bot, the experimental Studio launcher, the keep-alive
-card and watchdog, Gemini/Qwen/OpenCode, the parallel download, and phone control (accessibility
+Roblox Tools (including the new `roblox-new`/`roblox-build` game commands), Phone Apps, the
+Minecraft bot, the Studio launcher (Box64 or Hangover; nothing has yet confirmed Studio's editor
+itself runs on the phone), the keep-alive card and watchdog, Gemini/Qwen/OpenCode, the parallel download, and phone control (accessibility
 helper, Minecraft playing, `phone-split`). The owner reported a crash
 after about 30 minutes of use; the cause wasn't confirmed (likely Android killing background
 processes), so ask for the saved crash report if it happens again.

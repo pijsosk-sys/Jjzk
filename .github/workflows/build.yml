@@ -66,6 +66,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Catches the launcher bugs that are cheap to catch here: shell syntax, and studio-app.sh
+      # drifting away from the messages the studio launcher actually prints.
+      - name: Check scripts
+        run: |
+          for f in app/src/main/assets/boddy/*.sh app/src/main/assets/boddy/studio \
+                   app/src/main/assets/boddy/boddy-ctl app/src/main/assets/boddy/roblox-tool \
+                   app/src/main/assets/boddy/mcbot; do
+            bash -n "$f"
+          done
+          node --check app/src/main/assets/boddy/mcbot.js
+          python3 tests/test_launcher.py
+          bash tests/test_roblox_tool.sh
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

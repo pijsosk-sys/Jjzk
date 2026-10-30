@@ -3,6 +3,8 @@
 export PATH="/root/.local/bin:$PATH"
 action=$(zenity --list --title="Roblox Tools" --width=520 --height=300 \
     --text="What do you want to do?" --column=Action \
+    "Start a new game I can edit with an AI agent" \
+    "Build my game into a Roblox file" \
     "Open a Roblox file and look at its scripts" \
     "Put my edited scripts back into a Roblox file" 2>/dev/null) || exit 0
 
@@ -10,6 +12,26 @@ start=/root/Phone/Download/; [ -d "$start" ] || start=/root/
 pick() { zenity --file-selection --filename="$start" --title="$1" --file-filter="Roblox files | *.rbxl *.rbxlx *.rbxm *.rbxmx" 2>/dev/null; }
 
 case "$action" in
+    Start*)
+        name=$(zenity --entry --title="New game" --width=420 \
+            --text="Name for the new game (letters, numbers and dashes):" 2>/dev/null) || exit 0
+        [ -n "$name" ] || exit 0
+        if out=$(roblox-new "$name" 2>&1); then
+            zenity --info --width=520 --text="$out" 2>/dev/null
+            thunar "/root/roblox/$name" >/dev/null 2>&1 &
+        else
+            zenity --error --width=420 --text="$out" 2>/dev/null
+        fi
+        ;;
+    Build*)
+        dir=$(zenity --file-selection --directory --filename="/root/roblox/" \
+            --title="Choose your game folder" 2>/dev/null) || exit 0
+        if out=$(roblox-build "$dir" 2>&1); then
+            zenity --info --width=520 --text="$out" 2>/dev/null
+        else
+            zenity --error --width=520 --text="$out" 2>/dev/null
+        fi
+        ;;
     Open*)
         file=$(pick "Choose a Roblox file (.rbxl, .rbxm...)") || exit 0
         dir="${file%.*}-scripts"

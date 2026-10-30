@@ -14,7 +14,7 @@ for c in boddy-screen boddy-click boddy-type boddy-key boddy-scroll boddy-run \
          phone-tap phone-hold phone-swipe phone-do phone-key phone-type phone-split phone-spot phone-spots; do
     ln -sf /opt/boddy/boddy-ctl "/usr/local/bin/$c"
 done
-for c in roblox-extract roblox-apply roblox-setup; do
+for c in roblox-extract roblox-apply roblox-new roblox-build roblox-serve roblox-setup; do
     ln -sf /opt/boddy/roblox-tool "/usr/local/bin/$c"
 done
 ln -sf /opt/boddy/mcbot /usr/local/bin/mcbot

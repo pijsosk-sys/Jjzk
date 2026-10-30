@@ -27,13 +27,21 @@ What you get:
 - **Minecraft Bot**: a helper player (Mineflayer) for your Minecraft Java world in DroidBridge;
   it follows you, mines, fights mobs and takes orders from the AIs (`mcbot`) or from chat
   ("boddy follow"). Needs LAN with online mode off, or a second Microsoft account.
-- **Roblox Studio (experimental)**: tries Windows Studio under Hangover Wine. Probably too slow or
-  broken without a GPU; Roblox Tools is the reliable route.
-- **Roblox Tools**: open a `.rbxl`/`.rbxlx`/`.rbxm` file to unpack all its scripts (plus a
-  `tree.txt` map of the game), edit them, and put them back, with no Roblox Studio needed. Uses
+- **Make Roblox games with an AI** (Roblox Tools): `roblox-new my-game` starts a real place as
+  plain files — server, client and shared Luau scripts — so Claude Code (or any of the other
+  agents) can write the game for you on the phone. `roblox-build` turns the folder into a
+  `.rbxl` you upload at [create.roblox.com](https://create.roblox.com). No Roblox Studio needed
+  anywhere in that loop. Uses [Rojo](https://github.com/rojo-rbx/rojo), downloaded on first use.
+- **Roblox Tools** also opens an existing `.rbxl`/`.rbxlx`/`.rbxm` file to unpack all its scripts
+  (plus a `tree.txt` map of the game), edit them, and put them back. Uses
   [Lune](https://github.com/lune-org/lune), downloaded on first use. AIs get the same
   `roblox-extract` / `roblox-apply` commands. "Allow phone files" lets Boddy see your downloads at
   `/root/Phone`.
+- **Roblox Studio (experimental)**: runs the real Windows Studio through
+  [Box64](https://github.com/ptitSeb/box64) and WineHQ's x86-64 Wine (the way Winlator does it),
+  with Hangover kept as a second option under *Compatibility mode*. The phone has no GPU, so
+  expect it to be very slow or not to start — it is unproven. Building games from files above is
+  the route that works.
 - **Antigravity**: one-tap helper that installs Google's Linux ARM64 build
 - **Install Apps** (Synaptic) to download anything a normal Linux PC can run
 - The Boddy look: dark theme, our wallpaper, and a dock with your apps
