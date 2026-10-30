@@ -175,3 +175,33 @@ finally:
 help_text=r.startup_help()
 assert 'Box64 in use' in help_text and ('Wine version' in help_text or 'Android build' in help_text),help_text
 print('PASS: Wine version can be pinned per prefix, and a failed Windows start explains what to try.')
+
+# The launcher must name the failure from the log instead of listing every possible remedy, and
+# walk down the Wine versions until there are none left.
+nx=("[BOX64] Emit Signal 11 at IP=0x7fffc00a30(... ntdll.dll + 0x10a30 / ?) / addr=0x7fffc00a30, code=0xecec\n"
+    "0024:err:virtual:virtual_setup_exception stack overflow 1344 bytes addr 0x7fffc00a30\n")
+old_major=os.environ.pop('BODDY_WINE_MAJOR',None)
+real_box64=r.box64_path
+r.box64_path=lambda:r.BOX64_BIN   # pretend the Android build is installed, as on the phone
+try:
+ for pinned,expect in [('','pick 10'),('10','pick 9'),('9','pick 8')]:
+  os.environ['BODDY_WINE_MAJOR']=pinned
+  msg=r.startup_help(nx)
+  assert expect in msg,'on Wine %r expected %r:\n%s'%(pinned or 'newest',expect,msg)
+  assert 'Compatibility mode' not in msg,'should not offer unrelated remedies for a known failure'
+ os.environ['BODDY_WINE_MAJOR']='8'
+ last=r.startup_help(nx)
+ assert 'cannot run on this phone' in last and 'Start a new game' in last,last
+ assert 'Wine the newest' not in r.startup_help(nx),'awkward wording'
+ os.environ['BODDY_WINE_MAJOR']=''
+ assert 'The newest Wine' in r.startup_help(nx)
+ # The older wineserver death must still be told apart from this one.
+ assert 'wineserver' in r.startup_help('wine client error:0: recvmsg: Connection reset by peer')
+ # An unrecognised failure still lists what to try.
+ assert 'Wine version' in r.startup_help('something else went wrong')
+finally:
+ r.box64_path=real_box64
+ os.environ.pop('BODDY_WINE_MAJOR',None)
+ if old_major is not None:os.environ['BODDY_WINE_MAJOR']=old_major
+assert 'not the Android build' in r.startup_help('something else') or r.box64_path()==r.BOX64_BIN
+print('PASS: the launcher recognises the no-execute failure and walks down the Wine versions.')

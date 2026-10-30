@@ -305,12 +305,27 @@ def install_box64_wine():
  (stage/'.version').write_text(version)
  shutil.rmtree(WINE_X64,ignore_errors=True);stage.rename(WINE_X64)
  return [box64,str(wine)]
-def startup_help():
+def startup_help(output=''):
  # "wine client error: recvmsg: Connection reset by peer" in the log above this means wineserver
  # died. Box64 must be built with BAD_SIGNAL=ON to run Wine under proot (Box64's own build notes
  # say so); Debian's package is not, the box64-android package is.
  box64=box64_path();using_android=box64==BOX64_BIN
  lines=['Windows could not start under %s.'%('Box64' if runtime()=='box64' else 'Hangover'),'']
+ # Box64 refuses to run code on a page it does not consider executable and raises its own fault
+ # (code 0xecec) in a loop until the program fixes the page; Wine never does, and dies dispatching
+ # the exception. That is this Wine's problem, not the emulator's, so another Wine is the fix.
+ if 'virtual_setup_exception' in output or '0xecec' in output:
+  major=wine_major()
+  nxt={'':'10','11':'10','10':'9','9':'8'}.get(major,'')
+  lines+=['%s got as far as running Windows code, then stopped on a part of itself that Box64'%(
+    'Wine '+major if major else 'The newest Wine'),
+   'will not run (its "no execute" check). Nothing in Boddy can change that; a different Wine can.','']
+  if nxt:lines+=['In the Studio menu choose "Wine version" and pick %s, then Open Studio again.'%nxt]
+  else:lines+=['Every Wine version offered has now failed, so Studio cannot run on this phone.',
+   'Roblox Tools > "Start a new game I can edit with an AI agent" still works and needs none of this.']
+  return '\n'.join(lines)
+ if 'Connection reset by peer' in output:
+  lines+=['Wine\'s background process (wineserver) stopped as soon as Windows started.','']
  if runtime()=='box64' and not using_android:
   lines+=['Box64 in use: %s.'%box64,
    'This is not the Android build, which is the one that can run Wine inside Boddy.',
@@ -362,6 +377,20 @@ def install_wine():
  w=find_wine()
  if not w:raise RuntimeError('Hangover installed but Wine executable not found')
  return w
+def run_logged(args,timeout,env,keep=400):
+ """Runs a command, echoing its output, and returns (exit code, last `keep` lines)."""
+ import collections
+ say('Running: '+' '.join(args))
+ tail=collections.deque(maxlen=keep)
+ proc=subprocess.Popen(args,env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,errors='replace',bufsize=1)
+ deadline=time.time()+timeout
+ try:
+  for line in proc.stdout:
+   line=line.rstrip('\n');tail.append(line);print(line,flush=True)
+   if time.time()>deadline:proc.kill();raise RuntimeError('Windows did not start within %d minutes'%(timeout//60))
+  return proc.wait(),'\n'.join(tail)
+ finally:
+  if proc.poll() is None:proc.kill()
 def command(args,timeout=90,env=None):
  say('Running: '+' '.join(args));r=subprocess.run(args,timeout=timeout,env=env)
  if r.returncode:raise RuntimeError('%s failed with exit code %d'%(' '.join(args[:3]),r.returncode))
@@ -381,6 +410,18 @@ def diagnose():
  say('Memory available: %d MB'%mem_available_mb())
  say('Processes: %d (Android stops Boddy above about %d)'%(process_count(),PHANTOM_LIMIT))
  say('Page size: %d bytes%s'%(PAGE_SIZE,'' if PAGE_SIZE==4096 else '  <-- too big; Windows programs need 4096'))
+ say('Wine version wanted: '+(wine_major() or 'newest'))
+ # Wine maps its DLLs from disk as executable. If Android refuses that, no Wine can ever work here.
+ try:
+  import mmap as _m
+  probe=ROOT/'.exec-probe';probe.write_bytes(b'\xc3'*PAGE_SIZE)
+  with probe.open('rb') as fh:
+   mm=_m.mmap(fh.fileno(),PAGE_SIZE,prot=_m.PROT_READ|_m.PROT_EXEC);mm.close()
+  say('Mapping a file as executable: works')
+ except Exception as e:say('Mapping a file as executable: FAILED (%s) <-- no Windows program can run'%e)
+ finally:
+  try:(ROOT/'.exec-probe').unlink()
+  except OSError:pass
  # Whether 3D works at all is the main open question, so install the one tool that answers it.
  if not shutil.which('glxinfo'):
   say('Installing glxinfo to test 3D graphics (one time)')
@@ -589,8 +630,8 @@ def main():
  if not (prefix/'.boddy-tested').exists():
   say('Testing Windows command execution before downloading Studio')
   # Creating the Wine prefix under x86 emulation can take several minutes on a phone.
-  try:command([*wine,'cmd.exe','/c','echo','BODDY_WINE_STARTUP_OK'],1800,env)
-  except Exception as e:raise RuntimeError(startup_help())from e
+  code,out=run_logged([*wine,'cmd.exe','/c','echo','BODDY_WINE_STARTUP_OK'],1800,env)
+  if code:raise RuntimeError(startup_help(out))
   (prefix/'.boddy-tested').touch()
  studio=install_studio();setup_browser_login(wine,env,prefix);tune_prefix(wine,env,prefix);args=[*wine,str(studio/'RobloxStudioBeta.exe')]
  if arg and not arg.startswith('--'):
