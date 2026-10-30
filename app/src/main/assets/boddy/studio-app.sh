@@ -46,7 +46,7 @@ fi
 # The action can be given as an argument (e.g. from a desktop shortcut): studio-app.sh "Open Studio"
 choice=${1:-}
 [ -n "$choice" ] || choice=$(zenity --list --title="$TITLE" --width=420 --height=300 --column=Action \
-    "Open Studio" "Open a place file" "Diagnostics" "Compatibility mode" "Reset Studio" 2>/dev/null) || exit 0
+    "Open Studio" "Open a place file" "Diagnostics" "Wine version" "Compatibility mode" "Reset Studio" 2>/dev/null) || exit 0
 case "$choice" in
     "Open Studio") args=() ;;
     "Open a place file")
@@ -54,6 +54,26 @@ case "$choice" in
         args=("$f") ;;
     "Diagnostics")
         "$STUDIO" --diagnose 2>&1 | zenity --text-info --title="$TITLE diagnostics" --width=760 --height=520 2>/dev/null
+        exit 0 ;;
+    "Wine version")
+        wf=$HOME/.local/share/roblox-studio/wine-major
+        now=$(cat "$wf" 2>/dev/null)
+        mark() { [ "$now" = "$1" ] && echo "in use" || echo "$2"; }
+        pick=$(zenity --list --title="$TITLE" --width=520 --height=300 \
+            --text="Which Wine to run Studio with? Change this if Windows will not start." \
+            --column=Version --column=Status \
+            "Newest" "$([ -z "$now" ] && echo 'in use, default' || echo default)" \
+            "10" "$(mark 10 'older, often emulates better')" \
+            "9" "$(mark 9 'older still')" \
+            "8" "$(mark 8 'oldest offered')" 2>/dev/null) || exit 0
+        [ -n "$pick" ] || exit 0
+        [ "$pick" = Newest ] && pick=""
+        if out=$("$STUDIO" --use-wine"$pick" 2>&1); then
+            zenity --info --width=460 --title="$TITLE" \
+                --text="$(printf '%s\n\nChoose Open Studio to install it. The first start takes a while again.' "$out" | escape)" 2>/dev/null
+        else
+            zenity --error --width=460 --title="$TITLE" --text="$(printf '%s' "$out" | escape)" 2>/dev/null
+        fi
         exit 0 ;;
     "Compatibility mode")
         rf=$HOME/.local/share/roblox-studio/runtime

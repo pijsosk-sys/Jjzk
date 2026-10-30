@@ -156,3 +156,22 @@ for bad in ['./../../etc/evil.deb','/etc/evil.deb','./sub/dir/x.deb','./x.deb.sh
     assert not re.fullmatch(r'[A-Za-z0-9._~+-]+\.deb',name),'would have accepted '+bad
 assert re.fullmatch(r'[A-Za-z0-9._~+-]+\.deb',re.sub(r'^\./','',got['Filename']))
 print('PASS: Box64 comes from the Android build, verified by size and SHA256, with a safe filename.')
+
+# Wine version: if Windows will not start, trying an older Wine must not need a new app build.
+# Each pinned version gets its own prefix, because a prefix made by one Wine is not safe for another.
+old_major=os.environ.pop('BODDY_WINE_MAJOR',None)
+try:
+ for value,expect in [('10','10'),('9','9'),('','' ),('garbage',''),('10.0',''),('-1','')]:
+  os.environ['BODDY_WINE_MAJOR']=value
+  assert r.wine_major()==expect,'BODDY_WINE_MAJOR=%r gave %r'%(value,r.wine_major())
+ os.environ['BODDY_WINE_MAJOR']='10'
+ assert r.prefix_dir().name=='prefix-box64-wine10',r.prefix_dir()
+ os.environ['BODDY_WINE_MAJOR']=''
+ assert r.prefix_dir().name=='prefix-box64',r.prefix_dir()
+finally:
+ os.environ.pop('BODDY_WINE_MAJOR',None)
+ if old_major is not None:os.environ['BODDY_WINE_MAJOR']=old_major
+# The failure message must name the box64 actually in use, so a log says which build ran.
+help_text=r.startup_help()
+assert 'Box64 in use' in help_text and ('Wine version' in help_text or 'Android build' in help_text),help_text
+print('PASS: Wine version can be pinned per prefix, and a failed Windows start explains what to try.')
