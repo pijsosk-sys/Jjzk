@@ -131,3 +131,28 @@ report=body.split('def diagnose():',1)[1].split('\ndef ',1)[0]
 for field in ('Memory available','Processes:','Page size','glxinfo'):
  assert field in report,'diagnostics no longer report '+field
 print('PASS: page-size preflight refuses 16K/64K kernels early, and diagnostics report memory, processes, page size and 3D.')
+
+# Box64: Debian's build is too old and its wineserver dies under proot, so the launcher fetches the
+# Box64 project's Android build. Check it picks the right package, verifies it, and cannot be
+# talked into fetching something else by a doctored index.
+assert r.BOX64_PKG=='box64-android' and r.BOX64_BIN=='/usr/local/bin/box64'
+assert 'dpkg' not in body.split('def install_box64()',1)[1].split('\ndef install_box64_wine',1)[0], \
+    'the Android build bundles its x86-64 libraries; it must not need the amd64 architecture'
+index=('Package: box64\nVersion: 0.3.4\nArchitecture: arm64\nFilename: ./old.deb\nSize: 1\nSHA256: aa\n\n'
+       'Package: box64-android\nVersion: 0.4.5-1\nArchitecture: armhf\nFilename: ./wrong-arch.deb\nSize: 2\nSHA256: bb\n\n'
+       'Package: box64-android\nVersion: 0.4.5-1\nArchitecture: arm64\nFilename: ./box64-android_0.4.5-1_arm64.deb\n'
+       'Size: 10338998\nSHA256: 33ee505f7ae0e829c02e5ad1b4df6c4b78e949b826be9e7c4dc5843fa3866b25\n')
+def pick(text):
+    for block in text.split('\n\n'):
+        f=dict(re.findall(r'^([A-Za-z0-9-]+): (.*)$',block,re.M))
+        if f.get('Package')==r.BOX64_PKG and f.get('Architecture')=='arm64':return f
+    return None
+got=pick(index)
+assert got and got['Filename']=='./box64-android_0.4.5-1_arm64.deb','picked the wrong package: %r'%(got,)
+assert int(got['Size'])==10338998 and len(got['SHA256'])==64
+# The launcher strips the flat repo's leading "./" and then refuses anything that is not a bare name.
+for bad in ['./../../etc/evil.deb','/etc/evil.deb','./sub/dir/x.deb','./x.deb.sh']:
+    name=re.sub(r'^\./','',bad)
+    assert not re.fullmatch(r'[A-Za-z0-9._~+-]+\.deb',name),'would have accepted '+bad
+assert re.fullmatch(r'[A-Za-z0-9._~+-]+\.deb',re.sub(r'^\./','',got['Filename']))
+print('PASS: Box64 comes from the Android build, verified by size and SHA256, with a safe filename.')

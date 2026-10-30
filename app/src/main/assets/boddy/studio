@@ -223,14 +223,49 @@ def apt_install(*packages):
  else:say('Some package lists still failed; installing from the ones that downloaded')
  r=subprocess.run(['apt-get','-o','Acquire::Retries=3','install','-y','--no-install-recommends',*packages],env=env)
  if r.returncode:raise RuntimeError('Could not install %s (apt exit code %d). Check the internet connection and try again.'%(' '.join(packages),r.returncode))
+# Debian's box64 is 0.3.4, well over a year behind upstream, and built for ordinary Linux. Under
+# proot on Android its wineserver dies as soon as the first Wine process talks to it
+# ("wine client error:0: recvmsg: Connection reset by peer"). The Box64 project's own repository
+# builds a current box64 with -DBAD_SIGNAL=ON, the flag for a system where signal delivery cannot
+# be relied on, which is what proot gives us. That build also carries its own x86-64 libunwind and
+# libstdc++ in /usr/lib/box64-x86_64-linux-gnu, a path box64 searches by default, so unlike
+# Debian's package it needs no amd64 architecture and no extra apt lists.
+BOX64_REPO='https://ryanfortner.github.io/box64-debs/debian/'
+BOX64_PKG='box64-android'
+BOX64_BIN='/usr/local/bin/box64'  # where that package puts it; /usr/local/bin precedes /usr/bin
+def box64_path():
+ """The box64 to use: the Android build if present, otherwise whatever Debian installed."""
+ return BOX64_BIN if os.access(BOX64_BIN,os.X_OK) else shutil.which('box64')
+def install_box64():
+ stamp=ROOT/'box64.version'
+ try:
+  if not os.access(BOX64_BIN,os.X_OK):wait_for_internet('ryanfortner.github.io')
+  index=fetch(BOX64_REPO+'Packages').decode()
+ except Exception as e:
+  have=box64_path()
+  if have:say('Could not check for Box64 updates; using the installed one.\n'+str(e));return have
+  raise
+ fields=None
+ for block in index.split('\n\n'):
+  f=dict(re.findall(r'^([A-Za-z0-9-]+): (.*)$',block,re.M))
+  if f.get('Package')==BOX64_PKG and f.get('Architecture')=='arm64':fields=f;break
+ if not fields:raise RuntimeError('Could not find %s for ARM64 in the Box64 repository'%BOX64_PKG)
+ version=fields['Version']
+ if stamp.exists() and stamp.read_text().strip()==version and os.access(BOX64_BIN,os.X_OK):return BOX64_BIN
+ name=re.sub(r'^\./','',fields['Filename'])
+ if not re.fullmatch(r'[A-Za-z0-9._~+-]+\.deb',name):raise ValueError('Unexpected Box64 package path')
+ say('Installing Box64 %s, the Android build (one time)'%version)
+ deb=CACHE/name
+ download(BOX64_REPO+name,deb,int(fields['Size']),sha256=fields.get('SHA256'))
+ apt_install(str(deb.resolve()))
+ deb.unlink(missing_ok=True)
+ if not os.access(BOX64_BIN,os.X_OK):raise RuntimeError('Box64 installed but %s is missing'%BOX64_BIN)
+ stamp.write_text(version)
+ return BOX64_BIN
 def install_box64_wine():
  """Returns the command that runs x86-64 Wine: [box64, .../bin/wine]."""
- if not shutil.which('box64'):
-  if os.uname().machine not in ('aarch64','arm64'):raise RuntimeError('Box64 mode needs ARM64 Linux')
-  say('Installing Box64 and the x86-64 libraries Wine needs (one time)')
-  # x86-64 packages next to the ARM64 system: Box64 runs Wine's unwinder (libunwind) as x86-64 code.
-  subprocess.run(['dpkg','--add-architecture','amd64'],check=True)
-  apt_install('box64','libunwind8:amd64')
+ if os.uname().machine not in ('aarch64','arm64'):raise RuntimeError('Box64 mode needs ARM64 Linux')
+ box64=install_box64()
  wine=WINE_X64/'opt'/('wine-'+WINE_BRANCH)/'bin'/'wine'
  stamp=WINE_X64/'.version'
  index=None
@@ -238,7 +273,7 @@ def install_box64_wine():
   if not wine.exists():wait_for_internet('dl.winehq.org')
   index=fetch(WINEHQ+'dists/trixie/main/binary-amd64/Packages').decode()
  except Exception as e:
-  if wine.exists():say('Could not check for Wine updates; using the installed one.\n'+str(e));return [shutil.which('box64'),str(wine)]
+  if wine.exists():say('Could not check for Wine updates; using the installed one.\n'+str(e));return [box64,str(wine)]
   raise
  pkgs={}
  for block in index.split('\n\n'):
@@ -248,7 +283,7 @@ def install_box64_wine():
    if f['Package'] not in pkgs or key>pkgs[f['Package']][0]:pkgs[f['Package']]=(key,f)
  if len(pkgs)!=2:raise RuntimeError('Could not find WineHQ %s packages for Debian 13'%WINE_BRANCH)
  version=pkgs['wine-'+WINE_BRANCH][1]['Version']
- if stamp.exists() and stamp.read_text().strip()==version and wine.exists():return [shutil.which('box64'),str(wine)]
+ if stamp.exists() and stamp.read_text().strip()==version and wine.exists():return [box64,str(wine)]
  say('Installing Wine %s (x86-64, from WineHQ) for Box64'%version)
  stage=ROOT/'wine-x64-stage';shutil.rmtree(stage,ignore_errors=True);stage.mkdir()
  for name,(_,f) in pkgs.items():
@@ -260,14 +295,15 @@ def install_box64_wine():
  if not (stage/'opt'/('wine-'+WINE_BRANCH)/'bin'/'wine').exists():raise RuntimeError('Wine executable absent after extraction')
  (stage/'.version').write_text(version)
  shutil.rmtree(WINE_X64,ignore_errors=True);stage.rename(WINE_X64)
- return [shutil.which('box64'),str(wine)]
+ return [box64,str(wine)]
 def wine_command():
  return install_box64_wine() if runtime()=='box64' else [install_wine()]
 def installed_wine_command():
  """The Wine command without installing anything (for the sign-in helper and diagnostics)."""
  if runtime()=='box64':
   wine=WINE_X64/'opt'/('wine-'+WINE_BRANCH)/'bin'/'wine'
-  return [shutil.which('box64'),str(wine)] if shutil.which('box64') and wine.exists() else None
+  box64=box64_path()
+  return [box64,str(wine)] if box64 and wine.exists() else None
  w=find_wine();return [w] if w else None
 def find_wine():
  candidates=['/opt/hangover/bin/wine','/usr/bin/hangover-wine','/usr/local/bin/wine','/usr/bin/wine',shutil.which('wine')]
@@ -304,7 +340,12 @@ def command(args,timeout=90,env=None):
 def diagnose():
  say('Boddy Studio compatibility report')
  say('Kernel: '+str(os.uname()));say('DISPLAY='+os.getenv('DISPLAY','<unset>'));say('Free storage: %.2f GB'%(shutil.disk_usage(ROOT).free/1e9))
- say('Runtime: '+runtime());w=installed_wine_command();say('Wine command: '+str(w));say('Box64: '+str(shutil.which('box64')))
+ say('Runtime: '+runtime());w=installed_wine_command();say('Wine command: '+str(w))
+ box64=box64_path()
+ say('Box64: '+str(box64)+('' if box64==BOX64_BIN else '  <-- Debian build; the Android build is the one that works'))
+ if box64:
+  try:subprocess.run([box64,'--version'],timeout=60)
+  except Exception as e:say(str(e))
  for url in [VERSION_URL,CDN]:
   try:open_url(url).close();say('HTTPS OK: '+url)
   except urllib.error.HTTPError:say('HTTPS OK: '+url)
