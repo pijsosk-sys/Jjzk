@@ -70,18 +70,10 @@
                 android:value="Runs the Boddy Linux environment while the desktop is open" />
         </service>
 
-        <!-- Optional helper the user turns on in Accessibility settings (PhoneControl.kt). -->
-        <service
-            android:name=".PhoneControl"
-            android:exported="true"
-            android:label="@string/phone_control_label"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/phone_control" />
-        </service>
+        <!-- The PhoneControl.kt accessibility helper is deliberately NOT declared here. Google Play
+             Protect blocks sideloading any app that declares an accessibility service, even though
+             this one does nothing until the user switches it on. Putting the <service> block back
+             (and nothing else) restores "Let AI control phone apps": PhoneControl.isAvailable()
+             finds it again and the home-screen button reappears by itself. -->
     </application>
 </manifest>

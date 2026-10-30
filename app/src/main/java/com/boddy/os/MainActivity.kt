@@ -190,6 +190,10 @@ class MainActivity : AppCompatActivity() {
     /** The switch that lets the AI see and tap other apps (see [PhoneControl]). */
     private fun showPhoneControl() {
         val button = findViewById<Button>(R.id.phoneControl)
+        if (!PhoneControl.isAvailable(this)) {
+            button.visibility = View.GONE
+            return
+        }
         val on = PhoneControl.isEnabled(this)
         button.text = if (on) "AI can control phone apps ✓  ·  settings" else "Let AI control phone apps (play Minecraft…)"
         button.setOnClickListener {

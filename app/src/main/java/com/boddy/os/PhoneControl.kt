@@ -327,6 +327,14 @@ class PhoneControl : AccessibilityService() {
         @Volatile var instance: PhoneControl? = null
             private set
 
+        /** True if this build declares the helper at all (see the note in AndroidManifest.xml). */
+        fun isAvailable(context: Context): Boolean = try {
+            context.packageManager.getServiceInfo(ComponentName(context, PhoneControl::class.java), 0)
+            true
+        } catch (_: Exception) {
+            false
+        }
+
         /** True if the user switched the helper on in Accessibility settings. */
         fun isEnabled(context: Context): Boolean {
             val me = ComponentName(context, PhoneControl::class.java).flattenToString()

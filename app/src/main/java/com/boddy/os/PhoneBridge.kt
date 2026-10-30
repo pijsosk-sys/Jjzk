@@ -73,8 +73,9 @@ class PhoneBridge(private val tokenFile: File, private val phone: PhoneActions) 
     /** Seeing and touching other apps, through the [PhoneControl] accessibility helper. */
     private fun control(verb: String, arg: String): String {
         val hands = PhoneControl.instance
-            ?: return "error: phone control is off. Ask the user to open the Boddy app and tap " +
-                "\"Let AI control phone apps\", then turn on Boddy in Accessibility settings"
+            ?: return "error: phone control is off. If the Boddy app's home screen shows " +
+                "\"Let AI control phone apps\", ask the user to tap it and turn on Boddy in " +
+                "Accessibility settings. If it does not, this build was made without phone control."
         return try {
             when (verb) {
                 "status" -> "ok: phone control on${if (hands.paused) " (PAUSED by the user)" else ""}, " +
