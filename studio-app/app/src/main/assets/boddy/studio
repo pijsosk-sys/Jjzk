@@ -185,8 +185,14 @@ WINE_BRANCH='stable'
 WINE_X64=ROOT/'wine-x64'
 def apt_install(*packages):
  env=dict(os.environ,DEBIAN_FRONTEND='noninteractive')
- subprocess.run(['apt-get','update'],check=True,env=env)
- subprocess.run(['apt-get','install','-y','--no-install-recommends',*packages],check=True,env=env)
+ # A Debian mirror mid-sync can fail one package list ("File has unexpected size"); apt then exits 100
+ # even though the lists these packages come from are fine. Retry, then try the install anyway.
+ for attempt in range(3):
+  if subprocess.run(['apt-get','-o','Acquire::Retries=3','update'],env=env).returncode==0:break
+  if attempt<2:say('Some package lists failed to download; retrying in 20 s');time.sleep(20)
+ else:say('Some package lists still failed; installing from the ones that downloaded')
+ r=subprocess.run(['apt-get','-o','Acquire::Retries=3','install','-y','--no-install-recommends',*packages],env=env)
+ if r.returncode:raise RuntimeError('Could not install %s (apt exit code %d). Check the internet connection and try again.'%(' '.join(packages),r.returncode))
 def install_box64_wine():
  """Returns the command that runs x86-64 Wine: [box64, .../bin/wine]."""
  if not shutil.which('box64'):
@@ -256,8 +262,7 @@ def install_wine():
   t.extractall(unpack,filter='data')
  debs=list(unpack.rglob('*.deb'))
  if not debs:raise RuntimeError('Runtime archive contains no Debian packages')
- subprocess.run(['apt-get','update'],check=True)
- subprocess.run(['apt-get','install','-y',*[str(p.resolve()) for p in debs]],check=True,env=dict(os.environ,DEBIAN_FRONTEND='noninteractive'))
+ apt_install(*[str(p.resolve()) for p in debs])
  shutil.rmtree(unpack,ignore_errors=True);archive.unlink(missing_ok=True)
  w=find_wine()
  if not w:raise RuntimeError('Hangover installed but Wine executable not found')

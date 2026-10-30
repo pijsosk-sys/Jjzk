@@ -42,7 +42,8 @@ after it fails, and pastes the log back here.
 | Build | Change | Result on the phone |
 | --- | --- | --- |
 | 1 | Studio-only app, Copy log | Hangover: Studio crashed at start (stack overflow in exception dispatch) |
-| 2 | Box64 + x86-64 Wine 11.0 by default; no Mono prompt; runtime switch in the Studio menu | not tested yet |
+| 2 | Box64 + x86-64 Wine 11.0 by default; no Mono prompt; runtime switch in the Studio menu | `apt-get update` failed: a Debian mirror mid-sync (trixie-security amd64 list), so Box64 wasn't installed |
+| 3 | apt retries the list update, then installs from the lists that did download | not tested yet |
 
 ## Building
 
