@@ -340,18 +340,23 @@ def install_box64():
  if not os.access(BOX64_BIN,os.X_OK):raise RuntimeError('Box64 installed but %s is missing'%BOX64_BIN)
  stamp.write_text(version)
  return BOX64_BIN
+def wine_x64_binary(root=WINE_X64):
+ """The x86-64 Wine program in an unpacked WineHQ install, or None. Up to Wine 10 the 64-bit one is
+ bin/wine64 (bin/wine comes from the 32-bit package, which is not installed); from 11 it is bin/wine."""
+ bindir=root/'opt'/('wine-'+WINE_BRANCH)/'bin'
+ return next((p for p in (bindir/'wine',bindir/'wine64') if p.is_file()),None)
 def install_box64_wine():
  """Returns the command that runs x86-64 Wine: [box64, .../bin/wine]."""
  if os.uname().machine not in ('aarch64','arm64'):raise RuntimeError('Box64 mode needs ARM64 Linux')
  box64=install_box64()
- wine=WINE_X64/'opt'/('wine-'+WINE_BRANCH)/'bin'/'wine'
+ wine=wine_x64_binary()
  stamp=WINE_X64/'.version'
  index=None
  try:
-  if not wine.exists():wait_for_internet('dl.winehq.org')
+  if not wine:wait_for_internet('dl.winehq.org')
   index=fetch(WINEHQ+'dists/trixie/main/binary-amd64/Packages').decode()
  except Exception as e:
-  if wine.exists():say('Could not check for Wine updates; using the installed one.\n'+str(e));return [box64,str(wine)]
+  if wine:say('Could not check for Wine updates; using the installed one.\n'+str(e));return [box64,str(wine)]
   raise
  pkgs={};major=wine_major()
  for block in index.split('\n\n'):
@@ -363,7 +368,7 @@ def install_box64_wine():
  if len(pkgs)!=2:raise RuntimeError('Could not find WineHQ %s packages for Debian 13%s'%(
   WINE_BRANCH,' with major version '+major if major else ''))
  version=pkgs['wine-'+WINE_BRANCH][1]['Version']
- if stamp.exists() and stamp.read_text().strip()==version and wine.exists():return [box64,str(wine)]
+ if stamp.exists() and stamp.read_text().strip()==version and wine:return [box64,str(wine)]
  say('Installing Wine %s (x86-64, from WineHQ) for Box64'%version)
  stage=ROOT/'wine-x64-stage';shutil.rmtree(stage,ignore_errors=True);stage.mkdir()
  progress=Progress('Wine %s'%version,sum(int(f['Size']) for _,f in pkgs.values()))
@@ -373,13 +378,15 @@ def install_box64_wine():
   download(WINEHQ+f['Filename'],deb,int(f['Size']),sha256=f['SHA256'],progress=progress)
   subprocess.run(['dpkg-deb','-x',str(deb),str(stage)],check=True)
   deb.unlink()
- if not (stage/'opt'/('wine-'+WINE_BRANCH)/'bin'/'wine').exists():raise RuntimeError('Wine executable absent after extraction')
+ if not wine_x64_binary(stage):raise RuntimeError('Wine executable absent after extraction')
  (stage/'.version').write_text(version)
  shutil.rmtree(WINE_X64,ignore_errors=True);stage.rename(WINE_X64)
- return [box64,str(wine)]
+ return [box64,str(wine_x64_binary())]
 def startup_reason(code,output):
  """One line saying why Windows stopped, for the list of every way that was tried."""
  box64=box64_path()
+ if 'noexec filesystem' in output:return 'Android would not let Wine make its code runnable%s'%(
+  '' if execmod_fix() else ' (Boddy\'s fix for this, %s, is missing)'%EXECMOD_LIB_NAME)
  if 'virtual_setup_exception' in output or '0xecec' in output:return 'Wine crashed on code Box64 will not run (its "no execute" check)'
  if 'Connection reset by peer' in output:return "Wine's background process (wineserver) stopped as soon as Windows started"
  if runtime()=='box64' and box64!=BOX64_BIN:return 'the Android build of Box64 is not installed (using %s)'%box64
@@ -400,7 +407,7 @@ def startup_help(output=''):
  # Box64 refuses to run code on a page it does not consider executable and raises its own fault
  # (code 0xecec) in a loop until the program fixes the page; Wine never does, and dies dispatching
  # the exception. That is this Wine's problem, not the emulator's, so another Wine is the fix.
- if 'virtual_setup_exception' in output or '0xecec' in output:
+ if ('virtual_setup_exception' in output or '0xecec' in output) and 'noexec filesystem' not in output:
   major=wine_major()
   nxt={'':'10','11':'10','10':'9','9':'8'}.get(major,'')
   lines+=['%s got as far as running Windows code, then stopped on a part of itself that Box64'%(
@@ -409,6 +416,15 @@ def startup_help(output=''):
   if nxt:lines+=['In the Studio menu choose "Wine version" and pick %s, then Open Studio again.'%nxt]
   else:lines+=['Every Wine version offered has now failed, so Studio cannot run on this phone.',
    'Roblox Tools > "Start a new game I can edit with an AI agent" still works and needs none of this.']
+  return '\n'.join(lines)
+ if 'noexec filesystem' in output:
+  # Wine maps a DLL's file, writes address fix-ups into it, then makes it executable. Android forbids that
+  # last step for apps (SELinux "execmod"), which libboddy-execmod.so works around; see execmod-fix.c.
+  lines+=['Android would not let Wine make the Windows code it loaded runnable ("noexec" in the log).',
+   'Boddy loads a fix for this into Wine (%s); %s.'%(EXECMOD_LIB_NAME,
+    'it was loaded, so Android blocked something the fix does not cover' if execmod_fix() else
+    'it is missing, so update Boddy (or check the internet connection) and open Studio again'),'',
+   'Choose "Copy log" and send the log.']
   return '\n'.join(lines)
  if 'Connection reset by peer' in output:
   lines+=['Wine\'s background process (wineserver) stopped as soon as Windows started.','']
@@ -430,9 +446,9 @@ def wine_command():
 def installed_wine_command():
  """The Wine command without installing anything (for the sign-in helper and diagnostics)."""
  if runtime()=='box64':
-  wine=WINE_X64/'opt'/('wine-'+WINE_BRANCH)/'bin'/'wine'
+  wine=wine_x64_binary()
   box64=box64_path()
-  return [box64,str(wine)] if box64 and wine.exists() else None
+  return [box64,str(wine)] if box64 and wine else None
  w=find_wine();return [w] if w else None
 def find_wine():
  candidates=['/opt/hangover/bin/wine','/usr/bin/hangover-wine','/usr/local/bin/wine','/usr/bin/wine',shutil.which('wine')]
@@ -480,6 +496,22 @@ def run_logged(args,timeout,env,keep=400):
 def command(args,timeout=90,env=None):
  say('Running: '+' '.join(args));r=subprocess.run(args,timeout=timeout,env=env)
  if r.returncode:raise RuntimeError('%s failed with exit code %d'%(' '.join(args[:3]),r.returncode))
+def execmod_probe():
+ """Whether this phone lets a process make written-to file pages executable, as Wine does to load a DLL."""
+ import ctypes,mmap as _m
+ probe=ROOT/'.execmod-probe'
+ try:
+  libc=ctypes.CDLL(None,use_errno=True)
+  libc.mprotect.argtypes=[ctypes.c_void_p,ctypes.c_size_t,ctypes.c_int]
+  probe.write_bytes(b'\0'*PAGE_SIZE)
+  with probe.open('r+b') as fh,_m.mmap(fh.fileno(),PAGE_SIZE,flags=_m.MAP_PRIVATE,prot=_m.PROT_READ|_m.PROT_WRITE) as mm:
+   mm[0]=1
+   addr=ctypes.addressof(ctypes.c_char.from_buffer(mm))
+   ok=libc.mprotect(addr,PAGE_SIZE,_m.PROT_READ|_m.PROT_EXEC)==0;err=ctypes.get_errno()
+   libc.mprotect(addr,PAGE_SIZE,_m.PROT_READ|_m.PROT_WRITE)  # back to what mmap expects before closing
+  return 'works' if ok else 'blocked by Android (%s); Wine needs the execmod fix'%os.strerror(err)
+ except Exception as e:return 'could not test (%s)'%e
+ finally:probe.unlink(missing_ok=True)
 def diagnose():
  say('Boddy Studio compatibility report')
  say('Kernel: '+str(os.uname()));say('DISPLAY='+os.getenv('DISPLAY','<unset>'));say('Free storage: %.2f GB'%(shutil.disk_usage(ROOT).free/1e9))
@@ -496,6 +528,8 @@ def diagnose():
  say('Memory available: %d MB'%mem_available_mb())
  say('Processes: %d (Android stops Boddy above about %d)'%(process_count(),PHANTOM_LIMIT))
  say('Page size: %d bytes%s'%(PAGE_SIZE,'' if PAGE_SIZE==4096 else '  <-- too big; Windows programs need 4096'))
+ say('Execmod fix for Wine: '+(execmod_fix() or 'missing  <-- Wine cannot load Windows programs on Android without it'))
+ say('Making changed file pages executable: '+execmod_probe())
  say('Wine version wanted: '+(wine_major() or 'newest'))
  # Wine maps its DLLs from disk as executable. If Android refuses that, no Wine can ever work here.
  try:
@@ -528,6 +562,26 @@ AUTH_DESKTOP='boddy-roblox-studio-auth.desktop'
 BOX64_ENV={'BOX64_NOBANNER':'1','BOX64_LOG':'1','BOX64_SHOWSEGV':'1','BOX64_DYNAREC_SAFEFLAGS':'2','BOX64_DYNAREC_FASTNAN':'0',
  'BOX64_DYNAREC_FASTROUND':'0','BOX64_DYNAREC_X87DOUBLE':'1','BOX64_DYNAREC_BIGBLOCK':'0','BOX64_DYNAREC_STRONGMEM':'2',
  'BOX64_DYNAREC_CALLRET':'0','BOX64_DYNAREC_WAIT':'1'}
+# Android forbids making written-to file pages executable, which is how Wine loads every DLL; this library,
+# preloaded into Wine only, moves such pages to anonymous memory first (see execmod-fix.c). Box64 notes it
+# cannot load it as an x86 library and carries on; the host side, where mprotect() runs, loads it.
+EXECMOD_LIB_NAME='libboddy-execmod.so'
+EXECMOD_LIB_SHA256='deef8d551565ef1644b005510ee27ca964be3f6f94c318dceaa2d2104038112e'
+EXECMOD_LIB_URL='https://raw.githubusercontent.com/pijsosk-sys/Jjzk/ccr-f8458f15-i347hd/boddy/'+EXECMOD_LIB_NAME
+def execmod_fix(fetch_missing=False):
+ """Path of the ARM64 execmod fix library, downloading it if asked and it is not shipped with Boddy."""
+ if os.uname().machine not in ('aarch64','arm64'):return None
+ def good(p):
+  try:return hashlib.sha256(p.read_bytes()).hexdigest()==EXECMOD_LIB_SHA256
+  except OSError:return False
+ for p in (Path('/opt/boddy')/EXECMOD_LIB_NAME,ROOT/EXECMOD_LIB_NAME):
+  if good(p):return str(p)
+ if not fetch_missing:return None
+ try:
+  download(EXECMOD_LIB_URL,ROOT/EXECMOD_LIB_NAME,sha256=EXECMOD_LIB_SHA256)
+  return str(ROOT/EXECMOD_LIB_NAME)
+ except Exception as e:
+  say('Could not download %s, which Wine needs on Android: %s'%(EXECMOD_LIB_NAME,e));return None
 def wine_env(prefix):
  nofile=os.getenv('BODDY_NOFILE_SOFT') or str(resource.getrlimit(resource.RLIMIT_NOFILE)[0])
  env=dict(os.environ,BODDY_NOFILE_SOFT=nofile,WINEPREFIX=str(prefix),WINEARCH='win64',WINEDEBUG=os.getenv('BODDY_WINEDEBUG','-all,err+all'),LIBGL_ALWAYS_SOFTWARE='1',QT_X11_NO_MITSHM='1')
@@ -535,6 +589,8 @@ def wine_env(prefix):
  env.setdefault('WINEDLLOVERRIDES','mscoree=;mshtml=')
  if runtime()=='box64':
   for k,v in BOX64_ENV.items():env.setdefault(k,v)
+ fix=execmod_fix(fetch_missing=True)
+ if fix and fix not in env.get('LD_PRELOAD','').split():env['LD_PRELOAD']=' '.join(filter(None,[fix,env.get('LD_PRELOAD')]))
  return env
 def set_default_handler(mime,desktop):
  import configparser
@@ -580,6 +636,9 @@ FIREFOX_PREFS={
  'network.protocol-handler.external.roblox-studio-auth':True}
 def browser_env():
  env={k:v for k,v in os.environ.items() if not k.startswith(('WINE','BOX64_','FEX_')) and k not in ('LIBGL_ALWAYS_SOFTWARE','QT_X11_NO_MITSHM','BODDY_NOFILE_SOFT')}
+ preload=' '.join(p for p in env.get('LD_PRELOAD','').split() if EXECMOD_LIB_NAME not in p)
+ if preload:env['LD_PRELOAD']=preload
+ else:env.pop('LD_PRELOAD',None)
  # Firefox's seccomp sandboxes conflict with proot; MOZ_FAKE_NO_SANDBOX covers the utility processes too.
  env.update(MOZ_FAKE_NO_SANDBOX='1',MOZ_DISABLE_CONTENT_SANDBOX='1',MOZ_DISABLE_GMP_SANDBOX='1',MOZ_DISABLE_RDD_SANDBOX='1',MOZ_DISABLE_SOCKET_PROCESS_SANDBOX='1')
  return env
