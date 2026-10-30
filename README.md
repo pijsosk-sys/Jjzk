@@ -3,7 +3,7 @@
 Android app that deletes folders under `/storage/emulated/0/Android/data` and keeps a
 **log menu that says exactly why a deletion failed**.
 
-Ready-to-install APK: [`release/DataWiper-1.2.apk`](release/DataWiper-1.2.apk)
+Ready-to-install APK: [`release/DataWiper-1.3.apk`](release/DataWiper-1.3.apk)
 (min Android 7.0, target Android 14, signed with the debug-style key in `keystore/`).
 
 ## What it does
@@ -24,7 +24,9 @@ Ready-to-install APK: [`release/DataWiper-1.2.apk`](release/DataWiper-1.2.apk)
 * For each folder it tries three routes, in order, and stops at the first that works:
   1. **File API** — plain `java.io.File` recursive delete.
   2. **Storage Access Framework** — `DocumentsContract.deleteDocument` through a folder grant.
-  3. **Root** — `su -c rm -rf` (only when "Use root if available" is ticked).
+  3. **Shizuku** — `rm -rf` run as the shell user (uid 2000), which is the one non-root
+     identity that can still reach `Android/data` on Android 11+.
+  4. **Root** — `su -c rm -rf` (only when "Use root if available" is ticked).
 * After a reported success it **verifies** the folder is really gone, because some
   FUSE/sdcardfs layers report a delete that did not happen.
 * Every attempt — successful or not — goes into the log with the concrete reason.
@@ -74,20 +76,24 @@ This is not a bug in the app, it is the platform:
 |---|---|
 | 10 and older | Yes, with storage permission. |
 | 11 – 12 | File API is blocked. "All files access" does **not** lift it. A folder grant on `Android/data` still works on most builds. |
-| 13+ | The system folder picker also refuses to grant `Android/data`, so only **root** (or adb/MTP from a computer) can remove these folders. |
+| 13+ | The system folder picker also refuses to grant `Android/data`. Only the **shell user** (Shizuku), **root**, or adb from a computer can remove these folders. |
 
 The app says this up front on the main screen, in the "Why does it fail?" menu item, and
 in every relevant log entry — it does not pretend to work around the restriction.
 
 On Android 13+ the three things that still work are:
 
-1. **root** — tick "Use root if available"; the app offers this by itself when nothing
-   could be listed;
-2. **a computer** — menu → Copy adb commands, then paste them with the phone connected;
-3. **a file manager using Shizuku**, which runs commands as the shell user.
+1. **Shizuku** — built into this app. Press **Set up Shizuku**, allow the prompt, and the
+   app runs its deletes as the shell user. On a phone without root, Shizuku is started by
+   pairing it once over Wireless debugging in Developer options, and it has to be started
+   again after every reboot.
+2. **root** — tick "Use root if available"; the app offers this by itself when nothing
+   could be listed.
+3. **a computer** — menu → Copy adb commands, then paste them with the phone connected.
 
-If another file manager on the phone *does* show `Android/data` on Android 13+, it is
-using one of those — most likely root.
+The status card on the main screen shows which of these is currently usable, and the
+"Shizuku" line says exactly what is missing: not installed, not running, too old, or
+permission not granted.
 
 Deleting an app's data folder removes logins, offline maps, downloaded media and game
 saves for that app. There is no undo.
@@ -108,6 +114,7 @@ app/src/main/java/com/wipe/datacleaner/
   LogActivity.java    the log menu
   Deleter.java        the three delete routes + reason reporting
   Probe.java          read-only inspection of a single folder
+  ShizukuRoute.java   Shizuku state, permission and shell execution
   Scanner.java        folder listing with File -> SAF -> root -> package-manager fallback
   SafAccess.java      tree grants, document uris, picker intent
   Shell.java          su runner with timeout and stderr capture

@@ -36,6 +36,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
+import rikka.shizuku.Shizuku;
+
 public class MainActivity extends Activity {
 
     private static final int REQ_SAF_TREE = 1001;
@@ -54,6 +56,7 @@ public class MainActivity extends Activity {
     private EditText etSearch;
     private Button btnUseTyped;
     private TextView tvNotice;
+    private Shizuku.OnRequestPermissionResultListener shizukuPermissionListener;
     private Button btnDelete;
     private TargetAdapter adapter;
     private SharedPreferences prefs;
@@ -110,6 +113,9 @@ public class MainActivity extends Activity {
         cbRoot.setOnCheckedChangeListener((v, checked) ->
                 prefs.edit().putBoolean(KEY_ROOT, checked).apply());
 
+        findViewById(R.id.btnShizuku).setOnClickListener(v -> handleShizuku());
+        registerShizukuListeners();
+
         findViewById(R.id.btnPermission).setOnClickListener(v -> requestAllFilesAccess());
         findViewById(R.id.btnGrantFolder).setOnClickListener(v -> requestFolderAccess());
         tvNotice = findViewById(R.id.tvNotice);
@@ -152,7 +158,10 @@ public class MainActivity extends Activity {
         sb.append("Android ").append(Build.VERSION.RELEASE)
           .append(" (API ").append(Build.VERSION.SDK_INT).append(")\n");
         sb.append(allFiles ? "✓" : "✗").append(" All files access\n");
-        sb.append(tree != null ? "✓" : "✗").append(" Android/data folder access");
+        sb.append(tree != null ? "✓" : "✗").append(" Android/data folder access\n");
+        ShizukuRoute.State shizuku = ShizukuRoute.state(this);
+        sb.append(shizuku == ShizukuRoute.State.READY ? "✓" : "✗")
+          .append(" Shizuku: ").append(shizuku.text);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             sb.append("\n⚠ Android 13+ blocks Android/data for apps and refuses "
                     + "to grant it in the folder picker. Root, or adb from a computer, "
@@ -485,6 +494,74 @@ public class MainActivity extends Activity {
         b.show();
     }
 
+    private void registerShizukuListeners() {
+        shizukuPermissionListener = (requestCode, grantResult) -> {
+            if (requestCode != ShizukuRoute.PERMISSION_REQUEST_CODE) return;
+            if (grantResult == PackageManager.PERMISSION_GRANTED) {
+                LogStore.get().ok("Shizuku permission granted",
+                        "commands now run as the shell user",
+                        "Shizuku v" + ShizukuRoute.version());
+                updateStatus();
+                rescan();
+            } else {
+                LogStore.get().fail("Shizuku permission denied",
+                        "the Shizuku prompt was refused",
+                        "Without it this app cannot use the shell user, and on this Android "
+                                + "version nothing else short of root reaches Android/data.");
+                updateStatus();
+            }
+        };
+        try {
+            Shizuku.addRequestPermissionResultListener(shizukuPermissionListener);
+            Shizuku.addBinderReceivedListenerSticky(() -> runOnUiThread(this::updateStatus));
+        } catch (Throwable t) {
+            LogStore.get().warn("Shizuku listeners could not be registered",
+                    t.getClass().getSimpleName(), String.valueOf(t.getMessage()));
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        try {
+            if (shizukuPermissionListener != null) {
+                Shizuku.removeRequestPermissionResultListener(shizukuPermissionListener);
+            }
+        } catch (Throwable ignored) {
+            // Nothing to clean up when Shizuku was never there.
+        }
+        super.onDestroy();
+    }
+
+    /** Walks the user through whatever is missing before Shizuku can be used. */
+    private void handleShizuku() {
+        ShizukuRoute.State st = ShizukuRoute.state(this);
+        switch (st) {
+            case READY:
+                toast("Shizuku is ready - rescanning");
+                rescan();
+                return;
+            case NO_PERMISSION:
+                try {
+                    ShizukuRoute.requestPermission();
+                } catch (Throwable t) {
+                    LogStore.get().fail("Could not ask Shizuku for permission",
+                            t.getClass().getSimpleName(), String.valueOf(t.getMessage()));
+                    toast("Shizuku refused the request - see the log");
+                }
+                return;
+            default:
+                new AlertDialog.Builder(this)
+                        .setTitle("Shizuku")
+                        .setMessage(st.text + ".\n\n" + ShizukuRoute.howToFix(st)
+                                + "\n\nShizuku runs commands as the shell user, which is the "
+                                + "only identity besides root that can still touch "
+                                + "Android/data on this Android version.")
+                        .setPositiveButton("OK", null)
+                        .show();
+                LogStore.get().warn("Shizuku not usable", st.text, ShizukuRoute.howToFix(st));
+        }
+    }
+
     /**
      * When no route could list the folder, point at the one thing that still can.
      * A file manager that does show Android/data on Android 13+ is using root or Shizuku.
@@ -496,13 +573,15 @@ public class MainActivity extends Activity {
                 .setTitle("Nothing could be listed")
                 .setMessage("No route could read " + Deleter.DATA_ROOT + ", so the list below "
                         + "is only a guess built from installed apps.\n\n"
-                        + "If another file manager on this phone does show these folders, it is "
-                        + "using root. Try the root route now?")
+                        + "On Android " + Build.VERSION.RELEASE + " only the shell user "
+                        + "(Shizuku) or root can read this folder. A file manager that does "
+                        + "show it is using one of those.")
                 .setNegativeButton("Not now", null)
-                .setPositiveButton("Try root", (d, w) -> {
+                .setNeutralButton("Try root", (d, w) -> {
                     cbRoot.setChecked(true);
                     rescan();
                 })
+                .setPositiveButton("Set up Shizuku", (d, w) -> handleShizuku())
                 .show();
     }
 
@@ -597,7 +676,7 @@ public class MainActivity extends Activity {
                 + "What still works on Android 13+:\n"
                 + "- root, if the phone has it (tick \"Use root if available\")\n"
                 + "- a computer: adb shell rm -rf ... (menu > Copy adb commands)\n"
-                + "- a file manager using Shizuku, which runs as the shell user\n\n"
+                + "- Shizuku: this app supports it, see the Shizuku button\n\n"
                 + "Folders of apps you already uninstalled cannot be listed here at all. "
                 + "Type the folder name into the search box and press the button that "
                 + "appears to target one directly.\n\n"

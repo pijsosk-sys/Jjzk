@@ -8,6 +8,7 @@ public class Target {
     public static final int SOURCE_FILE = 0;
     public static final int SOURCE_SAF  = 1;
     public static final int SOURCE_ROOT = 2;
+    public static final int SOURCE_SHIZUKU = 3;
 
     public final String packageName;
     public final String path;
@@ -31,6 +32,7 @@ public class Target {
         switch (source) {
             case SOURCE_SAF:  return "SAF";
             case SOURCE_ROOT: return "root";
+            case SOURCE_SHIZUKU: return "shizuku";
             default:          return "file";
         }
     }

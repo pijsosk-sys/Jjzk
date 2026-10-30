@@ -31,6 +31,7 @@ public final class Probe {
 
         sb.append('\n').append(fileSection(t));
         sb.append('\n').append(safSection(ctx, t));
+        sb.append('\n').append(shizukuSection(ctx, t));
         sb.append('\n').append(rootSection(t, allowRoot));
 
         return sb.toString().trim();
@@ -168,6 +169,39 @@ public final class Probe {
     }
 
     // ---------------------------------------------------------------- root
+
+    private static String shizukuSection(Context ctx, Target t) {
+        StringBuilder sb = new StringBuilder("SHIZUKU (shell user)\n");
+        ShizukuRoute.State st = ShizukuRoute.state(ctx);
+        sb.append("  state       : ").append(st.text).append('\n');
+        if (st != ShizukuRoute.State.READY) {
+            sb.append("  fix         : ").append(wrap(ShizukuRoute.howToFix(st))).append('\n');
+            sb.append("  verdict     : this route is not usable yet\n");
+            return sb.toString();
+        }
+
+        sb.append("  version     : ").append(ShizukuRoute.version()).append('\n');
+        Shell.Result ls = ShizukuRoute.exec(
+                "ls -la " + shQuote(t.path) + " 2>&1 | head -25", 20000);
+        if (ls.launchError != null) {
+            sb.append("  error       : ").append(wrap(ls.launchError)).append('\n');
+            sb.append("  verdict     : Shizuku is running but the command could not start\n");
+            return sb.toString();
+        }
+        sb.append("  ls -la      : ").append(ls.exitCode == 0 ? "ok" : "exit " + ls.exitCode)
+          .append('\n');
+        for (String line : ls.stdout.split("\n")) {
+            if (!line.trim().isEmpty()) sb.append("    ").append(line).append('\n');
+        }
+        Shell.Result du = ShizukuRoute.exec("du -sh " + shQuote(t.path) + " 2>&1", 25000);
+        if (du.stdout != null && !du.stdout.trim().isEmpty()) {
+            sb.append("  du -sh      : ").append(du.stdout.trim()).append('\n');
+        }
+        sb.append("  verdict     : ")
+          .append(ls.exitCode == 0 ? "Shizuku can remove this folder\n"
+                                   : "the folder was not found by the shell user\n");
+        return sb.toString();
+    }
 
     private static String rootSection(Target t, boolean allowRoot) {
         StringBuilder sb = new StringBuilder("ROOT\n");

@@ -65,7 +65,29 @@ public final class Scanner {
             }
         }
 
-        // 3. Root listing.
+        // 3. Shizuku - the shell user can read Android/data where the app cannot.
+        if (found.isEmpty()) {
+            ShizukuRoute.State st = ShizukuRoute.state(ctx);
+            if (st == ShizukuRoute.State.READY) {
+                Shell.Result r = ShizukuRoute.exec("ls -1 " + Deleter.DATA_ROOT, 20000);
+                if (r.ok()) {
+                    for (String line : r.stdout.split("\n")) {
+                        String n = line.trim();
+                        if (n.isEmpty()) continue;
+                        found.put(n, new Target(n, Deleter.DATA_ROOT + "/" + n,
+                                Target.SOURCE_SHIZUKU));
+                    }
+                    log.info("Scan via Shizuku", found.size() + " folders listed as the shell user");
+                } else {
+                    log.warn("Scan via Shizuku failed", "the shell command did not succeed",
+                            r.describe());
+                }
+            } else {
+                log.warn("Scan via Shizuku skipped", st.text, ShizukuRoute.howToFix(st));
+            }
+        }
+
+        // 4. Root listing.
         if (found.isEmpty() && allowRoot) {
             Shell.Result r = Shell.runSu("ls -1 " + Deleter.DATA_ROOT, 15000);
             if (r.ok()) {
@@ -80,7 +102,7 @@ public final class Scanner {
             }
         }
 
-        // 4. Last resort: offer every installed app as a candidate so the user can still
+        // 5. Last resort: offer every installed app as a candidate so the user can still
         //    fire a delete at it and read the exact refusal in the log.
         if (found.isEmpty()) {
             for (String pkg : installedPackages(ctx)) {

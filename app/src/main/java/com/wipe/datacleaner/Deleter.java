@@ -112,6 +112,14 @@ public final class Deleter {
             return res;
         }
 
+        Attempt shizuku = tryShizuku(ctx, target);
+        res.attempts.add(shizuku);
+        if (shizuku.ok && verifyGone(ctx, target)) {
+            res.ok = true;
+            res.methodUsed = shizuku.method;
+            return res;
+        }
+
         Attempt root = tryRoot(target, allowRoot);
         res.attempts.add(root);
         if (root.ok && verifyGone(ctx, target)) {
@@ -230,6 +238,31 @@ public final class Deleter {
         }
     }
 
+    private static Attempt tryShizuku(Context ctx, Target t) {
+        final String method = "Shizuku (shell user)";
+
+        ShizukuRoute.State state = ShizukuRoute.state(ctx);
+        if (state != ShizukuRoute.State.READY) {
+            return new Attempt(method, false, state.text, ShizukuRoute.howToFix(state));
+        }
+
+        Shell.Result r = ShizukuRoute.exec("rm -rf " + shQuote(t.path), 30000);
+        if (r.launchError != null) {
+            return new Attempt(method, false,
+                    "Shizuku could not start the command", r.describe());
+        }
+        if (r.timedOut) {
+            return new Attempt(method, false,
+                    "Shizuku did not answer within 30s", r.describe());
+        }
+        if (r.exitCode != 0) {
+            return new Attempt(method, false,
+                    "shell exited with code " + r.exitCode, r.describe());
+        }
+        return new Attempt(method, true, "rm -rf completed as the shell user",
+                "Shizuku v" + ShizukuRoute.version() + "\n" + r.describe());
+    }
+
     private static Attempt tryRoot(Target t, boolean allowRoot) {
         final String method = "Root shell (su -c rm -rf)";
         if (!allowRoot) {
@@ -320,7 +353,7 @@ public final class Deleter {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             return "Android " + Build.VERSION.RELEASE + " blocks direct file access to "
                     + "Android/data for every app, and \"All files access\" does not lift that "
-                    + "block. Grant folder access instead, or use root.";
+                    + "block. Shizuku or root is needed.";
         }
         return "Check that storage permission is granted.";
     }
@@ -329,7 +362,7 @@ public final class Deleter {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             return "On Android 13 and newer the system picker refuses to hand out a grant for "
                     + "Android/data or any folder inside it, so this route cannot be unlocked "
-                    + "on a stock build. Root is the remaining option.";
+                    + "on a stock build. Shizuku or root is the remaining option.";
         }
         return "Use \"Grant folder access\" and pick Android/data in the picker.";
     }

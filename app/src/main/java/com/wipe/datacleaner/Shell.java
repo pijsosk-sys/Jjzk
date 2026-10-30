@@ -41,14 +41,20 @@ public final class Shell {
     }
 
     public static Result run(String[] argv, int timeoutMs) {
-        Result res = new Result();
-        Process proc = null;
+        Process proc;
         try {
             proc = new ProcessBuilder(argv).start();
         } catch (Exception e) {
+            Result res = new Result();
             res.launchError = e.getClass().getSimpleName() + ": " + e.getMessage();
             return res;
         }
+        return consume(proc, timeoutMs);
+    }
+
+    /** Drains a running process and waits for it, whoever started it. */
+    public static Result consume(Process proc, int timeoutMs) {
+        Result res = new Result();
 
         StreamReader out = new StreamReader(proc.getInputStream());
         StreamReader err = new StreamReader(proc.getErrorStream());
