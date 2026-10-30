@@ -1,2 +1,3 @@
 apkpull/build/
+app/build/
 *.keystore
