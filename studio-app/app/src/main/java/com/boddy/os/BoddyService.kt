@@ -116,6 +116,7 @@ class BoddyService : Service() {
         scope.launch {
             try {
                 installer.copyScripts()
+                installer.writeResolvConf()
             } catch (e: Exception) {
                 Boddy.log("Couldn't copy the launcher scripts: ${e.message}")
             }

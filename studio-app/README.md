@@ -43,7 +43,8 @@ after it fails, and pastes the log back here.
 | --- | --- | --- |
 | 1 | Studio-only app, Copy log | Hangover: Studio crashed at start (stack overflow in exception dispatch) |
 | 2 | Box64 + x86-64 Wine 11.0 by default; no Mono prompt; runtime switch in the Studio menu | `apt-get update` failed: a Debian mirror mid-sync (trixie-security amd64 list), so Box64 wasn't installed |
-| 3 | apt retries the list update, then installs from the lists that did download | not tested yet |
+| 3 | apt retries the list update, then installs from the lists that did download | Linux couldn't look up deb.debian.org (DNS); no lists, so `libunwind8:amd64` wasn't found |
+| 4 | Linux uses the phone network's own DNS servers first (then 8.8.8.8, 1.1.1.1), rewritten on every desktop start; the launcher waits up to 90 s for the internet and says clearly when there is none | not tested yet |
 
 ## Building
 

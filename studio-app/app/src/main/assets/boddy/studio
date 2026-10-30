@@ -183,7 +183,25 @@ def runtime():
 WINEHQ='https://dl.winehq.org/wine-builds/debian/'
 WINE_BRANCH='stable'
 WINE_X64=ROOT/'wine-x64'
+def wait_for_internet(host='deb.debian.org',seconds=90):
+ # Name lookup is what failed on the phone ("Temporary failure resolving"): wait for it before
+ # downloading, so a short drop (switching networks, screen off) doesn't fail the whole install.
+ import socket
+ deadline=time.time()+seconds;warned=False
+ while True:
+  try:socket.getaddrinfo(host,80);return
+  except OSError as e:
+   if time.time()>deadline:
+    try:dns=open('/etc/resolv.conf').read().split()
+    except OSError:dns=[]
+    servers=[dns[i+1] for i,w in enumerate(dns[:-1]) if w=='nameserver']
+    raise RuntimeError("No internet inside Linux: can't look up %s (%s). DNS servers: %s.\n"
+     "Check Wi-Fi or mobile data. If you use a VPN, an ad blocker or Private DNS (Settings > Connections > "
+     "More connection settings), try turning it off, then tap Launch again."%(host,e,', '.join(servers) or 'none'))
+   if not warned:say('Waiting for the internet (looking up %s failed)...'%host);warned=True
+   time.sleep(5)
 def apt_install(*packages):
+ wait_for_internet()
  env=dict(os.environ,DEBIAN_FRONTEND='noninteractive')
  # A Debian mirror mid-sync can fail one package list ("File has unexpected size"); apt then exits 100
  # even though the lists these packages come from are fine. Retry, then try the install anyway.
@@ -205,6 +223,7 @@ def install_box64_wine():
  stamp=WINE_X64/'.version'
  index=None
  try:
+  if not wine.exists():wait_for_internet('dl.winehq.org')
   index=fetch(WINEHQ+'dists/trixie/main/binary-amd64/Packages').decode()
  except Exception as e:
   if wine.exists():say('Could not check for Wine updates; using the installed one.\n'+str(e));return [shutil.which('box64'),str(wine)]

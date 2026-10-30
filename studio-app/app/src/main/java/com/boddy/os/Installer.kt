@@ -251,10 +251,7 @@ class Installer(private val context: Context, private val proot: Proot) {
         proot.writeFakeProc()
         File(rootfs, "tmp").apply { mkdirs(); Os.chmod(path, 0x3ff) } // 1777
 
-        File(rootfs, "etc/resolv.conf").apply {
-            delete()
-            writeText("nameserver 8.8.8.8\nnameserver 1.1.1.1\n")
-        }
+        writeResolvConf()
         File(rootfs, "etc/hosts").writeText("127.0.0.1 localhost\n::1 localhost ip6-localhost\n")
         // apt drops to the _apt user for downloads, which can't open sockets under Android.
         File(rootfs, "etc/apt/apt.conf.d/99boddy").apply {
@@ -263,6 +260,29 @@ class Installer(private val context: Context, private val proot: Proot) {
         }
 
         copyScripts()
+    }
+
+    /**
+     * DNS for Linux: the phone's current network's own servers first, then public ones. Only public
+     * servers (as before) fail on networks that block them (some Wi-Fi, VPNs, Private DNS):
+     * "Temporary failure resolving 'deb.debian.org'". Rewritten on every desktop start, since the
+     * phone moves between networks.
+     */
+    fun writeResolvConf() {
+        val network = try {
+            val cm = context.getSystemService(android.net.ConnectivityManager::class.java)
+            cm.getLinkProperties(cm.activeNetwork)?.dnsServers.orEmpty()
+                .filterNot { it.isLinkLocalAddress || it.isLoopbackAddress }
+                .mapNotNull { it.hostAddress?.substringBefore('%') }
+        } catch (_: Exception) {
+            emptyList()
+        }
+        // glibc reads at most three nameserver lines.
+        val servers = (network.take(2) + listOf("8.8.8.8", "1.1.1.1")).distinct().take(3)
+        File(rootfs, "etc/resolv.conf").apply {
+            delete()
+            writeText(servers.joinToString("") { "nameserver $it\n" } + "options timeout:3 attempts:2\n")
+        }
     }
 
     /** Copies Boddy's scripts into Linux. Also run on every desktop start so they match the app. */
