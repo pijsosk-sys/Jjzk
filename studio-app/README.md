@@ -23,6 +23,27 @@ after it fails, and pastes the log back here.
 - `VncView`: the desktop keeps its size when the keyboard opens (the v13 dex patch, now in source).
 - It uses the same prebuilt Linux image as v13 (`assets/rootfs.txt`).
 
+## Runtimes (build 2)
+
+- **Box64 (default since build 2):** Debian's `box64` runs the regular x86-64 Wine from WineHQ
+  (`wine-stable` 11.0, unpacked to `~/.local/share/roblox-studio/wine-x64`). x86-64 `libunwind8`
+  comes from Debian multiarch (`dpkg --add-architecture amd64`). It uses Winlator's conservative
+  Box64 settings. Studio 0.745 was checked on this exact Wine on an x86-64 PC: it reaches the
+  sign-in screen. Box64 itself can only be tested on the phone.
+- **Hangover (build 1, "old way" in the Studio menu):** Studio crashed at start with
+  `virtual_setup_exception stack overflow`: exception dispatch through ARM64EC thunks recurses
+  (FEX-Emu/FEX#6041, open).
+- Each runtime has its own Wine prefix (`prefix` for Hangover, `prefix-box64` for Box64).
+- `WINEDLLOVERRIDES=mscoree=;mshtml=`: without it, Wine 11 stops at an "install wine-mono?" dialog
+  when it creates the prefix.
+
+## Build log
+
+| Build | Change | Result on the phone |
+| --- | --- | --- |
+| 1 | Studio-only app, Copy log | Hangover: Studio crashed at start (stack overflow in exception dispatch) |
+| 2 | Box64 + x86-64 Wine 11.0 by default; no Mono prompt; runtime switch in the Studio menu | not tested yet |
+
 ## Building
 
 ```sh

@@ -46,7 +46,7 @@ fi
 # The action can be given as an argument (e.g. from a desktop shortcut): studio-app.sh "Open Studio"
 choice=${1:-}
 [ -n "$choice" ] || choice=$(zenity --list --title="$TITLE" --width=420 --height=300 --column=Action \
-    "Open Studio" "Open a place file" "Diagnostics" "Reset Studio" 2>/dev/null) || exit 0
+    "Open Studio" "Open a place file" "Diagnostics" "Use Box64 (default)" "Use Hangover (old way)" "Reset Studio" 2>/dev/null) || exit 0
 case "$choice" in
     "Open Studio") args=() ;;
     "Open a place file")
@@ -54,6 +54,10 @@ case "$choice" in
         args=("$f") ;;
     "Diagnostics")
         "$STUDIO" --diagnose 2>&1 | zenity --text-info --title="$TITLE diagnostics" --width=760 --height=520 2>/dev/null
+        exit 0 ;;
+    "Use Box64 (default)"|"Use Hangover (old way)")
+        mode=box64; case "$choice" in *Hangover*) mode=hangover ;; esac
+        "$STUDIO" --use-$mode 2>&1 | zenity --text-info --title="$TITLE" --width=520 --height=200 2>/dev/null
         exit 0 ;;
     "Reset Studio")
         zenity --question --width=420 --title="$TITLE" --ok-label="Reset" \

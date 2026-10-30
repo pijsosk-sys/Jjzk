@@ -168,6 +168,70 @@ def install_studio():
   raise
  prune_downloads()
  say('Studio installation verified.'+(' The previous installation is kept as a backup.' if backup.exists() else ''));return target
+# Two ways to run the x86-64 Windows Studio on the phone's ARM64 chip:
+#  box64    (default) Box64 runs the whole regular x86-64 Linux Wine from WineHQ. The way phone apps like
+#           Winlator run Windows programs. Studio itself was confirmed on this exact Wine (11.0) on a PC.
+#  hangover ARM64 Wine with FEX translating only the Windows code (ARM64EC). Studio crashed here with
+#           "virtual_setup_exception stack overflow": exception dispatch through ARM64EC thunks recurses
+#           (FEX-Emu/FEX#6041, open), so it is kept only to compare.
+RUNTIME_FILE=ROOT/'runtime'
+def prefix_dir():
+ return ROOT/'prefix' if runtime()=='hangover' else ROOT/'prefix-box64'
+def runtime():
+ r=os.getenv('BODDY_STUDIO_RUNTIME') or (RUNTIME_FILE.read_text().strip() if RUNTIME_FILE.exists() else 'box64')
+ return r if r in ('box64','hangover') else 'box64'
+WINEHQ='https://dl.winehq.org/wine-builds/debian/'
+WINE_BRANCH='stable'
+WINE_X64=ROOT/'wine-x64'
+def apt_install(*packages):
+ env=dict(os.environ,DEBIAN_FRONTEND='noninteractive')
+ subprocess.run(['apt-get','update'],check=True,env=env)
+ subprocess.run(['apt-get','install','-y','--no-install-recommends',*packages],check=True,env=env)
+def install_box64_wine():
+ """Returns the command that runs x86-64 Wine: [box64, .../bin/wine]."""
+ if not shutil.which('box64'):
+  if os.uname().machine not in ('aarch64','arm64'):raise RuntimeError('Box64 mode needs ARM64 Linux')
+  say('Installing Box64 and the x86-64 libraries Wine needs (one time)')
+  # x86-64 packages next to the ARM64 system: Box64 runs Wine's unwinder (libunwind) as x86-64 code.
+  subprocess.run(['dpkg','--add-architecture','amd64'],check=True)
+  apt_install('box64','libunwind8:amd64')
+ wine=WINE_X64/'opt'/('wine-'+WINE_BRANCH)/'bin'/'wine'
+ stamp=WINE_X64/'.version'
+ index=None
+ try:
+  index=fetch(WINEHQ+'dists/trixie/main/binary-amd64/Packages').decode()
+ except Exception as e:
+  if wine.exists():say('Could not check for Wine updates; using the installed one.\n'+str(e));return [shutil.which('box64'),str(wine)]
+  raise
+ pkgs={}
+ for block in index.split('\n\n'):
+  f=dict(re.findall(r'^([A-Za-z0-9-]+): (.*)$',block,re.M))
+  if f.get('Package') in ('wine-'+WINE_BRANCH,'wine-'+WINE_BRANCH+'-amd64') and f.get('Architecture')=='amd64':
+   key=[int(n) for n in re.findall(r'\d+',f['Version'])[:4]]
+   if f['Package'] not in pkgs or key>pkgs[f['Package']][0]:pkgs[f['Package']]=(key,f)
+ if len(pkgs)!=2:raise RuntimeError('Could not find WineHQ %s packages for Debian 13'%WINE_BRANCH)
+ version=pkgs['wine-'+WINE_BRANCH][1]['Version']
+ if stamp.exists() and stamp.read_text().strip()==version and wine.exists():return [shutil.which('box64'),str(wine)]
+ say('Installing Wine %s (x86-64, from WineHQ) for Box64'%version)
+ stage=ROOT/'wine-x64-stage';shutil.rmtree(stage,ignore_errors=True);stage.mkdir()
+ for name,(_,f) in pkgs.items():
+  if not re.fullmatch(r'pool/main/[A-Za-z0-9/._~+-]+\.deb',f['Filename']) or '..' in f['Filename']:raise ValueError('Unexpected Wine package path')
+  deb=CACHE/Path(f['Filename']).name
+  download(WINEHQ+f['Filename'],deb,int(f['Size']),sha256=f['SHA256'])
+  subprocess.run(['dpkg-deb','-x',str(deb),str(stage)],check=True)
+  deb.unlink()
+ if not (stage/'opt'/('wine-'+WINE_BRANCH)/'bin'/'wine').exists():raise RuntimeError('Wine executable absent after extraction')
+ (stage/'.version').write_text(version)
+ shutil.rmtree(WINE_X64,ignore_errors=True);stage.rename(WINE_X64)
+ return [shutil.which('box64'),str(wine)]
+def wine_command():
+ return install_box64_wine() if runtime()=='box64' else [install_wine()]
+def installed_wine_command():
+ """The Wine command without installing anything (for the sign-in helper and diagnostics)."""
+ if runtime()=='box64':
+  wine=WINE_X64/'opt'/('wine-'+WINE_BRANCH)/'bin'/'wine'
+  return [shutil.which('box64'),str(wine)] if shutil.which('box64') and wine.exists() else None
+ w=find_wine();return [w] if w else None
 def find_wine():
  candidates=['/opt/hangover/bin/wine','/usr/bin/hangover-wine','/usr/local/bin/wine','/usr/bin/wine',shutil.which('wine')]
  return next((str(p) for p in candidates if p and os.path.isfile(p) and os.access(p,os.X_OK)),None)
@@ -204,7 +268,7 @@ def command(args,timeout=90,env=None):
 def diagnose():
  say('Boddy Studio compatibility report')
  say('Kernel: '+str(os.uname()));say('DISPLAY='+os.getenv('DISPLAY','<unset>'));say('Free storage: %.2f GB'%(shutil.disk_usage(ROOT).free/1e9))
- w=find_wine();say('Wine path: '+str(w))
+ say('Runtime: '+runtime());w=installed_wine_command();say('Wine command: '+str(w));say('Box64: '+str(shutil.which('box64')))
  for url in [VERSION_URL,CDN]:
   try:open_url(url).close();say('HTTPS OK: '+url)
   except urllib.error.HTTPError:say('HTTPS OK: '+url)
@@ -214,14 +278,24 @@ def diagnose():
    try:subprocess.run(args,timeout=20)
    except Exception as e:say(str(e))
  if w:
-  try:command([w,'--version'],30)
+  try:command([*w,'--version'],120,wine_env(prefix_dir()))
   except Exception as e:say(str(e))
  say('Report does not include account tokens or application configuration files.')
 AUTH_SCHEME='roblox-studio-auth:'
 AUTH_DESKTOP='boddy-roblox-studio-auth.desktop'
+# Box64's "conservative" settings (as Winlator's preset): slower, but safe for a heavily multi-threaded
+# program like Studio. Any of them can be overridden from the environment.
+BOX64_ENV={'BOX64_NOBANNER':'1','BOX64_LOG':'1','BOX64_SHOWSEGV':'1','BOX64_DYNAREC_SAFEFLAGS':'2','BOX64_DYNAREC_FASTNAN':'0',
+ 'BOX64_DYNAREC_FASTROUND':'0','BOX64_DYNAREC_X87DOUBLE':'1','BOX64_DYNAREC_BIGBLOCK':'0','BOX64_DYNAREC_STRONGMEM':'2',
+ 'BOX64_DYNAREC_CALLRET':'0','BOX64_DYNAREC_WAIT':'1'}
 def wine_env(prefix):
  nofile=os.getenv('BODDY_NOFILE_SOFT') or str(resource.getrlimit(resource.RLIMIT_NOFILE)[0])
- return dict(os.environ,BODDY_NOFILE_SOFT=nofile,WINEPREFIX=str(prefix),WINEARCH='win64',WINEDEBUG=os.getenv('BODDY_WINEDEBUG','-all,err+all'),LIBGL_ALWAYS_SOFTWARE='1',QT_X11_NO_MITSHM='1')
+ env=dict(os.environ,BODDY_NOFILE_SOFT=nofile,WINEPREFIX=str(prefix),WINEARCH='win64',WINEDEBUG=os.getenv('BODDY_WINEDEBUG','-all,err+all'),LIBGL_ALWAYS_SOFTWARE='1',QT_X11_NO_MITSHM='1')
+ # Without this, creating the prefix stops at "install wine-mono?" and waits for a click nobody sees.
+ env.setdefault('WINEDLLOVERRIDES','mscoree=;mshtml=')
+ if runtime()=='box64':
+  for k,v in BOX64_ENV.items():env.setdefault(k,v)
+ return env
 def set_default_handler(mime,desktop):
  import configparser
  path=Path(os.getenv('XDG_CONFIG_HOME') or Path.home()/'.config')/'mimeapps.list'
@@ -244,7 +318,7 @@ def setup_browser_login(wine,env,prefix):
  if not marker.exists() or marker.read_text()!=BROWSERS:
   # Wine's default list (xdg-open, firefox, ...) finds no browser in Boddy, and a browser started
   # directly by Wine inherits Wine's process state, so links go through open_in_browser().
-  command([wine,'reg','add','HKCU\\Software\\Wine\\WineBrowser','/v','Browsers','/t','REG_SZ','/d',BROWSERS,'/f'],600,env)
+  command([*wine,'reg','add','HKCU\\Software\\Wine\\WineBrowser','/v','Browsers','/t','REG_SZ','/d',BROWSERS,'/f'],600,env)
   marker.write_text(BROWSERS)
 BROWSERS='/opt/boddy/studio --open-url,firefox-esr,xdg-open,firefox'
 FIREFOX_PREFS={
@@ -310,7 +384,7 @@ def tune_prefix(wine,env,prefix):
  marker=prefix/'.boddy-tuned-1'
  if marker.exists():return
  for service in ('winebth','wineusb'):
-  command([wine,'reg','add','HKLM\\System\\CurrentControlSet\\Services\\'+service,'/v','Start','/t','REG_DWORD','/d','4','/f'],600,env)
+  command([*wine,'reg','add','HKLM\\System\\CurrentControlSet\\Services\\'+service,'/v','Start','/t','REG_DWORD','/d','4','/f'],600,env)
  marker.touch()
 PHANTOM_LIMIT=32
 def process_count():
@@ -367,11 +441,11 @@ def fit_display():
 def pass_auth(link):
  # Called by the browser through the desktop handler; Studio is already running, so no install lock.
  if len(link)>16384 or not re.fullmatch(r'roblox-studio-auth:[\x21-\x7e]+',link):raise ValueError('Invalid Studio sign-in link')
- wine=find_wine();studio=ROOT/'Studio'
+ wine=installed_wine_command();studio=ROOT/'Studio'
  if not wine or not (studio/'RobloxStudioBeta.exe').exists():raise RuntimeError('Studio is not installed; open Studio from the desktop first')
  say('Passing browser sign-in to Roblox Studio')
  # This second Studio process only forwards the link to the running one; its exit code says nothing about the sign-in.
- r=subprocess.run([wine,str(studio/'RobloxStudioBeta.exe'),link],cwd=studio,env=wine_env(ROOT/'prefix'))
+ r=subprocess.run([*wine,str(studio/'RobloxStudioBeta.exe'),link],cwd=studio,env=wine_env(prefix_dir()))
  say('Sign-in forwarded to Studio (forwarding process exit code %d)'%r.returncode)
 def main():
  ROOT.mkdir(parents=True,exist_ok=True);CACHE.mkdir(parents=True,exist_ok=True);prune_logs()
@@ -382,20 +456,23 @@ def main():
  try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
  except BlockingIOError:raise RuntimeError('A Studio launcher is already running')
  if arg=='--diagnose':diagnose();return
+ if arg in ('--use-box64','--use-hangover'):
+  RUNTIME_FILE.write_text(arg[6:]);say('Studio will now run with '+arg[6:]);return
  if arg=='--reset':
-  p=ROOT/'prefix'
+  p=prefix_dir()
   if p.exists():p.rename(ROOT/('prefix-backup-'+str(time.time_ns())))
  if arg=='--uninstall':raise RuntimeError('Automatic deletion disabled. Remove installations manually after exporting projects.')
  if not os.getenv('DISPLAY'):raise RuntimeError('Open this launcher inside the Boddy desktop so DISPLAY is set')
- wine=install_wine();prefix=ROOT/'prefix'
+ say('Runtime: %s (change it in the Studio menu)'%runtime())
+ wine=wine_command();prefix=prefix_dir()
  env=wine_env(prefix)
- command([wine,'--version'],30,env)
+ command([*wine,'--version'],120,env)
  if not (prefix/'.boddy-tested').exists():
   say('Testing Windows command execution before downloading Studio')
   # Creating the Wine prefix under x86 emulation can take several minutes on a phone.
-  command([wine,'cmd.exe','/c','echo','BODDY_WINE_STARTUP_OK'],900,env)
+  command([*wine,'cmd.exe','/c','echo','BODDY_WINE_STARTUP_OK'],1800,env)
   (prefix/'.boddy-tested').touch()
- studio=install_studio();setup_browser_login(wine,env,prefix);tune_prefix(wine,env,prefix);args=[wine,str(studio/'RobloxStudioBeta.exe')]
+ studio=install_studio();setup_browser_login(wine,env,prefix);tune_prefix(wine,env,prefix);args=[*wine,str(studio/'RobloxStudioBeta.exe')]
  if arg and not arg.startswith('--'):
   place=Path(arg).resolve()
   if not place.is_file():raise RuntimeError('Place file does not exist')
