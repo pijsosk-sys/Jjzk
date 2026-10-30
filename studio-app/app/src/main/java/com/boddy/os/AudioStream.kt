@@ -84,7 +84,7 @@ class AudioStream {
     }
 
     companion object {
-        const val PORT = 4713
+        const val PORT = 4813
         private const val RATE = 44100
         private const val FRAME = 4 // 16-bit stereo
     }

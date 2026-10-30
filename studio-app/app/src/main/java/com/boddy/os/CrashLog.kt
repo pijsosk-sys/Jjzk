@@ -26,6 +26,9 @@ object CrashLog {
         }
     }
 
+    /** The saved report, left in place (for Copy log). Null if nothing went wrong. */
+    fun peek(context: Context): String? = file(context).takeIf { it.exists() }?.readText()?.takeIf { it.isNotBlank() }
+
     /** The saved report, removed once read. Null if nothing went wrong. */
     fun take(context: Context): String? {
         val f = file(context)

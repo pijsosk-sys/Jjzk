@@ -28,7 +28,7 @@ if [ "$cmd" = boddy-ctl ]; then cmd=$1; shift; fi
 bridge() {
     local token reply
     token=$(cat /opt/boddy/.bridge-token 2>/dev/null)
-    if [ -z "$token" ] || ! exec 3<>/dev/tcp/127.0.0.1/7311 2>/dev/null; then
+    if [ -z "$token" ] || ! exec 3<>/dev/tcp/127.0.0.1/7411 2>/dev/null; then
         echo "error: the Boddy app isn't reachable (is the desktop open?)" >&2
         return 1
     fi

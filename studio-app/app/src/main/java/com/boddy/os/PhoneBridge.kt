@@ -149,7 +149,7 @@ class PhoneBridge(private val tokenFile: File, private val phone: PhoneActions) 
     private fun isWebLink(url: String) = url.startsWith("https://") || url.startsWith("http://")
 
     companion object {
-        const val PORT = 7311
+        const val PORT = 7411
     }
 }
 

@@ -129,7 +129,7 @@ class DesktopActivity : AppCompatActivity() {
             repeat(120) {
                 val c = RfbClient(vnc)
                 try {
-                    c.connect("127.0.0.1", 5901)
+                    c.connect("127.0.0.1", 5911)
                     client = c
                     launch(Dispatchers.Main) {
                         vnc.client = c

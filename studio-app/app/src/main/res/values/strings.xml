@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Boddy</string>
+    <string name="app_name">Studio Launcher</string>
     <string name="phone_control_label">Boddy phone control</string>
     <string name="phone_control_description">Lets the AI in Boddy see your screen and tap, swipe and type in your apps, for example to play Minecraft for you. A bubble at the top shows when the AI is in control; tap it to stop.</string>
 </resources>

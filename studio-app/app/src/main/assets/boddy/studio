@@ -1,116 +1,426 @@
 #!/bin/bash
-# EXPERIMENTAL: tries to run Windows Roblox Studio inside Boddy with Hangover (Wine built for
-# arm64, which emulates x86 Windows code itself). Expect it to be very slow or not to work:
-# Boddy has no GPU acceleration, and Studio needs Direct3D 11 and a WebView2 browser to sign in.
-#   studio [FILE.rbxl]   install what's missing (~1.5 GB the first time), then start Studio
-#   studio --reset       delete the Wine setup and Studio, then reinstall
-#   studio --uninstall   remove everything this installed
-set -e
-ROOT=/root/.local/share/roblox-studio
-PREFIX=$ROOT/prefix
-STUDIO=$ROOT/Studio
-CACHE=/root/.cache/roblox-studio
-LOG=$CACHE/studio.log
-CDN=https://setup.rbxcdn.com
-export WINEPREFIX=$PREFIX WINEARCH=win64 WINEDEBUG=-all
-mkdir -p "$CACHE" "$ROOT"
+set -uo pipefail
+mkdir -p "$HOME/.cache/roblox-studio"
+# Browser hand-offs (--open-url, roblox-studio-auth: links) run while Studio is open; they keep
+# their own log and leave latest.log and the launch log in Downloads pointing at the Studio launch.
+helper=0
+case "${1:-}" in --open-url|roblox-studio-auth:*) helper=1 ;; esac
+LOG="$HOME/.cache/roblox-studio/$([ $helper = 1 ] && echo helper || echo launcher)-$(date +%Y%m%d-%H%M%S)-$$.log"
+[ $helper = 1 ] || ln -sfn "$LOG" "$HOME/.cache/roblox-studio/latest.log"
+python3 - "$@" <<'BODDY_PY' 2>&1 | tee "$LOG"
+#!/usr/bin/env python3
+"""Boddy Linux compatibility launcher. Does not modify Roblox binaries."""
+import os,sys,json,re,hashlib,zipfile,tarfile,shutil,subprocess,time,threading,urllib.request,urllib.error,urllib.parse,ssl,fcntl,signal,resource
+from pathlib import Path
+ROOT=Path.home()/'.local/share/roblox-studio';CACHE=Path.home()/'.cache/roblox-studio'
+VERSION_URL='https://clientsettingscdn.roblox.com/v2/client-version/WindowsStudio64'
+CDN='https://setup.rbxcdn.com/'
+DEST={'ApplicationConfig':'ApplicationConfig','BuiltInPlugins':'BuiltInPlugins','BuiltInStandalonePlugins':'BuiltInStandalonePlugins','Plugins':'Plugins','Qml':'Qml','StudioFonts':'StudioFonts','RibbonConfig':'RibbonConfig','shaders':'shaders','ssl':'ssl','WebView2RuntimeInstaller':'WebView2RuntimeInstaller','content-textures2':'content/textures','content-textures3':'PlatformContent/pc/textures','content-terrain':'PlatformContent/pc/terrain','content-platform-fonts':'PlatformContent/pc/fonts','content-platform-dictionaries':'PlatformContent/pc/shared_compression_dictionaries','content-studio_svg_textures':'content/studio_svg_textures','content-qt_translations':'content/qt_translations','content-api-docs':'content/api_docs'}
+def say(s):print(s,flush=True)
+class TlsError(RuntimeError):pass
+_tls=None
+def tls_context():
+ # Verification always stays on. BODDY_CA_FILE adds a trusted root (e.g. an HTTPS-filtering proxy) without touching the system store.
+ global _tls
+ if _tls is None:
+  _tls=ssl.create_default_context()
+  extra=os.getenv('BODDY_CA_FILE')
+  if extra:
+   try:_tls.load_verify_locations(cafile=extra)
+   except (OSError,ssl.SSLError) as e:raise RuntimeError('BODDY_CA_FILE=%s is not a readable PEM certificate: %s'%(extra,e)) from e
+ return _tls
+def presented_chain(host,port=443):
+ # Show who signed the certificate we were given, so the user can identify the interceptor.
+ if not shutil.which('openssl'):return []
+ args=['openssl','s_client','-connect','%s:%d'%(host,port),'-servername',host,'-showcerts']
+ proxy=urllib.request.getproxies().get('https')
+ if proxy:args+=['-proxy',urllib.parse.urlsplit(proxy).netloc or proxy]
+ try:out=subprocess.run(args,input=b'',capture_output=True,timeout=20).stdout.decode(errors='replace')
+ except Exception:return []
+ return [l.strip() for l in out.splitlines() if re.match(r'\s*\d+ s:|\s+i:',l)]
+def tls_help(url,reason):
+ u=urllib.parse.urlsplit(url);host=u.hostname or url
+ lines=['HTTPS certificate check failed for %s: %s'%(host,getattr(reason,'verify_message',None) or reason)]
+ chain=presented_chain(host,u.port or 443)
+ if chain:lines+=['Certificate chain presented to this phone:']+['  '+l for l in chain]
+ lines+=['',
+  'Something between this phone and %s is replacing its certificate: usually a VPN, ad-blocker'%host,
+  'or antivirus app with HTTPS filtering, a work/school network, or a Wi-Fi sign-in page.',
+  "Boddy's Linux system does not see certificates installed in Android settings.",
+  'Fix one of:',
+  '  1. Turn off HTTPS filtering in that app, or switch to mobile data / another Wi-Fi, then retry.',
+  '  2. If you trust that filter, export its root certificate (PEM) to Downloads and run in the Boddy terminal:',
+  '       cp ~/Phone/Download/<name>.pem /usr/local/share/ca-certificates/<name>.crt && update-ca-certificates',
+  '     (or set BODDY_CA_FILE=/path/to/<name>.pem for this launcher only).',
+  'Certificate verification is not skipped.']
+ return '\n'.join(lines)
+def open_url(url,headers=None):
+ req=urllib.request.Request(url,headers={'User-Agent':'Boddy-Studio-Compatibility/1.0',**(headers or {})})
+ try:return urllib.request.urlopen(req,timeout=60,context=tls_context())
+ except urllib.error.URLError as e:
+  if isinstance(e.reason,ssl.SSLCertVerificationError):raise TlsError(tls_help(url,e.reason)) from e
+  raise
+def fetch(url):
+ with open_url(url) as r:return r.read()
+def download(url,path,size=None,md5=None,sha256=None):
+ def valid(p):
+  if not p.exists() or (size is not None and p.stat().st_size!=size):return False
+  for alg,want in [('md5',md5),('sha256',sha256)]:
+   if want:
+    h=hashlib.new(alg)
+    with p.open('rb') as f:
+     for b in iter(lambda:f.read(1048576),b''):h.update(b)
+    if h.hexdigest().lower()!=want.lower():return False
+  return True
+ if valid(path) and (md5 or sha256):return
+ part=path.with_suffix(path.suffix+'.part');path.parent.mkdir(parents=True,exist_ok=True)
+ for attempt in range(3):
+  try:
+   # Continue a partial download (Android may have stopped Boddy mid-way); the checksum covers the joined file.
+   have=part.stat().st_size if part.exists() else 0
+   if size is not None and have>=size:have=0
+   with open_url(url,{'Range':'bytes=%d-'%have} if have else None) as r:
+    if have and getattr(r,'status',None)!=206:have=0  # server sent the whole file
+    with part.open('ab' if have else 'wb') as f:shutil.copyfileobj(r,f,1048576)
+   if not valid(part):
+    part.unlink(missing_ok=True);raise RuntimeError('Download size/checksum mismatch: '+path.name)
+   part.replace(path);return
+  except TlsError:raise
+  except Exception:
+   if attempt==2:raise
+   time.sleep(1)
+def manifest(data):
+ lines=[s.strip() for s in data.decode().splitlines() if s.strip()]
+ if not lines or lines.pop(0)!='v0' or len(lines)%4:raise ValueError('Invalid Roblox package manifest')
+ result=[]
+ for i in range(0,len(lines),4):
+  name,digest,size,unpacked=lines[i:i+4]
+  if not re.fullmatch(r'[A-Za-z0-9_.-]+\.zip',name) or not re.fullmatch(r'[a-fA-F0-9]{32}',digest):raise ValueError('Unsafe manifest package')
+  size=int(size);unpacked=int(unpacked)
+  if size<0 or unpacked<0:raise ValueError('Invalid package size')
+  result.append((name,digest,size,unpacked))
+ if not any(x[0]=='RobloxStudio.zip' for x in result):raise ValueError('Studio executable package missing')
+ return result
+def destination(name):
+ stem=name[:-4]
+ if stem in DEST:return DEST[stem]
+ if stem.startswith('content-'):return 'content/'+stem[8:]
+ if stem.startswith('extracontent-'):return 'ExtraContent/'+{'luapackages':'LuaPackages'}.get(stem[13:],stem[13:])
+ if stem.startswith('studiocontent-'):return 'StudioContent/'+stem[14:]
+ return '.'
+def extract_zip(path,dest):
+ with zipfile.ZipFile(path) as z:
+  for item in z.infolist():
+   # Roblox packages use Windows paths with a leading separator, e.g. \Lua\ for a directory.
+   n=item.filename.replace('\\','/');is_dir=n.endswith('/');n=n.lstrip('/');p=Path(n)
+   if n in ('','.','./'):
+    if item.file_size==0:continue
+    raise ValueError('Unsafe ZIP entry: '+item.filename)
+   if '..' in p.parts or ':' in n or ((item.external_attr>>16)&0o170000)==0o120000:raise ValueError('Unsafe ZIP entry: '+item.filename)
+   target=dest/p
+   if is_dir:target.mkdir(parents=True,exist_ok=True)
+   else:
+    target.parent.mkdir(parents=True,exist_ok=True)
+    with z.open(item) as src,target.open('wb') as out:shutil.copyfileobj(src,out)
+def prune_downloads(keep_stage=None,keep_version=None):
+ # Package archives are only a download cache; old Studio copies are 1+ GB each. Keep the newest backup.
+ for f in CACHE.iterdir():
+  m=re.fullmatch(r'(version-[0-9a-fA-F]+)-[A-Za-z0-9_.-]+\.zip(\.part)?',f.name)
+  if m and m.group(1)!=keep_version and f.is_file():f.unlink()
+ for d in ROOT.glob('stage-version-*'):
+  if d.is_dir() and d!=keep_stage:shutil.rmtree(d,ignore_errors=True)
+ for d in sorted(ROOT.glob('Studio-backup-*'),key=lambda d:d.name)[:-1]:
+  if d.is_dir():shutil.rmtree(d,ignore_errors=True)
+def prune_logs(keep=10):
+ for pattern in ('launcher-*.log','helper-*.log'):
+  for f in sorted(CACHE.glob(pattern),key=lambda f:f.stat().st_mtime)[:-keep]:f.unlink(missing_ok=True)
+def install_studio():
+ target=ROOT/'Studio';stamp=target/'.version'
+ try:
+  version=json.loads(fetch(VERSION_URL))['clientVersionUpload']
+  if not isinstance(version,str) or not re.fullmatch(r'version-[0-9a-fA-F]+',version):raise ValueError('Invalid Studio version from Roblox: %r'%(version,))
+ except Exception as e:
+  if (target/'RobloxStudioBeta.exe').exists():
+   say('Could not check for Studio updates; opening the installed version.\n'+str(e));return target
+  raise
+ if stamp.exists() and stamp.read_text().strip()==version and (target/'RobloxStudioBeta.exe').exists():return target
+ packages=manifest(fetch(CDN+version+'-rbxPkgManifest.txt'))
+ required=sum(p[3] for p in packages)+max(p[2] for p in packages)+512*1024*1024
+ if shutil.disk_usage(ROOT).free<required:raise RuntimeError('Insufficient free storage; need about %.1f GB'%(required/1e9))
+ stage=ROOT/('stage-'+version);prune_downloads(keep_stage=stage,keep_version=version);stage.mkdir(exist_ok=True)
+ # Packages already unpacked into this stage are skipped, so a stopped install continues where it was.
+ done_file=stage/'.boddy-extracted';done=set(done_file.read_text().split()) if done_file.exists() else set()
+ for index,(name,md5,size,_) in enumerate(packages):
+  say('Studio %d/%d: %s'%(index+1,len(packages),name)+(' (already done)' if name+':'+md5 in done else ''))
+  if name+':'+md5 in done:continue
+  archive=CACHE/(version+'-'+name);download(CDN+version+'-'+name,archive,size,md5)
+  # Delete each verified archive once extracted, so only one is on disk at a time (the free-space check assumes this).
+  extract_zip(archive,stage/destination(name));archive.unlink()
+  with done_file.open('a') as f:f.write(name+':'+md5+'\n');f.flush();os.fsync(f.fileno())
+ if not (stage/'RobloxStudioBeta.exe').exists():raise RuntimeError('Studio executable absent after extraction')
+ (stage/'AppSettings.xml').write_text('<Settings><ContentFolder>content</ContentFolder><BaseUrl>https://www.roblox.com</BaseUrl></Settings>')
+ (stage/'.version').write_text(version);done_file.unlink()
+ backup=ROOT/('Studio-backup-'+str(time.time_ns()))
+ if target.exists():target.rename(backup)
+ try:stage.rename(target)
+ except Exception:
+  if backup.exists():backup.rename(target)
+  raise
+ prune_downloads()
+ say('Studio installation verified.'+(' The previous installation is kept as a backup.' if backup.exists() else ''));return target
+def find_wine():
+ candidates=['/opt/hangover/bin/wine','/usr/bin/hangover-wine','/usr/local/bin/wine','/usr/bin/wine',shutil.which('wine')]
+ return next((str(p) for p in candidates if p and os.path.isfile(p) and os.access(p,os.X_OK)),None)
+def install_wine():
+ w=find_wine()
+ if w:return w
+ if os.uname().machine not in ('aarch64','arm64'):raise RuntimeError('Boddy runtime requires ARM64 Linux')
+ say('Installing Hangover for Debian 13 ARM64')
+ meta=json.loads(fetch('https://api.github.com/repos/AndreRH/hangover/releases/latest'))
+ assets=[a for a in meta['assets'] if re.fullmatch(r'hangover_[0-9.]+_debian13_trixie_arm64\.tar',a['name'])]
+ if len(assets)!=1:raise RuntimeError('Could not identify a Debian 13 ARM64 Hangover release')
+ a=assets[0];url=a['browser_download_url']
+ if not url.startswith('https://github.com/AndreRH/hangover/releases/download/'):raise ValueError('Unexpected runtime URL')
+ archive=CACHE/a['name'];digest=a.get('digest') or '';sha=digest[7:] if digest.startswith('sha256:') else None
+ download(url,archive,a['size'],sha256=sha)
+ # A fresh directory: packages left from an earlier attempt or release would be installed alongside.
+ unpack=CACHE/'hangover-packages';shutil.rmtree(unpack,ignore_errors=True);unpack.mkdir()
+ with tarfile.open(archive) as t:
+  for member in t.getmembers():
+   p=Path(member.name)
+   if p.is_absolute() or '..' in p.parts or not (member.isdir() or member.isfile()):raise ValueError('Unsafe runtime archive')
+  t.extractall(unpack,filter='data')
+ debs=list(unpack.rglob('*.deb'))
+ if not debs:raise RuntimeError('Runtime archive contains no Debian packages')
+ subprocess.run(['apt-get','update'],check=True)
+ subprocess.run(['apt-get','install','-y',*[str(p.resolve()) for p in debs]],check=True,env=dict(os.environ,DEBIAN_FRONTEND='noninteractive'))
+ shutil.rmtree(unpack,ignore_errors=True);archive.unlink(missing_ok=True)
+ w=find_wine()
+ if not w:raise RuntimeError('Hangover installed but Wine executable not found')
+ return w
+def command(args,timeout=90,env=None):
+ say('Running: '+' '.join(args));r=subprocess.run(args,timeout=timeout,env=env)
+ if r.returncode:raise RuntimeError('%s failed with exit code %d'%(' '.join(args[:3]),r.returncode))
+def diagnose():
+ say('Boddy Studio compatibility report')
+ say('Kernel: '+str(os.uname()));say('DISPLAY='+os.getenv('DISPLAY','<unset>'));say('Free storage: %.2f GB'%(shutil.disk_usage(ROOT).free/1e9))
+ w=find_wine();say('Wine path: '+str(w))
+ for url in [VERSION_URL,CDN]:
+  try:open_url(url).close();say('HTTPS OK: '+url)
+  except urllib.error.HTTPError:say('HTTPS OK: '+url)
+  except Exception as e:say('HTTPS FAILED: '+url+'\n'+str(e))
+ for args in [['getconf','PAGESIZE'],['uname','-m'],['glxinfo','-B']]:
+  if shutil.which(args[0]):
+   try:subprocess.run(args,timeout=20)
+   except Exception as e:say(str(e))
+ if w:
+  try:command([w,'--version'],30)
+  except Exception as e:say(str(e))
+ say('Report does not include account tokens or application configuration files.')
+AUTH_SCHEME='roblox-studio-auth:'
+AUTH_DESKTOP='boddy-roblox-studio-auth.desktop'
+def wine_env(prefix):
+ nofile=os.getenv('BODDY_NOFILE_SOFT') or str(resource.getrlimit(resource.RLIMIT_NOFILE)[0])
+ return dict(os.environ,BODDY_NOFILE_SOFT=nofile,WINEPREFIX=str(prefix),WINEARCH='win64',WINEDEBUG=os.getenv('BODDY_WINEDEBUG','-all,err+all'),LIBGL_ALWAYS_SOFTWARE='1',QT_X11_NO_MITSHM='1')
+def set_default_handler(mime,desktop):
+ import configparser
+ path=Path(os.getenv('XDG_CONFIG_HOME') or Path.home()/'.config')/'mimeapps.list'
+ cfg=configparser.ConfigParser(interpolation=None,strict=False,delimiters=('=',));cfg.optionxform=str
+ if path.exists():cfg.read(path)
+ if not cfg.has_section('Default Applications'):cfg.add_section('Default Applications')
+ if cfg.get('Default Applications',mime,fallback='')==desktop+';':return
+ cfg.set('Default Applications',mime,desktop+';')
+ path.parent.mkdir(parents=True,exist_ok=True)
+ with path.open('w') as f:cfg.write(f,space_around_delimiters=False)
+def setup_browser_login(wine,env,prefix):
+ # Studio's built-in login needs WebView2, which does not run here. "Login via Browser" opens the
+ # sign-in page through Wine's winebrowser, and roblox.com returns to a roblox-studio-auth: link
+ # that has to be handed back to the running Studio (the same approach as Vinegar).
+ apps=Path(os.getenv('XDG_DATA_HOME') or Path.home()/'.local/share')/'applications';apps.mkdir(parents=True,exist_ok=True)
+ (apps/AUTH_DESKTOP).write_text('[Desktop Entry]\nType=Application\nName=Roblox Studio sign-in\nExec=/opt/boddy/studio %u\nNoDisplay=true\nTerminal=false\nMimeType=x-scheme-handler/roblox-studio-auth;\n')
+ set_default_handler('x-scheme-handler/roblox-studio-auth',AUTH_DESKTOP)
+ if shutil.which('update-desktop-database'):subprocess.run(['update-desktop-database',str(apps)],timeout=60)
+ marker=prefix/'.boddy-browser-login'
+ if not marker.exists() or marker.read_text()!=BROWSERS:
+  # Wine's default list (xdg-open, firefox, ...) finds no browser in Boddy, and a browser started
+  # directly by Wine inherits Wine's process state, so links go through open_in_browser().
+  command([wine,'reg','add','HKCU\\Software\\Wine\\WineBrowser','/v','Browsers','/t','REG_SZ','/d',BROWSERS,'/f'],600,env)
+  marker.write_text(BROWSERS)
+BROWSERS='/opt/boddy/studio --open-url,firefox-esr,xdg-open,firefox'
+FIREFOX_PREFS={
+ # Same as Boddy's system Firefox: the content sandbox needs kernel features proot lacks.
+ 'security.sandbox.content.level':0,
+ # Studio already uses most of the phone's memory: one content process, no per-site processes.
+ 'fission.autostart':False,'dom.ipc.processCount':1,'dom.ipc.processCount.webIsolated':1,'dom.ipc.processPrelaunch.enabled':False,
+ # Android 12+ kills an app's Linux processes beyond 32 in total, so keep Firefox to a main and one content process.
+ 'network.process.enabled':False,'media.rdd-process.enabled':False,'media.utility-process.enabled':False,
+ 'extensions.webextensions.remote':False,'dom.ipc.forkserver.enable':False,
+ 'browser.tabs.remote.separatePrivilegedContentProcess':False,'browser.tabs.remote.separatePrivilegedMozillaWebContentProcess':False,
+ 'browser.tabs.unloadOnLowMemory':True,'browser.sessionhistory.max_total_viewers':0,
+ # Software WebRender is the stable path on the VNC desktop's software OpenGL.
+ 'gfx.webrender.software':True,
+ # A crash must not restore the crashing page on the next start.
+ 'browser.sessionstore.resume_from_crash':False,'browser.startup.page':0,'browser.startup.homepage':'about:blank',
+ 'browser.shell.checkDefaultBrowser':False,'browser.aboutwelcome.enabled':False,
+ 'datareporting.policy.dataSubmissionEnabled':False,'datareporting.healthreport.uploadEnabled':False,'toolkit.telemetry.enabled':False,
+ 'network.protocol-handler.external.roblox-studio-auth':True}
+def browser_env():
+ env={k:v for k,v in os.environ.items() if not k.startswith(('WINE','BOX64_','FEX_')) and k not in ('LIBGL_ALWAYS_SOFTWARE','QT_X11_NO_MITSHM','BODDY_NOFILE_SOFT')}
+ # Firefox's seccomp sandboxes conflict with proot; MOZ_FAKE_NO_SANDBOX covers the utility processes too.
+ env.update(MOZ_FAKE_NO_SANDBOX='1',MOZ_DISABLE_CONTENT_SANDBOX='1',MOZ_DISABLE_GMP_SANDBOX='1',MOZ_DISABLE_RDD_SANDBOX='1',MOZ_DISABLE_SOCKET_PROCESS_SANDBOX='1')
+ return env
+def reset_process_state(nofile):
+ # Runs in the browser's process before exec: undo blocked/ignored signals and Wine's raised file limit.
+ signal.pthread_sigmask(signal.SIG_SETMASK,[])
+ for n in range(1,signal.NSIG):
+  try:
+   if signal.getsignal(n)==signal.SIG_IGN:signal.signal(n,signal.SIG_DFL)
+  except (OSError,ValueError):pass
+ if nofile:
+  soft,hard=resource.getrlimit(resource.RLIMIT_NOFILE)
+  if soft>nofile:resource.setrlimit(resource.RLIMIT_NOFILE,(nofile,hard))
+def notify(text):
+ say(text)
+ if shutil.which('zenity'):subprocess.run(['zenity','--error','--width=460','--title=Roblox Studio sign-in','--text='+text],env=browser_env())
+def open_in_browser(url):
+ # Wine's winebrowser calls this for links Studio opens, e.g. "Login via Browser".
+ if not re.fullmatch(r'https?://[\x21-\x7e]+',url) or len(url)>16384:raise ValueError('Refusing to open link: '+url[:200])
+ firefox=shutil.which('firefox-esr') or shutil.which('firefox')
+ if not firefox:raise RuntimeError('Firefox is not installed; install firefox-esr from Install Apps')
+ profile=ROOT/'firefox-profile';profile.mkdir(parents=True,exist_ok=True)
+ (profile/'user.js').write_text(''.join('user_pref(%s, %s);\n'%(json.dumps(k),json.dumps(v)) for k,v in FIREFOX_PREFS.items()))
+ log=CACHE/'firefox.log';nofile=int(os.getenv('BODDY_NOFILE_SOFT') or 0)
+ say('Opening in Firefox: '+url.split('?')[0])
+ with log.open('w') as out:
+  proc=subprocess.Popen([firefox,'--profile',str(profile),url],stdin=subprocess.DEVNULL,stdout=out,stderr=subprocess.STDOUT,
+   env=browser_env(),start_new_session=True,preexec_fn=lambda:reset_process_state(nofile))
+ code=proc.wait()
+ if code==0:return
+ saved=Path.home()/'Phone/Download'
+ if saved.is_dir():shutil.copy(log,saved/'Boddy-Studio-firefox.log');where='Downloads/Boddy-Studio-firefox.log'
+ else:where=str(log)
+ if code==-signal.SIGKILL:why='Android or Linux stopped it, most likely because the phone ran out of memory'
+ elif code<0:why='it crashed (%s)'%signal.Signals(-code).name
+ else:why='it exited with code %d'%code
+ notify('Firefox closed unexpectedly: %s.\n\nClose other apps and try "Login via Browser" again. Firefox log: %s'%(why,where))
+ raise RuntimeError('Firefox ended: '+why)
+def tune_prefix(wine,env,prefix):
+ # Bluetooth and USB drivers cannot work inside Boddy (no udev or libusb devices) and only add Wine
+ # driver work; Studio uses neither.
+ marker=prefix/'.boddy-tuned-1'
+ if marker.exists():return
+ for service in ('winebth','wineusb'):
+  command([wine,'reg','add','HKLM\\System\\CurrentControlSet\\Services\\'+service,'/v','Start','/t','REG_DWORD','/d','4','/f'],600,env)
+ marker.touch()
+PHANTOM_LIMIT=32
+def process_count():
+ return sum(1 for n in os.listdir('/proc') if n.isdigit())
+def mem_available_mb():
+ try:
+  with open('/proc/meminfo') as f:
+   for line in f:
+    if line.startswith('MemAvailable:'):return int(line.split()[1])//1024
+ except OSError:pass
+ return -1
+def start_monitor(stop):
+ # Android can stop Boddy without warning (more than 32 processes, or low memory). Boddy then restarts the
+ # desktop and this launcher dies with it, so record the state every 15 s; the last line shows what it was.
+ downloads=Path.home()/'Phone/Download';path=(downloads if downloads.is_dir() else CACHE)/'Boddy-Studio-monitor.log'
+ def run():
+  with path.open('w') as f:
+   f.write('Roblox Studio session monitor. If Boddy restarts, the last line shows the state just before.\n'
+    'processes = Linux processes of the Boddy app (Android 12+ stops apps above %d); mem = available memory.\n'%PHANTOM_LIMIT)
+   while True:
+    f.write('%s processes=%d mem=%dMB\n'%(time.strftime('%H:%M:%S'),process_count(),mem_available_mb()));f.flush();os.fsync(f.fileno())
+    if stop.wait(15):break
+   f.write('%s Studio closed normally\n'%time.strftime('%H:%M:%S'))
+ thread=threading.Thread(target=run,daemon=True);thread.start()
+ return path,thread
+STUDIO_MIN_HEIGHT=int(os.getenv('BODDY_STUDIO_HEIGHT') or 768)
+def xrandr(*args):
+ return subprocess.run(['xrandr',*args],capture_output=True,text=True,timeout=30)
+def fit_display():
+ # Boddy sizes its desktop to the phone's shape from a 1100-1600 px width, so it is often only 500-720 px
+ # tall and Studio's windows and login dialog get cut off. While Studio runs, enlarge the desktop to at
+ # least STUDIO_MIN_HEIGHT with the same shape, so the phone still shows all of it, just smaller.
+ # Returns a function that puts the previous size back.
+ keep=lambda:None
+ if not shutil.which('xrandr'):
+  say('Installing xrandr so Studio fits on the desktop')
+  subprocess.run(['apt-get','install','-y','--no-install-recommends','x11-xserver-utils'],env=dict(os.environ,DEBIAN_FRONTEND='noninteractive'))
+  if not shutil.which('xrandr'):say('xrandr is not available; Studio windows may not fit the desktop');return keep
+ out=xrandr().stdout
+ screen=re.search(r'^(\S+) connected (?:primary )?(\d+)x(\d+)\+0\+0',out,re.M);mode=re.search(r'^\s+(\S+)\s+[0-9.]+\*',out,re.M)
+ if not screen or not mode:say('Could not read the desktop size; leaving it unchanged');return keep
+ output,w,h=screen.group(1),int(screen.group(2)),int(screen.group(3))
+ if h>=STUDIO_MIN_HEIGHT:return keep
+ nh=STUDIO_MIN_HEIGHT;nw=round(w*nh/h/2)*2;name='boddy-%dx%d'%(nw,nh)
+ xrandr('--newmode',name,'0',*[str(nw)]*4,*[str(nh)]*4)  # fails harmlessly if it already exists
+ xrandr('--addmode',output,name)
+ r=xrandr('--output',output,'--mode',name)
+ if r.returncode:say('Could not enlarge the desktop: '+r.stderr.strip());return keep
+ say('Desktop enlarged from %dx%d to %dx%d while Studio runs, so its windows fit'%(w,h,nw,nh))
+ def restore():
+  r=xrandr('--output',output,'--mode',mode.group(1))
+  say('Desktop size restored to %dx%d'%(w,h) if not r.returncode else 'Could not restore the desktop size: '+r.stderr.strip())
+ return restore
+def pass_auth(link):
+ # Called by the browser through the desktop handler; Studio is already running, so no install lock.
+ if len(link)>16384 or not re.fullmatch(r'roblox-studio-auth:[\x21-\x7e]+',link):raise ValueError('Invalid Studio sign-in link')
+ wine=find_wine();studio=ROOT/'Studio'
+ if not wine or not (studio/'RobloxStudioBeta.exe').exists():raise RuntimeError('Studio is not installed; open Studio from the desktop first')
+ say('Passing browser sign-in to Roblox Studio')
+ # This second Studio process only forwards the link to the running one; its exit code says nothing about the sign-in.
+ r=subprocess.run([wine,str(studio/'RobloxStudioBeta.exe'),link],cwd=studio,env=wine_env(ROOT/'prefix'))
+ say('Sign-in forwarded to Studio (forwarding process exit code %d)'%r.returncode)
+def main():
+ ROOT.mkdir(parents=True,exist_ok=True);CACHE.mkdir(parents=True,exist_ok=True);prune_logs()
+ arg=sys.argv[1] if len(sys.argv)>1 else ''
+ if arg.startswith(AUTH_SCHEME):pass_auth(arg);return
+ if arg=='--open-url':open_in_browser(sys.argv[2] if len(sys.argv)>2 else '');return
+ lock=(ROOT/'launcher.lock').open('w')
+ try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+ except BlockingIOError:raise RuntimeError('A Studio launcher is already running')
+ if arg=='--diagnose':diagnose();return
+ if arg=='--reset':
+  p=ROOT/'prefix'
+  if p.exists():p.rename(ROOT/('prefix-backup-'+str(time.time_ns())))
+ if arg=='--uninstall':raise RuntimeError('Automatic deletion disabled. Remove installations manually after exporting projects.')
+ if not os.getenv('DISPLAY'):raise RuntimeError('Open this launcher inside the Boddy desktop so DISPLAY is set')
+ wine=install_wine();prefix=ROOT/'prefix'
+ env=wine_env(prefix)
+ command([wine,'--version'],30,env)
+ if not (prefix/'.boddy-tested').exists():
+  say('Testing Windows command execution before downloading Studio')
+  # Creating the Wine prefix under x86 emulation can take several minutes on a phone.
+  command([wine,'cmd.exe','/c','echo','BODDY_WINE_STARTUP_OK'],900,env)
+  (prefix/'.boddy-tested').touch()
+ studio=install_studio();setup_browser_login(wine,env,prefix);tune_prefix(wine,env,prefix);args=[wine,str(studio/'RobloxStudioBeta.exe')]
+ if arg and not arg.startswith('--'):
+  place=Path(arg).resolve()
+  if not place.is_file():raise RuntimeError('Place file does not exist')
+  args.append('Z:'+str(place).replace('/','\\'))
+ say('Launching real Roblox Studio. A process start alone does not prove the editor works.')
+ say('Studio\'s built-in login does not work here: choose "Login via Browser", sign in in the Firefox window that opens,')
+ say('then allow Firefox to open the Roblox Studio sign-in link.')
+ restore_display=fit_display();stop=threading.Event();monitor,monitor_thread=start_monitor(stop)
+ say('Session monitor: %s'%monitor)
+ if process_count()>PHANTOM_LIMIT-12:
+  say('Note: %d Linux processes are already running. Android 12+ stops Boddy above %d; close other Boddy apps,'%(process_count(),PHANTOM_LIMIT))
+  say('or turn off Android\'s child process limit (see "Boddy keeps reconnecting" in the Studio README).')
+ try:result=subprocess.run(args,cwd=studio,env=env)
+ finally:
+  stop.set();restore_display();monitor_thread.join(5)
+ say('Studio process exited with code '+str(result.returncode));sys.exit(result.returncode)
+if __name__=='__main__':
+ try:main()
+ except Exception as e:say('LAUNCH FAILED: '+str(e));sys.exit(1)
 
-say() { echo ">>> $*"; echo "[$(date +%T)] $*" >>"$LOG"; }
-die() { echo "!!! $*" >&2; echo "[$(date +%T)] FAILED: $*" >>"$LOG"; exit 1; }
-
-install_wine() {
-    command -v wine >/dev/null && return
-    say "Downloading Hangover (Wine for arm64)"
-    # Releases ship a tar of .debs per distro; pick the Debian 13 (trixie) arm64 one.
-    url=$(curl -fsSL https://api.github.com/repos/AndreRH/hangover/releases/latest |
-        grep -o '"browser_download_url": *"[^"]*"' | cut -d'"' -f4 |
-        grep -i arm64 | grep -iE 'debian13|trixie' | head -1)
-    [ -n "$url" ] || die "No Hangover download for Debian 13 arm64 in its latest release"
-    tmp=$(mktemp -d)
-    curl -fL --progress-bar "$url" -o "$tmp/hangover.tar" || die "Hangover download failed"
-    tar -xf "$tmp/hangover.tar" -C "$tmp"
-    apt-get update >>"$LOG" 2>&1 || true
-    # shellcheck disable=SC2046
-    apt-get install -y $(find "$tmp" -name '*.deb') >>"$LOG" 2>&1 ||
-        die "Installing Hangover failed (see $LOG)"
-    rm -rf "$tmp"
-    command -v wine >/dev/null || die "wine missing after installing Hangover"
-}
-
-init_prefix() {
-    [ -f "$PREFIX/.ready" ] && return
-    say "Setting up Wine (first time only)"
-    WINEDLLOVERRIDES="mscoree,mshtml=" wineboot --init >>"$LOG" 2>&1 || die "wineboot failed (see $LOG)"
-    touch "$PREFIX/.ready"
-}
-
-# Where each Studio package unzips to (Studio ships as many zips listed in rbxPkgManifest.txt).
-package_dir() {
-    case "$1" in
-        ApplicationConfig.zip) echo ApplicationConfig ;;
-        BuiltInPlugins.zip) echo BuiltInPlugins ;;
-        BuiltInStandalonePlugins.zip) echo BuiltInStandalonePlugins ;;
-        Plugins.zip) echo Plugins ;;
-        Qml.zip) echo Qml ;;
-        StudioFonts.zip) echo StudioFonts ;;
-        RibbonConfig.zip) echo RibbonConfig ;;
-        shaders.zip) echo shaders ;;
-        ssl.zip) echo ssl ;;
-        WebView2RuntimeInstaller.zip) echo WebView2RuntimeInstaller ;;
-        content-avatar.zip) echo content/avatar ;;
-        content-configs.zip) echo content/configs ;;
-        content-fonts.zip) echo content/fonts ;;
-        content-sky.zip) echo content/sky ;;
-        content-sounds.zip) echo content/sounds ;;
-        content-textures2.zip) echo content/textures ;;
-        content-models.zip) echo content/models ;;
-        content-studio_svg_textures.zip) echo content/studio_svg_textures ;;
-        content-qt_translations.zip) echo content/qt_translations ;;
-        content-api-docs.zip) echo content/api_docs ;;
-        content-textures3.zip) echo PlatformContent/pc/textures ;;
-        content-terrain.zip) echo PlatformContent/pc/terrain ;;
-        content-platform-fonts.zip) echo PlatformContent/pc/fonts ;;
-        content-platform-dictionaries.zip) echo PlatformContent/pc/shared_compression_dictionaries ;;
-        extracontent-luapackages.zip) echo ExtraContent/LuaPackages ;;
-        extracontent-translations.zip) echo ExtraContent/translations ;;
-        extracontent-models.zip) echo ExtraContent/models ;;
-        extracontent-textures.zip) echo ExtraContent/textures ;;
-        extracontent-scripts.zip) echo ExtraContent/scripts ;;
-        *) echo . ;;  # RobloxStudio.zip, Libraries.zip, redist.zip, WebView2.zip, ...
-    esac
-}
-
-install_studio() {
-    version=$(curl -fsSL https://clientsettingscdn.roblox.com/v2/client-version/WindowsStudio64 |
-        python3 -c 'import sys, json; print(json.load(sys.stdin)["clientVersionUpload"])') ||
-        die "Couldn't ask Roblox for the latest Studio version"
-    [ "$(cat "$STUDIO/.version" 2>/dev/null)" = "$version" ] && return
-    say "Downloading Roblox Studio $version (about 1 GB)"
-    rm -rf "$STUDIO" && mkdir -p "$STUDIO"
-    curl -fsSL "$CDN/$version-rbxPkgManifest.txt" -o "$CACHE/manifest.txt" || die "Couldn't get the Studio file list"
-    grep -E '\.zip$' "$CACHE/manifest.txt" | tr -d '\r' | while read -r pkg; do
-        say "  $pkg"
-        curl -fsSL "$CDN/$version-$pkg" -o "$CACHE/pkg.zip" || die "Download of $pkg failed"
-        mkdir -p "$STUDIO/$(package_dir "$pkg")"
-        unzip -oq "$CACHE/pkg.zip" -d "$STUDIO/$(package_dir "$pkg")" || die "Unpacking $pkg failed"
-    done
-    rm -f "$CACHE/pkg.zip"
-    printf '<?xml version="1.0" encoding="UTF-8"?><Settings><ContentFolder>content</ContentFolder><BaseUrl>http://www.roblox.com</BaseUrl></Settings>' \
-        >"$STUDIO/AppSettings.xml"
-    echo "$version" >"$STUDIO/.version"
-}
-
-case "${1:-}" in
-    --uninstall) rm -rf "$ROOT" "$CACHE"; echo "Removed Studio and its Wine setup." ;;
-    --reset) rm -rf "$ROOT"; exec "$0" ;;
-    *)
-        install_wine
-        init_prefix
-        install_studio
-        args=()
-        [ -f "${1:-}" ] && args+=("$(wine winepath -w "$1" 2>/dev/null)")
-        say "Starting Studio (this can take minutes, if it works at all)"
-        cd "$STUDIO"
-        exec wine RobloxStudioBeta.exe "${args[@]}"
-        ;;
-esac
+BODDY_PY
+status=${PIPESTATUS[0]}
+echo "Launcher log: $LOG"
+if [ -d "$HOME/Phone/Download" ] && [ $helper = 0 ]; then
+ cp "$LOG" "$HOME/Phone/Download/Boddy-Studio-launch.log" || true
+ echo "Log copied to Downloads/Boddy-Studio-launch.log"
+fi
+exit "$status"

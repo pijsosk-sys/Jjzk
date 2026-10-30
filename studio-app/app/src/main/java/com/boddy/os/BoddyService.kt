@@ -116,10 +116,8 @@ class BoddyService : Service() {
         scope.launch {
             try {
                 installer.copyScripts()
-                PhoneApps.writeForLinux(this@BoddyService, proot.rootfs)
-                Settings(this@BoddyService).agentMode?.let { AgentConfig.apply(proot.rootfs, it) }
             } catch (e: Exception) {
-                Boddy.log("Couldn't write phone info: ${e.message}")
+                Boddy.log("Couldn't copy the launcher scripts: ${e.message}")
             }
             val p = try {
                 proot.process("/bin/bash", "/opt/boddy/start-desktop.sh", width.toString(), height.toString()).start()
@@ -213,14 +211,14 @@ class BoddyService : Service() {
 
     private fun goForeground() {
         val nm = getSystemService(NotificationManager::class.java)
-        nm.createNotificationChannel(NotificationChannel(CHANNEL, "Boddy", NotificationManager.IMPORTANCE_LOW))
+        nm.createNotificationChannel(NotificationChannel(CHANNEL, "Studio Launcher", NotificationManager.IMPORTANCE_LOW))
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE)
         val stop = PendingIntent.getService(this, 1, Intent(this, BoddyService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_IMMUTABLE)
         val notification = Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_launcher)
-            .setContentTitle("Boddy is running")
+            .setContentTitle("Studio Launcher is running")
             .setContentIntent(open)
             .addAction(Notification.Action.Builder(null, "Shut down", stop).build())
             .setOngoing(true)

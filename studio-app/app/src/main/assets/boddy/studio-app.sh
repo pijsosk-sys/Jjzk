@@ -1,17 +1,127 @@
 #!/bin/bash
-# "Roblox Studio (experimental)" desktop app.
+# "Roblox Studio (experimental)" desktop app. Runs /opt/boddy/studio behind a progress window instead of a
+# terminal (two fewer processes, which matters under Android's process limit) and shows errors as dialogs.
+STUDIO=${BODDY_STUDIO:-/opt/boddy/studio}
+LOG_DIR="$HOME/.cache/roblox-studio"
+SEEN="$HOME/.config/boddy"
+TITLE="Roblox Studio"
 start=/root/Phone/Download/; [ -d "$start" ] || start=/root/
-zenity --question --width=460 --title="Roblox Studio (experimental)" --ok-label="Try it" --cancel-label="Cancel" \
-    --text="This tries to run Windows Roblox Studio on your phone. It downloads about 1.5 GB the first time, and it will probably be very slow or not start at all (no graphics chip access, and Studio's sign-in browser may not work).\n\nRoblox Tools is the reliable way to edit Roblox files." 2>/dev/null || exit 0
-choice=$(zenity --list --title="Roblox Studio" --width=420 --height=300 --column=Action \
-    "Open Studio" "Open a place file" "Reset Studio" "Uninstall Studio" 2>/dev/null) || exit 0
+MONITOR=/root/Phone/Download/Boddy-Studio-monitor.log; [ -d /root/Phone/Download ] || MONITOR="$LOG_DIR/Boddy-Studio-monitor.log"
+RUNNING="$SEEN/studio-running"
+mkdir -p "$SEEN" "$LOG_DIR"
+
+escape() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }  # for zenity's Pango markup
+
+# Copies the end of a launch log (and the session monitor) to the clipboard; Boddy passes the
+# desktop clipboard on to the phone, so it can be pasted into a chat or an email.
+copy_log() {
+    command -v xclip >/dev/null || apt-get install -y -q --no-install-recommends xclip >/dev/null 2>&1
+    report=$( echo "Roblox Studio on Boddy - log from $(date '+%Y-%m-%d %H:%M')"
+              echo "=== launcher log (last 200 lines) ==="; tail -n 200 "$1" 2>/dev/null
+              [ -s "$MONITOR" ] && { echo "=== session monitor (last 20 lines) ==="; tail -n 20 "$MONITOR"; } )
+    if command -v xclip >/dev/null && printf '%s\n' "$report" | xclip -selection clipboard 2>/dev/null; then
+        zenity --info --width=360 --title="$TITLE" --timeout=6 --text="Log copied. Paste it anywhere on your phone." 2>/dev/null
+    else
+        printf '%s\n' "$report" >"$start/Boddy-Studio-log.txt"
+        zenity --info --width=400 --title="$TITLE" --text="Could not use the clipboard. The log was saved as Boddy-Studio-log.txt in $start." 2>/dev/null
+    fi
+}
+
+# A run that Android stopped (or a crash of Boddy itself) cannot show an error, so say so on the next start.
+if [ -e "$RUNNING" ] && ! kill -0 "$(cat "$RUNNING" 2>/dev/null)" 2>/dev/null; then
+    rm -f "$RUNNING"
+    previous=$(readlink -f "$LOG_DIR/latest.log")
+    where=$(grep -E '^(Studio [0-9]+/[0-9]+:|Testing Windows|Installing Hangover|Launching real)' "$previous" 2>/dev/null | tail -n 1)
+    text="Roblox Studio was stopped before it finished last time${where:+ (at: $where)}.\n\nThis usually means Android stopped Boddy: too many background processes or low memory. On Android 14+ turn on Developer options > Disable child process restrictions, and close other apps. Downloads continue where they stopped."
+    [ "$(zenity --warning --width=520 --title="$TITLE" --ok-label="Continue" --extra-button="Copy log" \
+        --text="$(printf '%s' "$text" | escape)" 2>/dev/null)" = "Copy log" ] && copy_log "$previous"
+fi
+
+if [ ! -e "$SEEN/studio-intro-shown" ]; then
+    zenity --question --width=460 --title="Roblox Studio (experimental)" --ok-label="Try it" --cancel-label="Cancel" \
+        --text="Runs the official Windows Roblox Studio through Linux/Wine compatibility software. First setup needs several GB of storage and downloads. Android graphics and sign-in remain unverified.\n\nIf Boddy keeps reconnecting, Android is stopping it: on Android 14+ turn on Developer options > Disable child process restrictions." 2>/dev/null || exit 0
+    touch "$SEEN/studio-intro-shown"
+fi
+
+# The action can be given as an argument (e.g. from a desktop shortcut): studio-app.sh "Open Studio"
+choice=${1:-}
+[ -n "$choice" ] || choice=$(zenity --list --title="$TITLE" --width=420 --height=300 --column=Action \
+    "Open Studio" "Open a place file" "Diagnostics" "Reset Studio" 2>/dev/null) || exit 0
 case "$choice" in
-    "Open Studio") cmd=(/opt/boddy/studio) ;;
+    "Open Studio") args=() ;;
     "Open a place file")
         f=$(zenity --file-selection --filename="$start" --file-filter="Roblox place | *.rbxl *.rbxlx" 2>/dev/null) || exit 0
-        cmd=(/opt/boddy/studio "$f") ;;
-    "Reset Studio") cmd=(/opt/boddy/studio --reset) ;;
-    "Uninstall Studio") cmd=(/opt/boddy/studio --uninstall) ;;
+        args=("$f") ;;
+    "Diagnostics")
+        "$STUDIO" --diagnose 2>&1 | zenity --text-info --title="$TITLE diagnostics" --width=760 --height=520 2>/dev/null
+        exit 0 ;;
+    "Reset Studio")
+        zenity --question --width=420 --title="$TITLE" --ok-label="Reset" \
+            --text="Start Studio with a fresh Windows setup? The current one is kept as a backup." 2>/dev/null || exit 0
+        args=(--reset) ;;
+    *) exit 0 ;;  # OK pressed with nothing selected
 esac
-# Show progress in a terminal so the user can see what's happening (and any error).
-exec xfce4-terminal --disable-server --title="Roblox Studio" -x bash -c '"$@"; echo; read -rp "Press Enter to close."' _ "${cmd[@]}"
+
+work=$(mktemp -d)
+echo $$ >"$RUNNING"
+trap 'rm -rf "$work" "$RUNNING"' EXIT
+mkfifo "$work/progress"
+zenity --progress --title="$TITLE" --width=440 --auto-close --percentage=0 \
+    --text="Starting..." <"$work/progress" 2>/dev/null &
+zenity_pid=$!
+
+# The launcher runs in its own process group so Cancel can stop it together with its downloads.
+setsid bash -c 'echo $$ >"$1"; "$2" "${@:4}"; echo $? >"$3"' _ \
+    "$work/pid" "$STUDIO" "$work/status" "${args[@]}" 2>&1 |
+(
+    # Only this reader holds the progress pipe, so the window sees end-of-input if the launcher stops early.
+    # zenity may already be closed (Studio started, or Cancel); keep reading so the launcher never blocks.
+    exec 3>"$work/progress"
+    trap '' PIPE
+    say() { printf '%s\n' "$@" >&3 2>/dev/null; }
+    while IFS= read -r line; do
+        case "$line" in
+            "Studio "[0-9]*/[0-9]*:*)
+                n=${line#Studio }; n=${n%%:*}
+                say "$(( ${n%/*} * 90 / ${n#*/} ))" "# Downloading Roblox Studio (${n%/*} of ${n#*/})..." ;;
+            "Installing Hangover"*) say 2 "# Installing the Windows compatibility layer..." ;;
+            "Testing Windows command"*) say 5 "# Setting up Windows compatibility (the first time takes several minutes)..." ;;
+            "Could not check for Studio updates"*) say "# Offline: opening the installed Studio..." ;;
+            "Desktop enlarged"*) say 95 "# Making room on the desktop..." ;;
+            "Launching real Roblox Studio"*) touch "$work/started"; say 100 ;;
+            "LAUNCH FAILED: "*) printf '%s\n' "${line#LAUNCH FAILED: }" >>"$work/error" ;;
+            "Studio process exited with code "*) printf '%s\n' "${line#Studio process exited with code }" >"$work/exit" ;;
+        esac
+    done
+) &
+reader_pid=$!
+
+# Closing the progress window before Studio starts means Cancel.
+wait "$zenity_pid"
+if [ ! -e "$work/started" ] && [ -s "$work/pid" ] && kill -0 "$(cat "$work/pid")" 2>/dev/null; then
+    kill -TERM -- "-$(cat "$work/pid")" 2>/dev/null
+    wait "$reader_pid"
+    exit 0
+fi
+
+if [ -e "$work/started" ] && [ ! -e "$SEEN/studio-signin-tip-shown" ]; then
+    touch "$SEEN/studio-signin-tip-shown"
+    zenity --info --width=420 --title="$TITLE" --timeout=30 \
+        --text="To sign in, choose <b>Login via Browser</b> in Studio, sign in in the Firefox window that opens, then allow Firefox to open the Roblox Studio link." 2>/dev/null &
+fi
+
+wait "$reader_pid"
+status=$(cat "$work/status" 2>/dev/null || echo 1)
+[ "$status" = 0 ] && exit 0
+
+if [ -s "$work/error" ]; then
+    text="Roblox Studio could not start:\n\n$(head -c 1500 "$work/error")"
+else
+    text="Roblox Studio closed unexpectedly (exit code $(cat "$work/exit" 2>/dev/null || echo "$status"))."
+fi
+log=$(readlink -f "$LOG_DIR/latest.log")
+case "$(zenity --error --width=520 --title="$TITLE" --text="$(printf '%s' "$text" | escape)" \
+        --extra-button="Copy log" --extra-button="Show log" 2>/dev/null)" in
+    "Copy log") copy_log "$log" ;;
+    "Show log") mousepad "$log" >/dev/null 2>&1 & ;;
+esac

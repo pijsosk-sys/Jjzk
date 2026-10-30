@@ -27,7 +27,7 @@ fi
 mkdir -p /etc/firefox-esr
 cat > /etc/firefox-esr/boddy.js <<'PREFS'
 pref("security.sandbox.content.level", 0);
-pref("browser.startup.homepage", "https://claude.ai");
+pref("browser.startup.homepage", "about:blank");
 pref("browser.aboutwelcome.enabled", false);
 pref("layout.css.devPixelsPerPx", "1.25");
 // Fewer background processes: less memory and faster on a phone.
@@ -40,19 +40,8 @@ pref("toolkit.telemetry.enabled", false);
 pref("datareporting.healthreport.uploadEnabled", false);
 PREFS
 
-echo ">>> Step 4 of 4: Installing Claude Code"
-if [ ! -x /root/.local/bin/claude ]; then
-    curl -fsSL https://claude.ai/install.sh | bash || echo "!!! Claude Code install failed; it will retry when you open it"
-fi
-
-echo ">>> Step 4 of 4: Installing Codex"
-if ! command -v codex >/dev/null; then
-    npm install -g @openai/codex || echo "!!! Codex install failed; it will retry when you open it"
-fi
-
-echo ">>> Step 4 of 4: Making it Boddy"
-/opt/boddy/ai-setup.sh
+echo ">>> Step 4 of 4: Setting up the desktop"
 /opt/boddy/make-launchers.sh
 /opt/boddy/apply-theme.sh
 
-echo ">>> Boddy is ready"
+echo ">>> Ready to launch Roblox Studio"

@@ -8,19 +8,33 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.boddy.os"
+        // Its own app id, so it installs next to Boddy instead of replacing it.
+        applicationId = "com.boddy.studio"
         minSdk = 26
-        targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        // Android 9 rules: newer targets forbid running code mapped from the app's own files,
+        // which the Windows compatibility layer (Hangover) needs.
+        targetSdk = 28
+        // CI numbers each build, so every new APK installs over the last one.
+        versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
+        versionName = "0.1.${System.getenv("GITHUB_RUN_NUMBER") ?: "0"}"
         ndk { abiFilters += "arm64-v8a" }
+    }
+
+    // One fixed test key in the repo: every build has the same signature, so updates install over
+    // each other and keep the Linux system and Studio downloads. Not a secret; this is a test app.
+    signingConfigs {
+        create("studio") {
+            storeFile = file("studio-launcher.jks")
+            storePassword = "studio-launcher"
+            keyAlias = "studio"
+            keyPassword = "studio-launcher"
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            // Signed with the debug key so the APK installs without extra setup.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("studio")
         }
     }
 
@@ -29,6 +43,9 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
+
+    // Not a Play Store app: the old target (see targetSdk) is on purpose.
+    lint { disable += "ExpiredTargetSdkVersion" }
 
     packaging {
         // proot and its loader must be extracted to nativeLibraryDir so they can be executed.

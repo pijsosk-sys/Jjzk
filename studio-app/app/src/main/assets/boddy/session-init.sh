@@ -1,5 +1,5 @@
 #!/bin/bash
-# Runs inside each desktop session: wallpaper, tidy desktop icons, first-run sign-in.
+# Runs inside each desktop session: wallpaper and tidy desktop icons.
 for _ in $(seq 20); do pgrep -x xfdesktop >/dev/null && break; sleep 0.5; done
 sleep 1
 
@@ -12,8 +12,3 @@ for k in show-filesystem show-home show-trash show-removable; do
         xfconf-query -c xfce4-desktop -p "/desktop-icons/file-icons/$k" -s false
 done
 
-# The first time, help the user sign in to Claude.
-if [ ! -e /root/.config/boddy/signin-offered ]; then
-    mkdir -p /root/.config/boddy && touch /root/.config/boddy/signin-offered
-    xfce4-terminal --disable-server --title='Sign in to Claude' -x /opt/boddy/claude-code.sh --signin &
-fi

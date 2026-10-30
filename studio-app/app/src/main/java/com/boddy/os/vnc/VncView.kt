@@ -142,7 +142,9 @@ class VncView(context: Context, attrs: AttributeSet?) : View(context, attrs), Rf
                 }
             }
         }
-        scale = min(width.toFloat() / bmp.width, height.toFloat() / bmp.height) * zoom
+        // max, not min: when the keyboard takes half the screen the desktop keeps its size and the view
+        // follows the cursor instead of shrinking everything (the desktop has the view's shape anyway).
+        scale = maxOf(width.toFloat() / bmp.width, height.toFloat() / bmp.height) * zoom
         val dw = bmp.width * scale
         val dh = bmp.height * scale
         viewLeft = follow(viewLeft, dw, width.toFloat(), cursorX * scale)

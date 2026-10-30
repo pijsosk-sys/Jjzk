@@ -1,0 +1,1 @@
+https://github.com/pijsosk-sys/Jjzk/releases/download/rootfs-full-3643285be1/debian-arm64.tar.xz

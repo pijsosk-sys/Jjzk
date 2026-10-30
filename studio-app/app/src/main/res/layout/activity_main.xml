@@ -15,15 +15,15 @@
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Boddy"
+        android:text="Studio Launcher"
         android:textColor="@color/boddy_text"
-        android:textSize="40sp"
+        android:textSize="34sp"
         android:textStyle="bold" />
 
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Your computer, in your pocket"
+        android:text="Roblox Studio on your phone (experimental)"
         android:textColor="@color/boddy_accent_light"
         android:textSize="15sp" />
 
@@ -49,193 +49,102 @@
     <Button
         android:id="@+id/action"
         android:layout_width="match_parent"
-        android:layout_height="60dp"
+        android:layout_height="64dp"
         android:layout_marginTop="16dp"
         android:background="@drawable/button_primary"
         android:textAllCaps="false"
         android:textColor="@color/boddy_text"
-        android:textSize="18sp"
+        android:textSize="19sp"
         android:textStyle="bold" />
+
+    <!-- Shown once Linux is installed: the launch menu. -->
+    <LinearLayout
+        android:id="@+id/menu"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <Button
+            android:id="@+id/studioMenu"
+            style="@style/StudioButton"
+            android:text="Studio menu (open a place file, diagnostics, reset)" />
+
+        <Button
+            android:id="@+id/desktop"
+            style="@style/StudioButton"
+            android:text="Open the desktop only" />
+    </LinearLayout>
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="22dp"
+        android:text="When something goes wrong"
+        android:textColor="@color/boddy_text"
+        android:textSize="17sp"
+        android:textStyle="bold" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/copyLog"
+            style="@style/StudioButton"
+            android:layout_width="0dp"
+            android:layout_marginTop="0dp"
+            android:layout_marginEnd="8dp"
+            android:layout_weight="1"
+            android:text="Copy log" />
+
+        <Button
+            android:id="@+id/shareLog"
+            style="@style/StudioButton"
+            android:layout_width="0dp"
+            android:layout_marginTop="0dp"
+            android:layout_weight="1"
+            android:text="Share log" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/logHint"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:text="Copies this app's log, the last crash and Roblox Studio's launch log, so you can paste them into a chat."
+        android:textColor="@color/boddy_text_dim"
+        android:textSize="13sp" />
 
     <LinearLayout
         android:id="@+id/keepAlive"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
+        android:layout_marginTop="16dp"
         android:background="@drawable/button_card"
         android:orientation="vertical"
         android:padding="16dp"
         android:visibility="gone" />
 
-    <LinearLayout
-        android:id="@+id/shortcuts"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        android:orientation="vertical"
-        android:visibility="gone">
-
-        <Button
-            android:id="@+id/signin"
-            android:layout_width="match_parent"
-            android:layout_height="56dp"
-            android:background="@drawable/button_card"
-            android:gravity="start|center_vertical"
-            android:paddingStart="20dp"
-            android:text="Sign in to Claude"
-            android:textAllCaps="false"
-            android:textColor="@color/boddy_text"
-            android:textSize="16sp" />
-
-        <Button
-            android:id="@+id/claudeCode"
-            android:layout_width="match_parent"
-            android:layout_height="56dp"
-            android:layout_marginTop="8dp"
-            android:background="@drawable/button_card"
-            android:gravity="start|center_vertical"
-            android:paddingStart="20dp"
-            android:text="Claude Code"
-            android:textAllCaps="false"
-            android:textColor="@color/boddy_text"
-            android:textSize="16sp" />
-
-        <Button
-            android:id="@+id/codex"
-            android:layout_width="match_parent"
-            android:layout_height="56dp"
-            android:layout_marginTop="8dp"
-            android:background="@drawable/button_card"
-            android:gravity="start|center_vertical"
-            android:paddingStart="20dp"
-            android:text="Codex"
-            android:textAllCaps="false"
-            android:textColor="@color/boddy_text"
-            android:textSize="16sp" />
-
-        <Button
-            android:id="@+id/gemini"
-            android:layout_width="match_parent"
-            android:layout_height="56dp"
-            android:layout_marginTop="8dp"
-            android:background="@drawable/button_card"
-            android:gravity="start|center_vertical"
-            android:paddingStart="20dp"
-            android:text="Gemini CLI  ·  free"
-            android:textAllCaps="false"
-            android:textColor="@color/boddy_text"
-            android:textSize="16sp" />
-
-        <Button
-            android:id="@+id/qwen"
-            android:layout_width="match_parent"
-            android:layout_height="56dp"
-            android:layout_marginTop="8dp"
-            android:background="@drawable/button_card"
-            android:gravity="start|center_vertical"
-            android:paddingStart="20dp"
-            android:text="Qwen Code  ·  free"
-            android:textAllCaps="false"
-            android:textColor="@color/boddy_text"
-            android:textSize="16sp" />
-
-        <Button
-            android:id="@+id/opencode"
-            android:layout_width="match_parent"
-            android:layout_height="56dp"
-            android:layout_marginTop="8dp"
-            android:background="@drawable/button_card"
-            android:gravity="start|center_vertical"
-            android:paddingStart="20dp"
-            android:text="OpenCode  ·  free"
-            android:textAllCaps="false"
-            android:textColor="@color/boddy_text"
-            android:textSize="16sp" />
-
-        <Button
-            android:id="@+id/deepseek"
-            android:layout_width="match_parent"
-            android:layout_height="56dp"
-            android:layout_marginTop="8dp"
-            android:background="@drawable/button_card"
-            android:gravity="start|center_vertical"
-            android:paddingStart="20dp"
-            android:text="DeepSeek Code"
-            android:textAllCaps="false"
-            android:textColor="@color/boddy_text"
-            android:textSize="16sp" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:text="Your apps"
-            android:textColor="@color/boddy_text_dim"
-            android:textSize="13sp" />
-
-        <HorizontalScrollView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:scrollbars="none">
-
-            <LinearLayout
-                android:id="@+id/phoneApps"
-                android:layout_width="wrap_content"
-                android:layout_height="48dp"
-                android:orientation="horizontal" />
-        </HorizontalScrollView>
-
-        <Button
-            android:id="@+id/phoneControl"
-            android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:layout_marginTop="12dp"
-            android:background="@drawable/button_card"
-            android:textAllCaps="false"
-            android:textColor="@color/boddy_accent_light"
-            android:textSize="14sp" />
-
-        <Button
-            android:id="@+id/phoneFiles"
-            android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:layout_marginTop="12dp"
-            android:background="@drawable/button_card"
-            android:text="Allow phone files (for Roblox files, downloads…)"
-            android:textAllCaps="false"
-            android:textColor="@color/boddy_accent_light"
-            android:textSize="14sp"
-            android:visibility="gone" />
-
-        <TextView
-            android:id="@+id/agentMode"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:padding="4dp"
-            android:textColor="@color/boddy_accent_light"
-            android:textSize="14sp" />
-    </LinearLayout>
-
     <TextView
         android:id="@+id/logToggle"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
-        android:padding="4dp"
+        android:layout_marginTop="18dp"
+        android:padding="6dp"
         android:text="Show details"
         android:textColor="@color/boddy_accent_light"
-        android:textSize="14sp" />
+        android:textSize="15sp" />
 
     <ScrollView
         android:id="@+id/logScroll"
         android:layout_width="match_parent"
-        android:layout_height="320dp"
-        android:layout_marginTop="8dp"
+        android:layout_height="280dp"
+        android:layout_marginTop="6dp"
         android:background="@drawable/log_bg"
-        android:nestedScrollingEnabled="true"
-        android:padding="10dp"
+        android:padding="8dp"
         android:visibility="gone">
 
         <TextView
@@ -243,7 +152,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:fontFamily="monospace"
-            android:textColor="#B8F5B8"
+            android:textColor="@color/boddy_text_dim"
             android:textIsSelectable="true"
             android:textSize="11sp" />
     </ScrollView>
@@ -252,11 +161,11 @@
         android:id="@+id/reset"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_gravity="center_horizontal"
-        android:layout_marginTop="8dp"
-        android:padding="8dp"
+        android:layout_marginTop="18dp"
+        android:padding="6dp"
         android:text="Reinstall Linux"
         android:textColor="@color/boddy_text_dim"
-        android:textSize="13sp" />
+        android:textSize="14sp"
+        android:visibility="gone" />
 </LinearLayout>
 </ScrollView>
