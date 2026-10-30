@@ -16,11 +16,14 @@ import android.os.Handler;
 import android.os.Looper;
 import android.provider.DocumentsContract;
 import android.provider.Settings;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
 import android.widget.Button;
 import android.widget.CheckBox;
+import android.widget.EditText;
 import android.widget.ListView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -28,6 +31,7 @@ import android.widget.Toast;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 public class MainActivity extends Activity {
 
@@ -44,11 +48,16 @@ public class MainActivity extends Activity {
     private TextView tvCount;
     private ListView listView;
     private CheckBox cbRoot;
+    private EditText etSearch;
     private Button btnDelete;
     private TargetAdapter adapter;
     private SharedPreferences prefs;
 
-    private final List<Target> targets = new ArrayList<>();
+    /** Everything the scan found. */
+    private final List<Target> allTargets = new ArrayList<>();
+    /** What the search box currently lets through - this backs the adapter. */
+    private final List<Target> visible = new ArrayList<>();
+    private String query = "";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -64,14 +73,28 @@ public class MainActivity extends Activity {
         cbRoot = findViewById(R.id.cbRoot);
         btnDelete = findViewById(R.id.btnDelete);
 
-        adapter = new TargetAdapter(this, targets, new Runnable() {
+        adapter = new TargetAdapter(this, visible, new Runnable() {
             @Override public void run() { updateCount(); }
         });
         listView.setAdapter(adapter);
         listView.setOnItemClickListener((parent, view, position, id) -> {
-            targets.get(position).selected = !targets.get(position).selected;
+            visible.get(position).selected = !visible.get(position).selected;
             adapter.notifyDataSetChanged();
             updateCount();
+        });
+        listView.setOnItemLongClickListener((parent, view, position, id) -> {
+            inspect(visible.get(position));
+            return true;
+        });
+
+        etSearch = findViewById(R.id.etSearch);
+        etSearch.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) {
+                query = s.toString().trim().toLowerCase(Locale.US);
+                applyFilter();
+            }
+            @Override public void afterTextChanged(Editable s) { }
         });
 
         cbRoot.setChecked(prefs.getBoolean(KEY_ROOT, false));
@@ -123,22 +146,42 @@ public class MainActivity extends Activity {
         tvStatus.setText(sb.toString());
     }
 
+    /** Re-runs the search box over the scan results. Selections are kept. */
+    private void applyFilter() {
+        visible.clear();
+        for (Target t : allTargets) {
+            if (matches(t)) visible.add(t);
+        }
+        adapter.notifyDataSetChanged();
+        updateCount();
+    }
+
+    private boolean matches(Target t) {
+        if (query.isEmpty()) return true;
+        if (t.packageName.toLowerCase(Locale.US).contains(query)) return true;
+        return t.appLabel != null && t.appLabel.toLowerCase(Locale.US).contains(query);
+    }
+
     private void updateCount() {
         int sel = 0;
         long bytes = 0;
-        for (Target t : targets) {
+        for (Target t : allTargets) {
             if (t.selected) {
                 sel++;
                 if (t.sizeBytes > 0) bytes += t.sizeBytes;
             }
         }
-        tvCount.setText(targets.size() + " folders, " + sel + " selected"
+        String shown = query.isEmpty()
+                ? allTargets.size() + " folders"
+                : visible.size() + " of " + allTargets.size() + " folders";
+        tvCount.setText(shown + ", " + sel + " selected"
                 + (bytes > 0 ? " (" + Fmt.bytes(bytes) + ")" : ""));
         btnDelete.setEnabled(sel > 0);
     }
 
+    /** All / None act on what the search box is showing, not on hidden folders. */
     private void setAllSelected(boolean selected) {
-        for (Target t : targets) t.selected = selected;
+        for (Target t : visible) t.selected = selected;
         adapter.notifyDataSetChanged();
         updateCount();
     }
@@ -267,10 +310,9 @@ public class MainActivity extends Activity {
             final List<Target> found = Scanner.scan(MainActivity.this, allowRoot);
             ui.post(() -> {
                 dismiss(pd);
-                targets.clear();
-                targets.addAll(found);
-                adapter.notifyDataSetChanged();
-                updateCount();
+                allTargets.clear();
+                allTargets.addAll(found);
+                applyFilter();
                 updateStatus();
             });
         }).start();
@@ -280,7 +322,7 @@ public class MainActivity extends Activity {
 
     private void confirmDelete() {
         final List<Target> chosen = new ArrayList<>();
-        for (Target t : targets) if (t.selected) chosen.add(t);
+        for (Target t : allTargets) if (t.selected) chosen.add(t);
         if (chosen.isEmpty()) return;
 
         StringBuilder msg = new StringBuilder();
@@ -367,6 +409,28 @@ public class MainActivity extends Activity {
             b.setNeutralButton("Open log", (d, w) -> openLog());
         }
         b.show();
+    }
+
+    /** Non-destructive look at one folder; the report also lands in the log. */
+    private void inspect(final Target t) {
+        final ProgressDialog pd =
+                ProgressDialog.show(this, null, "Inspecting " + t.packageName + "...", true);
+        final boolean allowRoot = cbRoot.isChecked();
+        new Thread(() -> {
+            final String report = Probe.inspect(MainActivity.this, t, allowRoot);
+            LogStore.get().info("Inspected " + t.packageName, t.path);
+            LogStore.get().add(new LogEntry(LogEntry.LEVEL_INFO,
+                    "Report for " + t.packageName, "read-only probe", report));
+            ui.post(() -> {
+                dismiss(pd);
+                new AlertDialog.Builder(MainActivity.this)
+                        .setTitle(t.packageName)
+                        .setMessage(report)
+                        .setPositiveButton("Close", null)
+                        .setNeutralButton("Open log", (d, w) -> openLog())
+                        .show();
+            });
+        }).start();
     }
 
     private void openLog() {

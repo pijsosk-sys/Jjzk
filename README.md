@@ -3,13 +3,17 @@
 Android app that deletes folders under `/storage/emulated/0/Android/data` and keeps a
 **log menu that says exactly why a deletion failed**.
 
-Ready-to-install APK: [`release/DataWiper-1.0.apk`](release/DataWiper-1.0.apk)
+Ready-to-install APK: [`release/DataWiper-1.1.apk`](release/DataWiper-1.1.apk)
 (min Android 7.0, target Android 14, signed with the debug-style key in `keystore/`).
 
 ## What it does
 
 * Lists every folder in `Android/data` with its package name, the installed app's name,
   size and file count — the same list the screenshot in the request shows.
+* **Search box** filters the list live by package name or app name, so `instagram`,
+  `mojang` or `com.micro` narrows hundreds of folders down to the ones you want.
+  All / None then act on the filtered list only; selections survive changing the search.
+* **Long-press a folder to inspect it** — a read-only probe that deletes nothing (see below).
 * Lets you tick folders (All / None shortcuts) and delete them in one run.
 * For each folder it tries three routes, in order, and stops at the first that works:
   1. **File API** — plain `java.io.File` recursive delete.
@@ -18,6 +22,23 @@ Ready-to-install APK: [`release/DataWiper-1.0.apk`](release/DataWiper-1.0.apk)
 * After a reported success it **verifies** the folder is really gone, because some
   FUSE/sdcardfs layers report a delete that did not happen.
 * Every attempt — successful or not — goes into the log with the concrete reason.
+
+## Inspecting a folder before deleting it
+
+Long-press any row. The app investigates that one folder without touching it and
+reports what each route can actually see:
+
+* **File API** — exists, is a directory, readable, writable, parent writable, child
+  count, total size, the first 25 entries by name, and a verdict on whether a delete
+  would work.
+* **SAF** — the derived document id, which grant (if any) covers it, whether the
+  document is really found under that grant, its children, and a verdict.
+* **Root** — whether `su` answers, `ls -la` of the folder and `du -sh` of its size
+  (only when "Use root if available" is ticked).
+
+It also says whether the owning app is still installed, so leftover data from uninstalled
+apps is easy to spot. The full report is copied into the log, so you can compare several
+folders afterwards.
 
 ## The log menu
 
@@ -67,9 +88,10 @@ export ANDROID_HOME=/path/to/android-sdk     # needs platform 34 + build-tools 3
 
 ```
 app/src/main/java/com/wipe/datacleaner/
-  MainActivity.java   folder list, permissions, delete run
+  MainActivity.java   folder list, search, permissions, delete run
   LogActivity.java    the log menu
   Deleter.java        the three delete routes + reason reporting
+  Probe.java          read-only inspection of a single folder
   Scanner.java        folder listing with File -> SAF -> root -> package-manager fallback
   SafAccess.java      tree grants, document uris, picker intent
   Shell.java          su runner with timeout and stderr capture
