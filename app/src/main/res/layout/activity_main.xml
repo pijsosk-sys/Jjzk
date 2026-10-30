@@ -71,6 +71,26 @@
         android:textSize="14sp"
         android:hint="Search package or app name" />
 
+    <Button
+        android:id="@+id/btnUseTyped"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:visibility="gone"
+        android:textSize="12sp"
+        android:text="Use what I typed" />
+
+    <TextView
+        android:id="@+id/tvNotice"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:background="@drawable/card_bg"
+        android:padding="10dp"
+        android:visibility="gone"
+        android:textColor="@color/warn"
+        android:textSize="11sp" />
+
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"

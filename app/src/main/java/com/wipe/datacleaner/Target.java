@@ -18,6 +18,8 @@ public class Target {
     public Uri documentUri;
 
     public boolean selected;
+    /** True when the user typed this folder name instead of it coming from a scan. */
+    public boolean manual;
 
     public Target(String packageName, String path, int source) {
         this.packageName = packageName;

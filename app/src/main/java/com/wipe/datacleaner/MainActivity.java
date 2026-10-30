@@ -4,6 +4,9 @@ import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.ProgressDialog;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -49,6 +52,8 @@ public class MainActivity extends Activity {
     private ListView listView;
     private CheckBox cbRoot;
     private EditText etSearch;
+    private Button btnUseTyped;
+    private TextView tvNotice;
     private Button btnDelete;
     private TargetAdapter adapter;
     private SharedPreferences prefs;
@@ -58,6 +63,9 @@ public class MainActivity extends Activity {
     /** What the search box currently lets through - this backs the adapter. */
     private final List<Target> visible = new ArrayList<>();
     private String query = "";
+    private String rawQuery = "";
+    private boolean candidatesOnly;
+    private boolean rootPromptShown;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -91,7 +99,8 @@ public class MainActivity extends Activity {
         etSearch.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
             @Override public void onTextChanged(CharSequence s, int a, int b, int c) {
-                query = s.toString().trim().toLowerCase(Locale.US);
+                rawQuery = s.toString().trim();
+                query = rawQuery.toLowerCase(Locale.US);
                 applyFilter();
             }
             @Override public void afterTextChanged(Editable s) { }
@@ -103,6 +112,10 @@ public class MainActivity extends Activity {
 
         findViewById(R.id.btnPermission).setOnClickListener(v -> requestAllFilesAccess());
         findViewById(R.id.btnGrantFolder).setOnClickListener(v -> requestFolderAccess());
+        tvNotice = findViewById(R.id.tvNotice);
+        btnUseTyped = findViewById(R.id.btnUseTyped);
+        btnUseTyped.setOnClickListener(v -> addManualTarget());
+
         findViewById(R.id.btnSelectAll).setOnClickListener(v -> setAllSelected(true));
         findViewById(R.id.btnSelectNone).setOnClickListener(v -> setAllSelected(false));
         findViewById(R.id.btnLogs).setOnClickListener(v -> openLog());
@@ -140,7 +153,11 @@ public class MainActivity extends Activity {
           .append(" (API ").append(Build.VERSION.SDK_INT).append(")\n");
         sb.append(allFiles ? "✓" : "✗").append(" All files access\n");
         sb.append(tree != null ? "✓" : "✗").append(" Android/data folder access");
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            sb.append("\n⚠ Android 13+ blocks Android/data for apps and refuses "
+                    + "to grant it in the folder picker. Root, or adb from a computer, "
+                    + "is what is left.");
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             sb.append("\n⚠ Android 11+ blocks Android/data for normal file access");
         }
         tvStatus.setText(sb.toString());
@@ -154,6 +171,39 @@ public class MainActivity extends Activity {
         }
         adapter.notifyDataSetChanged();
         updateCount();
+
+        // A folder left behind by an uninstalled app can never show up in a candidate
+        // list, so let the user aim at whatever they typed.
+        boolean offer = visible.isEmpty() && looksLikeFolderName(rawQuery);
+        btnUseTyped.setVisibility(offer ? View.VISIBLE : View.GONE);
+        if (offer) btnUseTyped.setText("Use \"" + rawQuery + "\" as a folder name");
+    }
+
+    private static boolean looksLikeFolderName(String s) {
+        return s.length() >= 3 && !s.contains(" ") && !s.contains("/");
+    }
+
+    /** Adds the typed folder name to the list so it can be inspected or deleted. */
+    private void addManualTarget() {
+        final String name = rawQuery;
+        if (!looksLikeFolderName(name)) return;
+
+        for (Target t : allTargets) {
+            if (t.packageName.equals(name)) {
+                t.selected = true;
+                applyFilter();
+                return;
+            }
+        }
+
+        final Target t = new Target(name, Deleter.DATA_ROOT + "/" + name, Target.SOURCE_FILE);
+        t.manual = true;
+        t.selected = true;
+        Scanner.describe(this, t);
+        allTargets.add(t);
+        LogStore.get().info("Folder added by hand", t.path);
+        applyFilter();
+        toast("Added - long-press it to inspect, or delete it");
     }
 
     private boolean matches(Target t) {
@@ -181,6 +231,22 @@ public class MainActivity extends Activity {
 
     /** All / None act on what the search box is showing, not on hidden folders. */
     private void setAllSelected(boolean selected) {
+        if (selected && candidatesOnly && query.isEmpty() && visible.size() > 50) {
+            new AlertDialog.Builder(this)
+                    .setTitle("Select all " + visible.size() + "?")
+                    .setMessage("This list is a guess: it is every installed app, not the real "
+                            + "contents of Android/data. Most of these have no data folder, and "
+                            + "selecting all of them will mostly produce log noise.\n\n"
+                            + "Search for what you want instead.")
+                    .setNegativeButton("Cancel", null)
+                    .setPositiveButton("Select all anyway", (d, w) -> doSetAllSelected(true))
+                    .show();
+            return;
+        }
+        doSetAllSelected(selected);
+    }
+
+    private void doSetAllSelected(boolean selected) {
         for (Target t : visible) t.selected = selected;
         adapter.notifyDataSetChanged();
         updateCount();
@@ -307,13 +373,21 @@ public class MainActivity extends Activity {
         final ProgressDialog pd = ProgressDialog.show(this, null, "Scanning Android/data...", true);
         final boolean allowRoot = cbRoot.isChecked();
         new Thread(() -> {
-            final List<Target> found = Scanner.scan(MainActivity.this, allowRoot);
+            final Scanner.ScanResult found = Scanner.scan(MainActivity.this, allowRoot);
             ui.post(() -> {
                 dismiss(pd);
                 allTargets.clear();
-                allTargets.addAll(found);
+                allTargets.addAll(found.targets);
+                candidatesOnly = found.candidatesOnly;
+                if (found.notice != null) {
+                    tvNotice.setText(found.notice);
+                    tvNotice.setVisibility(View.VISIBLE);
+                } else {
+                    tvNotice.setVisibility(View.GONE);
+                }
                 applyFilter();
                 updateStatus();
+                maybeOfferRoot();
             });
         }).start();
     }
@@ -411,6 +485,56 @@ public class MainActivity extends Activity {
         b.show();
     }
 
+    /**
+     * When no route could list the folder, point at the one thing that still can.
+     * A file manager that does show Android/data on Android 13+ is using root or Shizuku.
+     */
+    private void maybeOfferRoot() {
+        if (!candidatesOnly || cbRoot.isChecked() || rootPromptShown) return;
+        rootPromptShown = true;
+        new AlertDialog.Builder(this)
+                .setTitle("Nothing could be listed")
+                .setMessage("No route could read " + Deleter.DATA_ROOT + ", so the list below "
+                        + "is only a guess built from installed apps.\n\n"
+                        + "If another file manager on this phone does show these folders, it is "
+                        + "using root. Try the root route now?")
+                .setNegativeButton("Not now", null)
+                .setPositiveButton("Try root", (d, w) -> {
+                    cbRoot.setChecked(true);
+                    rescan();
+                })
+                .show();
+    }
+
+    /** Builds the commands that do work from a computer, for copy-paste. */
+    private void copyAdbCommands() {
+        List<Target> chosen = new ArrayList<>();
+        for (Target t : allTargets) if (t.selected) chosen.add(t);
+        if (chosen.isEmpty()) {
+            toast("Select folders first");
+            return;
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("# Data Wiper - run these on a computer with USB debugging on\n");
+        sb.append("# adb shell reaches Android/data even when apps cannot.\n");
+        for (Target t : chosen) {
+            sb.append("adb shell rm -rf \"").append(t.path).append("\"\n");
+        }
+        String text = sb.toString();
+
+        ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        if (cm != null) cm.setPrimaryClip(ClipData.newPlainText("adb-commands", text));
+        LogStore.get().add(new LogEntry(LogEntry.LEVEL_INFO,
+                "adb commands copied", chosen.size() + " folders", text));
+
+        new AlertDialog.Builder(this)
+                .setTitle("Copied " + chosen.size() + " adb commands")
+                .setMessage(text)
+                .setPositiveButton("OK", null)
+                .show();
+    }
+
     /** Non-destructive look at one folder; the report also lands in the log. */
     private void inspect(final Target t) {
         final ProgressDialog pd =
@@ -443,7 +567,8 @@ public class MainActivity extends Activity {
     public boolean onCreateOptionsMenu(Menu menu) {
         menu.add(0, 1, 0, "Rescan");
         menu.add(0, 2, 0, R.string.log_title);
-        menu.add(0, 3, 0, "Why does it fail?");
+        menu.add(0, 3, 0, "Copy adb commands");
+        menu.add(0, 4, 0, "Why does it fail?");
         return true;
     }
 
@@ -452,7 +577,8 @@ public class MainActivity extends Activity {
         switch (item.getItemId()) {
             case 1: rescan(); return true;
             case 2: openLog(); return true;
-            case 3: showExplainer(); return true;
+            case 3: copyAdbCommands(); return true;
+            case 4: showExplainer(); return true;
             default: return super.onOptionsItemSelected(item);
         }
     }
@@ -468,6 +594,13 @@ public class MainActivity extends Activity {
                 + "only root (or a desktop adb/MTP session) can remove these folders.\n\n"
                 + "This app tries the File API, then the folder grant, then root, and writes "
                 + "the exact refusal of each one into the log.\n\n"
+                + "What still works on Android 13+:\n"
+                + "- root, if the phone has it (tick \"Use root if available\")\n"
+                + "- a computer: adb shell rm -rf ... (menu > Copy adb commands)\n"
+                + "- a file manager using Shizuku, which runs as the shell user\n\n"
+                + "Folders of apps you already uninstalled cannot be listed here at all. "
+                + "Type the folder name into the search box and press the button that "
+                + "appears to target one directly.\n\n"
                 + "Current path: " + Deleter.DATA_ROOT + "\n"
                 + "Exists to this app: " + new File(Deleter.DATA_ROOT).exists();
         new AlertDialog.Builder(this)

@@ -20,8 +20,17 @@ public final class Scanner {
 
     private Scanner() { }
 
-    public static List<Target> scan(Context ctx, boolean allowRoot) {
+    /** Outcome of a scan, including whether the list is real or only guesswork. */
+    public static class ScanResult {
+        public final List<Target> targets = new ArrayList<>();
+        /** True when Android/data could not be listed and the list is only candidates. */
+        public boolean candidatesOnly;
+        public String notice;
+    }
+
+    public static ScanResult scan(Context ctx, boolean allowRoot) {
         LogStore log = LogStore.get();
+        ScanResult result = new ScanResult();
         Map<String, Target> found = new LinkedHashMap<>();
 
         // 1. Plain file listing - works below Android 11, and on ROMs that relaxed the block.
@@ -77,11 +86,17 @@ public final class Scanner {
             for (String pkg : installedPackages(ctx)) {
                 found.put(pkg, new Target(pkg, Deleter.DATA_ROOT + "/" + pkg, Target.SOURCE_FILE));
             }
+            result.candidatesOnly = true;
+            result.notice = "Android/data could not be listed on this device, so these "
+                    + found.size() + " entries are installed apps shown as candidates.\n"
+                    + "Folders left behind by uninstalled apps are NOT in this list - "
+                    + "type the folder name in the search box to target one.";
             log.warn("Listing blocked - showing installed apps instead",
                     found.size() + " candidate folders from the package manager",
                     "The folders could not be listed by any route, so this list is built from\n"
-                            + "installed packages. Some entries may have no data folder at all;\n"
-                            + "deleting them will say so in the log.");
+                            + "installed packages. Folders of apps that are no longer installed\n"
+                            + "cannot appear here at all - they have to be typed by hand.\n"
+                            + "Some entries may have no data folder; deleting them says so.");
         }
 
         List<Target> out = new ArrayList<>(found.values());
@@ -92,7 +107,16 @@ public final class Scanner {
                 return a.packageName.compareToIgnoreCase(b.packageName);
             }
         });
-        return out;
+        result.targets.addAll(out);
+        return result;
+    }
+
+    /** Fills in label and size for a folder the user typed by hand. */
+    public static void describe(Context ctx, Target t) {
+        List<Target> one = new ArrayList<>();
+        one.add(t);
+        fillLabels(ctx, one);
+        measure(one);
     }
 
     private static List<String> installedPackages(Context ctx) {

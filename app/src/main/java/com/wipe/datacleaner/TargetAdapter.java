@@ -40,7 +40,13 @@ public class TargetAdapter extends BaseAdapter {
         CheckBox cb = v.findViewById(R.id.cbSelect);
 
         name.setText(t.packageName);
-        sub.setText(t.appLabel != null ? t.appLabel : "(app not installed)");
+        if (t.appLabel != null) {
+            sub.setText(t.appLabel);
+        } else if (t.manual) {
+            sub.setText("typed by hand - not seen by the scan");
+        } else {
+            sub.setText("app not installed - leftover data");
+        }
         meta.setText(t.sizeText() + "  ·  " + t.sourceName());
 
         cb.setOnCheckedChangeListener(null);

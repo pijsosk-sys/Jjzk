@@ -3,7 +3,7 @@
 Android app that deletes folders under `/storage/emulated/0/Android/data` and keeps a
 **log menu that says exactly why a deletion failed**.
 
-Ready-to-install APK: [`release/DataWiper-1.1.apk`](release/DataWiper-1.1.apk)
+Ready-to-install APK: [`release/DataWiper-1.2.apk`](release/DataWiper-1.2.apk)
 (min Android 7.0, target Android 14, signed with the debug-style key in `keystore/`).
 
 ## What it does
@@ -14,6 +14,12 @@ Ready-to-install APK: [`release/DataWiper-1.1.apk`](release/DataWiper-1.1.apk)
   `mojang` or `com.micro` narrows hundreds of folders down to the ones you want.
   All / None then act on the filtered list only; selections survive changing the search.
 * **Long-press a folder to inspect it** — a read-only probe that deletes nothing (see below).
+* When `Android/data` cannot be listed at all, the list falls back to installed apps and
+  says so in a banner. Folders left behind by **uninstalled** apps cannot appear in that
+  fallback, so typing a folder name into the search box offers a
+  *"Use … as a folder name"* button that targets it directly.
+* **Menu → Copy adb commands** writes `adb shell rm -rf "…"` for everything selected to
+  the clipboard — the route that still works from a computer on any Android version.
 * Lets you tick folders (All / None shortcuts) and delete them in one run.
 * For each folder it tries three routes, in order, and stops at the first that works:
   1. **File API** — plain `java.io.File` recursive delete.
@@ -72,6 +78,16 @@ This is not a bug in the app, it is the platform:
 
 The app says this up front on the main screen, in the "Why does it fail?" menu item, and
 in every relevant log entry — it does not pretend to work around the restriction.
+
+On Android 13+ the three things that still work are:
+
+1. **root** — tick "Use root if available"; the app offers this by itself when nothing
+   could be listed;
+2. **a computer** — menu → Copy adb commands, then paste them with the phone connected;
+3. **a file manager using Shizuku**, which runs commands as the shell user.
+
+If another file manager on the phone *does* show `Android/data` on Android 13+, it is
+using one of those — most likely root.
 
 Deleting an app's data folder removes logins, offline maps, downloaded media and game
 saves for that app. There is no undo.
