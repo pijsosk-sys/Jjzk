@@ -10,13 +10,15 @@ LOG="$HOME/.cache/roblox-studio/$([ $helper = 1 ] && echo helper || echo launche
 python3 - "$@" <<'BODDY_PY' 2>&1 | tee "$LOG"
 #!/usr/bin/env python3
 """Boddy Linux compatibility launcher. Does not modify Roblox binaries."""
-import os,sys,json,re,hashlib,zipfile,tarfile,shutil,subprocess,time,threading,urllib.request,urllib.error,urllib.parse,ssl,fcntl,signal,resource
+import os,sys,json,re,hashlib,zipfile,tarfile,shutil,subprocess,time,threading,collections,concurrent.futures,urllib.request,urllib.error,urllib.parse,ssl,fcntl,signal,resource
 from pathlib import Path
 ROOT=Path.home()/'.local/share/roblox-studio';CACHE=Path.home()/'.cache/roblox-studio'
 VERSION_URL='https://clientsettingscdn.roblox.com/v2/client-version/WindowsStudio64'
 CDN='https://setup.rbxcdn.com/'
 DEST={'ApplicationConfig':'ApplicationConfig','BuiltInPlugins':'BuiltInPlugins','BuiltInStandalonePlugins':'BuiltInStandalonePlugins','Plugins':'Plugins','Qml':'Qml','StudioFonts':'StudioFonts','RibbonConfig':'RibbonConfig','shaders':'shaders','ssl':'ssl','WebView2RuntimeInstaller':'WebView2RuntimeInstaller','content-textures2':'content/textures','content-textures3':'PlatformContent/pc/textures','content-terrain':'PlatformContent/pc/terrain','content-platform-fonts':'PlatformContent/pc/fonts','content-platform-dictionaries':'PlatformContent/pc/shared_compression_dictionaries','content-studio_svg_textures':'content/studio_svg_textures','content-qt_translations':'content/qt_translations','content-api-docs':'content/api_docs'}
-def say(s):print(s,flush=True)
+_say_lock=threading.Lock()
+def say(s):
+ with _say_lock:print(s,flush=True)  # downloads report from several threads
 class TlsError(RuntimeError):pass
 class OfflineError(RuntimeError):pass
 _tls=None
@@ -63,7 +65,38 @@ def open_url(url,headers=None):
   raise
 def fetch(url):
  with open_url(url) as r:return r.read()
-def download(url,path,size=None,md5=None,sha256=None):
+def size_text(n):
+ return '%.1f GB'%(n/1e9) if n>=1e9 else '%d MB'%max(1,round(n/1e6))
+class Progress:
+ """Reports a download as "Download progress: P% text" lines (every few seconds) for the progress window:
+ how much is done, the speed, and the time left."""
+ def __init__(self,what,total):
+  self.what=what;self.total=max(total,1);self.done=0;self.fetched=0;self.shown=0
+  self.samples=collections.deque();self.lock=threading.RLock()
+ def skip(self,n):
+  # Bytes already on disk from an earlier attempt (or taken back when a file starts over); not part of the speed.
+  with self.lock:self.done+=n
+ def add(self,n):
+  with self.lock:
+   self.done+=n;self.fetched+=n;now=time.time();self.samples.append((now,self.fetched))
+   # Speed over the last 30 s, so it follows the connection without jumping about.
+   while len(self.samples)>2 and now-self.samples[0][0]>30:self.samples.popleft()
+   if now-self.shown<3:return
+   self.shown=now;self.report(now)
+ def report(self,now=None):
+  with self.lock:
+   now=now or time.time();done=min(self.done,self.total)
+   (t0,b0),(t1,b1)=(self.samples[0],self.samples[-1]) if self.samples else ((now,0),(now,0))
+  text='Downloading %s: %s of %s'%(self.what,size_text(done),size_text(self.total))
+  speed=(b1-b0)/(t1-t0) if t1-t0>=2 else 0
+  if done>=self.total:text='Downloaded %s (%s), unpacking'%(self.what,size_text(self.total))
+  elif speed>0:
+   left=(self.total-done)/speed
+   text+=' at %.1f MB/s, about %s left'%(speed/1e6,'%d h %d min'%divmod(round(left/60),60) if left>=3600 else '%d min'%max(1,round(left/60)))
+  else:text+=', working out the time left'
+  # The window closes itself at 100%, so a finished download shows 99 until the next step.
+  say('Download progress: %d%% %s'%(min(99,done*100//self.total),text))
+def download(url,path,size=None,md5=None,sha256=None,progress=None):
  def valid(p):
   if not p.exists() or (size is not None and p.stat().st_size!=size):return False
   for alg,want in [('md5',md5),('sha256',sha256)]:
@@ -73,23 +106,36 @@ def download(url,path,size=None,md5=None,sha256=None):
      for b in iter(lambda:f.read(1048576),b''):h.update(b)
     if h.hexdigest().lower()!=want.lower():return False
   return True
- if valid(path) and (md5 or sha256):return
+ if valid(path) and (md5 or sha256):
+  if progress:progress.skip(path.stat().st_size)
+  return
  part=path.with_suffix(path.suffix+'.part');path.parent.mkdir(parents=True,exist_ok=True)
- for attempt in range(3):
+ counted=0  # bytes of this file included in progress
+ def count(have):
+  nonlocal counted
+  if progress and have!=counted:progress.skip(have-counted);counted=have
+ for attempt in range(5):
   try:
    # Continue a partial download (Android may have stopped Boddy mid-way); the checksum covers the joined file.
    have=part.stat().st_size if part.exists() else 0
+   # A part that is already complete (stopped just before it was renamed) needs no download.
+   if size is not None and have==size and (md5 or sha256) and valid(part):
+    count(have);part.replace(path);return
    if size is not None and have>=size:have=0
    with open_url(url,{'Range':'bytes=%d-'%have} if have else None) as r:
     if have and getattr(r,'status',None)!=206:have=0  # server sent the whole file
-    with part.open('ab' if have else 'wb') as f:shutil.copyfileobj(r,f,1048576)
+    count(have)
+    with part.open('ab' if have else 'wb') as f:
+     for b in iter(lambda:r.read(262144),b''):
+      f.write(b)
+      if progress:progress.add(len(b));counted+=len(b)
    if not valid(part):
-    part.unlink(missing_ok=True);raise RuntimeError('Download size/checksum mismatch: '+path.name)
+    part.unlink(missing_ok=True);count(0);raise RuntimeError('Download size/checksum mismatch: '+path.name)
    part.replace(path);return
   except TlsError:raise
   except Exception:
-   if attempt==2:raise
-   time.sleep(1)
+   if attempt==4:raise
+   time.sleep(2*(attempt+1))  # a mobile connection that dropped needs a moment to come back
 def manifest(data):
  lines=[s.strip() for s in data.decode().splitlines() if s.strip()]
  if not lines or lines.pop(0)!='v0' or len(lines)%4:raise ValueError('Invalid Roblox package manifest')
@@ -135,6 +181,7 @@ def prune_downloads(keep_stage=None,keep_version=None):
 def prune_logs(keep=10):
  for pattern in ('launcher-*.log','helper-*.log'):
   for f in sorted(CACHE.glob(pattern),key=lambda f:f.stat().st_mtime)[:-keep]:f.unlink(missing_ok=True)
+DOWNLOADS_AT_ONCE=4  # Studio is ~40 files; several at once is much faster than one by one on a phone
 def install_studio():
  target=ROOT/'Studio';stamp=target/'.version'
  try:
@@ -146,18 +193,38 @@ def install_studio():
   raise
  if stamp.exists() and stamp.read_text().strip()==version and (target/'RobloxStudioBeta.exe').exists():return target
  packages=manifest(fetch(CDN+version+'-rbxPkgManifest.txt'))
- required=sum(p[3] for p in packages)+max(p[2] for p in packages)+512*1024*1024
- if shutil.disk_usage(ROOT).free<required:raise RuntimeError('Insufficient free storage; need about %.1f GB'%(required/1e9))
  stage=ROOT/('stage-'+version);prune_downloads(keep_stage=stage,keep_version=version);stage.mkdir(exist_ok=True)
  # Packages already unpacked into this stage are skipped, so a stopped install continues where it was.
  done_file=stage/'.boddy-extracted';done=set(done_file.read_text().split()) if done_file.exists() else set()
- for index,(name,md5,size,_) in enumerate(packages):
-  say('Studio %d/%d: %s'%(index+1,len(packages),name)+(' (already done)' if name+':'+md5 in done else ''))
-  if name+':'+md5 in done:continue
-  archive=CACHE/(version+'-'+name);download(CDN+version+'-'+name,archive,size,md5)
-  # Delete each verified archive once extracted, so only one is on disk at a time (the free-space check assumes this).
-  extract_zip(archive,stage/destination(name));archive.unlink()
-  with done_file.open('a') as f:f.write(name+':'+md5+'\n');f.flush();os.fsync(f.fileno())
+ todo=[p for p in packages if p[0]+':'+p[1] not in done]
+ # Room for what is still to unpack, plus the archives that can be on disk at once.
+ required=sum(p[3] for p in todo)+sum(sorted((p[2] for p in todo),reverse=True)[:DOWNLOADS_AT_ONCE])+512*1024*1024
+ free=shutil.disk_usage(ROOT).free
+ if free<required:raise RuntimeError('Not enough free storage for Roblox Studio: it needs about %s more and %s is free. '
+  'Free up space on the phone and try again; what is already downloaded is kept.'%(size_text(required),size_text(free)))
+ progress=Progress('Roblox Studio',sum(p[2] for p in todo))
+ say('Roblox Studio: %d files, %s to download (%d already done)'%(len(todo),size_text(progress.total),len(packages)-len(todo)))
+ progress.report()
+ # Downloads run DOWNLOADS_AT_ONCE at a time; each archive is unpacked in order as soon as it is in, then deleted,
+ # so at most DOWNLOADS_AT_ONCE archives are on disk (the free-space check assumes this).
+ queue=iter(todo);pending=collections.deque();unpacked=len(packages)-len(todo)
+ with concurrent.futures.ThreadPoolExecutor(DOWNLOADS_AT_ONCE) as pool:
+  try:
+   while True:
+    while len(pending)<DOWNLOADS_AT_ONCE:
+     p=next(queue,None)
+     if p is None:break
+     archive=CACHE/(version+'-'+p[0])
+     pending.append((p,archive,pool.submit(download,CDN+version+'-'+p[0],archive,p[2],p[1],progress=progress)))
+    if not pending:break
+    (name,md5,size,_),archive,job=pending.popleft();job.result()
+    unpacked+=1;say('Studio %d/%d: %s'%(unpacked,len(packages),name))
+    extract_zip(archive,stage/destination(name));archive.unlink()
+    with done_file.open('a') as f:f.write(name+':'+md5+'\n');f.flush();os.fsync(f.fileno())
+  except BaseException:
+   for *_,job in pending:job.cancel()  # don't start the rest; the ones running finish and are kept for next time
+   raise
+ progress.report()
  if not (stage/'RobloxStudioBeta.exe').exists():raise RuntimeError('Studio executable absent after extraction')
  (stage/'AppSettings.xml').write_text('<Settings><ContentFolder>content</ContentFolder><BaseUrl>https://www.roblox.com</BaseUrl></Settings>')
  (stage/'.version').write_text(version);done_file.unlink()
@@ -299,10 +366,11 @@ def install_box64_wine():
  if stamp.exists() and stamp.read_text().strip()==version and wine.exists():return [box64,str(wine)]
  say('Installing Wine %s (x86-64, from WineHQ) for Box64'%version)
  stage=ROOT/'wine-x64-stage';shutil.rmtree(stage,ignore_errors=True);stage.mkdir()
+ progress=Progress('Wine %s'%version,sum(int(f['Size']) for _,f in pkgs.values()))
  for name,(_,f) in pkgs.items():
   if not re.fullmatch(r'pool/main/[A-Za-z0-9/._~+-]+\.deb',f['Filename']) or '..' in f['Filename']:raise ValueError('Unexpected Wine package path')
   deb=CACHE/Path(f['Filename']).name
-  download(WINEHQ+f['Filename'],deb,int(f['Size']),sha256=f['SHA256'])
+  download(WINEHQ+f['Filename'],deb,int(f['Size']),sha256=f['SHA256'],progress=progress)
   subprocess.run(['dpkg-deb','-x',str(deb),str(stage)],check=True)
   deb.unlink()
  if not (stage/'opt'/('wine-'+WINE_BRANCH)/'bin'/'wine').exists():raise RuntimeError('Wine executable absent after extraction')
@@ -366,7 +434,7 @@ def install_wine():
  a=assets[0];url=a['browser_download_url']
  if not url.startswith('https://github.com/AndreRH/hangover/releases/download/'):raise ValueError('Unexpected runtime URL')
  archive=CACHE/a['name'];digest=a.get('digest') or '';sha=digest[7:] if digest.startswith('sha256:') else None
- download(url,archive,a['size'],sha256=sha)
+ download(url,archive,a['size'],sha256=sha,progress=Progress('Hangover',a['size']))
  # A fresh directory: packages left from an earlier attempt or release would be installed alongside.
  unpack=CACHE/'hangover-packages';shutil.rmtree(unpack,ignore_errors=True);unpack.mkdir()
  with tarfile.open(archive) as t:
@@ -640,8 +708,8 @@ def main():
   name=combination_name(rt,major)
   say('Trying %s (%d of %d)'%(name,i+1,len(todo)))
   try:wine,env,prefix=start_windows()
-  except (TlsError,OfflineError,urllib.error.URLError):raise  # no internet: other versions cannot download either
   except Exception as e:
+   if offline(e):raise  # no internet: the other versions could not download either
    say('%s did not work: %s'%(name,e));tried.append((name,str(e).strip().splitlines()[0] if str(e).strip() else type(e).__name__))
    continue
   save_combination(rt,major)
@@ -671,6 +739,10 @@ def main():
   '\n\nChoose "Copy log" and send the log; it shows why each one stopped. Roblox Tools > "Start a new game I can '
   'edit with an AI agent" still works without Studio.')
 STUDIO_CRASH_SECONDS=180
+def offline(e):
+ """Whether an error means the internet is not reachable (rather than one Wine version failing)."""
+ if isinstance(e,(TlsError,OfflineError,ConnectionError,TimeoutError)):return True
+ return isinstance(e,urllib.error.URLError) and not isinstance(e,urllib.error.HTTPError)
 WINE_MAJORS=('','10','9','8')  # '' is the newest WineHQ offers
 def combinations():
  """Every runtime and Wine version to try: the saved one first, then Box64 with each Wine, then Hangover."""

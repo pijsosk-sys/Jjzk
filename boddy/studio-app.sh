@@ -17,7 +17,7 @@ escape() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }  # for zen
 copy_log() {
     command -v xclip >/dev/null || apt-get install -y -q --no-install-recommends xclip >/dev/null 2>&1
     report=$( echo "Roblox Studio on Boddy - log from $(date '+%Y-%m-%d %H:%M')"
-              echo "=== launcher log (last 200 lines) ==="; tail -n 200 "$1" 2>/dev/null
+              echo "=== launcher log (last 200 lines) ==="; grep -v "^Download progress: " "$1" 2>/dev/null | tail -n 200
               [ -s "$MONITOR" ] && { echo "=== session monitor (last 20 lines) ==="; tail -n 20 "$MONITOR"; } )
     if command -v xclip >/dev/null && printf '%s\n' "$report" | xclip -selection clipboard 2>/dev/null; then
         zenity --info --width=360 --title="$TITLE" --timeout=6 --text="Log copied. Paste it anywhere on your phone." 2>/dev/null
@@ -114,9 +114,11 @@ setsid bash -c 'echo $$ >"$1"; "$2" "${@:4}"; echo $? >"$3"' _ \
     say() { printf '%s\n' "$@" >&3 2>/dev/null; }
     while IFS= read -r line; do
         case "$line" in
-            "Studio "[0-9]*/[0-9]*:*)
-                n=${line#Studio }; n=${n%%:*}
-                say "$(( ${n%/*} * 90 / ${n#*/} ))" "# Downloading Roblox Studio (${n%/*} of ${n#*/})..." ;;
+            "Download progress: "*)  # "Download progress: 42% Downloading Roblox Studio: 610 MB of 1.5 GB at ..."
+                rest=${line#Download progress: }
+                say "${rest%%\%*}" "# ${rest#*\% }" ;;
+            "Studio crashed after"*)
+                zenity --info --width=420 --title="$TITLE" --timeout=20 --text="Studio closed straight away, so Boddy is trying another way to run it. This can take a while; you don't need to do anything." 2>/dev/null & ;;
             "Trying "*) say "# ${line%% (*}..." ;;
             "Installing Box64"*) say 1 "# Installing the x86 translator (one time)..." ;;
             "Installing Wine"*) say 2 "# Installing the Windows compatibility layer..." ;;
