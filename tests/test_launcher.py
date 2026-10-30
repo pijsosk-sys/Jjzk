@@ -108,3 +108,26 @@ assert '"Compatibility mode"' in app and '--use-box64' in app and '--use-hangove
 for flag in re.findall(r'"\$STUDIO" (--[a-z0-9-]+)',app):
  assert flag in body,'studio-app.sh passes %s, which the launcher does not accept'%flag
 print('PASS: studio-app.sh progress parsing, stop report and runtime switch match the launcher.')
+
+# A kernel with pages bigger than 4 KB cannot run x86-64 code under Box64 or FEX at all. The
+# launcher must say so before it downloads Wine and ~1.8 GB of Studio, and must point at the
+# way of making games that still works on such a phone.
+real_page=r.PAGE_SIZE
+try:
+ r.PAGE_SIZE=4096
+ r.preflight()                      # a normal phone: no complaint, nothing downloaded
+ for bad in (16384,65536):
+  r.PAGE_SIZE=bad
+  try:
+   r.preflight();raise AssertionError('accepted a %d-byte page size'%bad)
+  except RuntimeError as e:
+   msg=str(e)
+   assert '%d KB'%(bad//1024) in msg,'does not say the page size: '+msg
+   assert 'Roblox Tools' in msg,'does not point at the way that still works: '+msg
+finally:
+ r.PAGE_SIZE=real_page
+# The report must carry the numbers needed to tell why Studio failed on a phone we cannot test.
+report=body.split('def diagnose():',1)[1].split('\ndef ',1)[0]
+for field in ('Memory available','Processes:','Page size','glxinfo'):
+ assert field in report,'diagnostics no longer report '+field
+print('PASS: page-size preflight refuses 16K/64K kernels early, and diagnostics report memory, processes, page size and 3D.')

@@ -180,6 +180,18 @@ def prefix_dir():
 def runtime():
  r=os.getenv('BODDY_STUDIO_RUNTIME') or (RUNTIME_FILE.read_text().strip() if RUNTIME_FILE.exists() else 'box64')
  return r if r in ('box64','hangover') else 'box64'
+PAGE_SIZE=os.sysconf('SC_PAGE_SIZE')
+def preflight():
+ # x86-64 code assumes 4 KB memory pages, and so do Box64 and Hangover/FEX. A kernel built with
+ # larger pages (phones released with Android 15+ ship 16 KB) cannot run them at all. Check it
+ # here: otherwise this downloads Wine and ~1.8 GB of Studio first and then dies in the emulator
+ # with a message nobody can act on.
+ if PAGE_SIZE!=4096:
+  raise RuntimeError(
+   "This phone's Linux kernel uses %d KB memory pages, and Windows programs need 4 KB pages, so "
+   "Roblox Studio cannot run on this phone. Nothing you can change in Boddy or Android fixes it.\n\n"
+   "Making Roblox games still works: open Roblox Tools and choose \"Start a new game I can edit "
+   "with an AI agent\"." % (PAGE_SIZE//1024))
 WINEHQ='https://dl.winehq.org/wine-builds/debian/'
 WINE_BRANCH='stable'
 WINE_X64=ROOT/'wine-x64'
@@ -297,6 +309,14 @@ def diagnose():
   try:open_url(url).close();say('HTTPS OK: '+url)
   except urllib.error.HTTPError:say('HTTPS OK: '+url)
   except Exception as e:say('HTTPS FAILED: '+url+'\n'+str(e))
+ say('Memory available: %d MB'%mem_available_mb())
+ say('Processes: %d (Android stops Boddy above about %d)'%(process_count(),PHANTOM_LIMIT))
+ say('Page size: %d bytes%s'%(PAGE_SIZE,'' if PAGE_SIZE==4096 else '  <-- too big; Windows programs need 4096'))
+ # Whether 3D works at all is the main open question, so install the one tool that answers it.
+ if not shutil.which('glxinfo'):
+  say('Installing glxinfo to test 3D graphics (one time)')
+  try:apt_install('mesa-utils')
+  except Exception as e:say('Could not install mesa-utils: '+str(e))
  for args in [['getconf','PAGESIZE'],['uname','-m'],['glxinfo','-B']]:
   if shutil.which(args[0]):
    try:subprocess.run(args,timeout=20)
@@ -488,6 +508,7 @@ def main():
  if arg=='--uninstall':raise RuntimeError('Automatic deletion disabled. Remove installations manually after exporting projects.')
  if not os.getenv('DISPLAY'):raise RuntimeError('Open this launcher inside the Boddy desktop so DISPLAY is set')
  say('Runtime: %s (change it in the Studio menu)'%runtime())
+ preflight()
  wine=wine_command();prefix=prefix_dir()
  env=wine_env(prefix)
  command([*wine,'--version'],120,env)
