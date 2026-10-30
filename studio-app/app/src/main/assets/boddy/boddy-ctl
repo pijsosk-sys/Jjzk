@@ -1,0 +1,139 @@
+#!/bin/bash
+# Controls the Boddy desktop and talks to the phone. Run as one of its symlinked names:
+#   boddy-screen [file]        screenshot of the desktop (default /tmp/boddy-screen.png)
+#   boddy-click X Y [right|double|middle]
+#   boddy-type TEXT            type text
+#   boddy-key KEYS...          e.g. ctrl+s, Return, alt+F4
+#   boddy-scroll up|down [N]
+#   boddy-run COMMAND...       start a desktop program in the background
+#   phone-save FILE            copy a file to the phone's Downloads/Boddy folder
+#   phone-open FILE|URL        open a file or link on the phone (.mcaddon/.mcpack go to Minecraft)
+#   phone-app NAME             open a phone app, e.g. "Minecraft", "Roblox", "DroidBridge"
+#   phone-apps                 list every app on the phone (names to use with phone-app)
+# Controlling phone apps (needs "Let AI control phone apps" on in the Boddy app). X Y are the
+# pixels of phone-screen's picture; a saved spot name like minecraft.jump works anywhere X Y does.
+#   phone-status               is control on, screen size, which app is on screen
+#   phone-screen [grid]        screenshot of the phone to /tmp/phone-screen.jpg (grid: labelled lines)
+#   phone-ui                   buttons and text on screen with their X Y (normal apps, not games)
+#   phone-tap X Y              phone-hold X Y MS              phone-swipe X1 Y1 X2 Y2 [MS]
+#   phone-do "SCRIPT"          a burst of moves, e.g. "hold 200 600 2000 + swipe 1200 400 1400 400 600; tap 1400 500"
+#   phone-key back|home|recents|notifications|split
+#   phone-type TEXT            type into the focused text box
+#   phone-split APP            open an app next to Boddy in split screen
+#   phone-spot APP NAME X Y    remember a button (then use APP.NAME);  phone-spots [APP] lists them
+export DISPLAY=${DISPLAY:-:1}
+cmd=$(basename "$0")
+if [ "$cmd" = boddy-ctl ]; then cmd=$1; shift; fi
+
+bridge() {
+    local token reply
+    token=$(cat /opt/boddy/.bridge-token 2>/dev/null)
+    if [ -z "$token" ] || ! exec 3<>/dev/tcp/127.0.0.1/7311 2>/dev/null; then
+        echo "error: the Boddy app isn't reachable (is the desktop open?)" >&2
+        return 1
+    fi
+    printf '%s %s\n' "$token" "$*" >&3
+    read -r -t 75 reply <&3
+    exec 3>&-
+    echo "$reply"
+    [[ "$reply" == ok* ]]
+}
+
+abspath() { readlink -f -- "$1"; }
+
+SPOTS=/root/.boddy/spots
+# Replaces saved spot names (minecraft.jump) with their X Y.
+spots() {
+    python3 -c '
+import re, sys, os
+d = sys.argv[1]
+def look(m):
+    app, name = m.group(1).lower(), m.group(2).lower()
+    try:
+        for line in open(os.path.join(d, app + ".txt")):
+            w = line.split()
+            if len(w) == 3 and w[0].lower() == name:
+                return w[1] + " " + w[2]
+    except OSError:
+        pass
+    sys.exit("unknown spot %s.%s (save it with phone-spot %s %s X Y)" % (app, name, app, name))
+print(re.sub(r"\b([A-Za-z][\w-]*)\.([A-Za-z][\w-]*)\b", look, sys.argv[2]))
+' "$SPOTS" "$*"
+}
+
+case "$cmd" in
+    boddy-screen)
+        out=${1:-/tmp/boddy-screen.png}
+        scrot -o -p "$out" || exit 1
+        echo "Saved $out. Screen size: $(xdotool getdisplaygeometry | tr ' ' x). Click coordinates use these pixels."
+        ;;
+    boddy-click)
+        [ $# -ge 2 ] || { echo "usage: boddy-click X Y [right|double|middle]" >&2; exit 2; }
+        xdotool mousemove "$1" "$2"
+        case "${3:-left}" in
+            right) xdotool click 3 ;;
+            middle) xdotool click 2 ;;
+            double) xdotool click --repeat 2 --delay 80 1 ;;
+            *) xdotool click 1 ;;
+        esac
+        ;;
+    boddy-type) xdotool type --delay 15 -- "$*" ;;
+    boddy-key) xdotool key --delay 40 -- "$@" ;;
+    boddy-scroll)
+        btn=5; [ "$1" = up ] && btn=4
+        xdotool click --repeat "${2:-3}" --delay 30 "$btn"
+        ;;
+    boddy-run) setsid "$@" >/dev/null 2>&1 & ;;
+    phone-save)
+        f=$(abspath "$1"); [ -f "$f" ] || { echo "no such file: $1" >&2; exit 1; }
+        bridge save "$f"
+        ;;
+    phone-open)
+        if [[ "$1" == http://* || "$1" == https://* ]]; then bridge open "$1"; exit; fi
+        f=$(abspath "$1"); [ -f "$f" ] || { echo "no such file: $1" >&2; exit 1; }
+        bridge openfile "$f"
+        ;;
+    phone-app) bridge launch "$*" ;;
+    phone-apps)
+        if reply=$(bridge apps all 2>/dev/null); then
+            echo "${reply#ok: }" | tr '|' '\n'
+        else
+            cat /opt/boddy/phone-apps.txt 2>/dev/null || echo "unknown (open the Boddy desktop first)"
+        fi
+        ;;
+    phone-status) bridge status - ;;
+    phone-screen)
+        out=/tmp/phone-screen.jpg
+        if reply=$(bridge screen "$out ${1:-plain}"); then
+            echo "Saved $out (${reply#ok: } pixels; tap coordinates use these pixels). Read it to see the phone."
+        else
+            echo "$reply"; exit 1
+        fi
+        ;;
+    phone-ui)
+        reply=$(bridge ui /tmp/phone-ui.txt) || { echo "$reply"; exit 1; }
+        cat /tmp/phone-ui.txt
+        ;;
+    phone-tap) s=$(spots "$*") || exit 1; bridge do "tap $s" ;;
+    phone-hold) s=$(spots "$*") || exit 1; bridge do "hold $s" ;;
+    phone-swipe)
+        s=$(spots "$*") || exit 1; set -- $s
+        bridge do "swipe $1 $2 $3 $4 ${5:-300}"
+        ;;
+    phone-do) s=$(spots "$*") || exit 1; bridge do "$s" ;;
+    phone-key) bridge key "${1:-back}" ;;
+    phone-type) bridge type "$(printf '%s' "$*" | tr '\n' ' ')" ;;
+    phone-split) bridge split "$*" ;;
+    phone-spot)
+        [ $# -eq 4 ] || { echo "usage: phone-spot APP NAME X Y   (e.g. phone-spot minecraft jump 1450 620)" >&2; exit 2; }
+        mkdir -p "$SPOTS"; f="$SPOTS/${1,,}.txt"
+        touch "$f"; awk -v n="${2,,}" 'tolower($1) != n' "$f" > "$f.new"; echo "${2,,} $3 $4" >> "$f.new"; mv "$f.new" "$f"
+        echo "Saved ${1,,}.${2,,} = $3 $4"
+        ;;
+    phone-spots)
+        mkdir -p "$SPOTS"
+        if [ -n "$1" ]; then cat "$SPOTS/${1,,}.txt" 2>/dev/null || echo "no spots saved for $1 yet"
+        else for f in "$SPOTS"/*.txt; do [ -e "$f" ] || { echo "no spots saved yet"; break; }; echo "== $(basename "$f" .txt)"; cat "$f"; done; fi
+        ;;
+    *) sed -n '2,25p' "$0"; exit 2 ;;
+esac

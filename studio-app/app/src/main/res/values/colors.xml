@@ -1,0 +1,8 @@
+<resources>
+    <color name="boddy_bg">#120B26</color>
+    <color name="boddy_card">#1E1640</color>
+    <color name="boddy_accent">#6C5CE7</color>
+    <color name="boddy_accent_light">#A29BFE</color>
+    <color name="boddy_text">#FFFFFF</color>
+    <color name="boddy_text_dim">#B9B3D9</color>
+</resources>
