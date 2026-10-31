@@ -876,6 +876,11 @@ def main():
  migrated=ROOT/'.choice-v6'
  if not migrated.exists():
   SETUP_FILE.unlink(missing_ok=True);migrated.touch()
+ # The previous version took a normal close (exit code -9 from Wine after Studio's own shutdown) for a
+ # crash and moved the setup on from DXVK, which works: back to it once.
+ migrated=ROOT/'.choice-v7'
+ if not migrated.exists():
+  SETUP_FILE.unlink(missing_ok=True);migrated.touch()
  place=None
  if arg and not arg.startswith('--'):
   place=Path(arg).resolve()
@@ -908,8 +913,8 @@ def try_every_way(place):
   say('then allow Firefox to open the Roblox Studio sign-in link.')
   restore_display=fit_display();set_window_mode(wine,env,prefix)
   if process_count()>PHANTOM_LIMIT-12:
-   say('Note: %d Linux processes are already running. Android 12+ stops Boddy above %d; close other Boddy apps,'%(process_count(),PHANTOM_LIMIT))
-   say('or turn off Android\'s child process limit (see "Boddy keeps reconnecting" in the Studio README).')
+   say('Note: %d Linux processes are already running. Fine if Android\'s child process limit is off; with it on, '
+    'Android stops Boddy above %d.'%(process_count(),PHANTOM_LIMIT))
   say('Roblox Studio is starting (%s, %s); its window can take several minutes to appear on a phone.'%(name,GRAPHICS[renderer]))
   began=time.time()
   try:code,notable=run_studio(args,studio,env)
@@ -919,7 +924,10 @@ def try_every_way(place):
   if not code:sys.exit(0)
   # Windows started, so this Wine works: a crash once Studio runs comes from how it is run (its CPU
   # features, emulation speed or 3D drawing), so the next start uses the next setup rather than another Wine.
-  errors=studio_log(prefix,began-5)
+  errors,closed=studio_log(prefix,began-5)
+  # Studio that finished its own shutdown was closed (its window, or the Wine desktop window around it);
+  # Wine may still end the process by force afterwards (exit code -9), which is no crash.
+  if closed:say('Studio closed normally (its log ends with "End of main. Return value 0")');sys.exit(0)
   crashed_itself=any('RobloxCrashHandler' in l for l in notable) or bool(errors)
   dump=studio_crash_dump(prefix,began-5,30 if crashed_itself else 0)
   why=('Studio hit an error and closed itself' if crashed_itself else
@@ -1014,10 +1022,10 @@ def prepare_graphics(gfx,prefix,env):
  env['WINEDLLOVERRIDES']=';'.join(over)
  say('Studio graphics: %s'%GRAPHICS[gfx])
  return env
-# Light settings for drawing on a phone's processor: every frame is drawn in software, so a 30 fps cap, the
+# Light settings for drawing on a phone's processor: every frame is drawn in software, so a 24 fps cap, the
 # lowest quality level and textures, and no shadows or post effects cut the work (and memory) the most.
 # Studio reads these from ClientSettings next to its program, like Roblox's player does.
-LIGHT_FLAGS={'DFIntTaskSchedulerTargetFps':30,'DFIntDebugFRMQualityLevelOverride':1,'FFlagDisablePostFx':True,
+LIGHT_FLAGS={'DFIntTaskSchedulerTargetFps':24,'DFIntDebugFRMQualityLevelOverride':1,'FFlagDisablePostFx':True,
  'FIntRenderShadowIntensity':0,'DFFlagDebugRenderForceTechnologyVoxel':True,
  'DFFlagTextureQualityOverrideEnabled':True,'DFIntTextureQualityOverride':0,
  # Wine handles Alt+Enter itself; Studio's own handling breaks the window under Wine (as Vinegar sets it).
@@ -1026,9 +1034,9 @@ LIGHT_FLAGS={'DFIntTaskSchedulerTargetFps':30,'DFIntDebugFRMQualityLevelOverride
  # no grass or wind animation, and fewer local-light updates per frame: less to draw for the same scene
  'FIntFRMMinGrassDistance':0,'FIntFRMMaxGrassDistance':0,'FIntRenderGrassDetailStrands':0,'FFlagGlobalWindRendering':False,
  'FIntRenderLocalLightUpdatesMax':1,'FIntRenderLocalLightUpdatesMin':1,'FIntRenderLocalLightFadeInMs':0,
- # Draw the 3D view at about 300,000 pixels (a 1274x532 view is 678,000) and scale it up: on a
- # processor-drawn view that roughly halves the work per frame, for a softer picture.
- 'DFIntDebugDynamicRenderKiloPixels':300}
+ # Draw the 3D view at about 240,000 pixels (a 1274x532 view is 678,000) and scale it up: on a
+ # processor-drawn view that cuts the work per frame by almost two thirds, for a softer picture.
+ 'DFIntDebugDynamicRenderKiloPixels':240}
 def write_studio_settings(studio,renderer):
  path=studio/'ClientSettings'/'ClientAppSettings.json'
  try:flags=json.loads(path.read_text()) if path.exists() else {}
@@ -1038,7 +1046,7 @@ def write_studio_settings(studio,renderer):
  # Direct3D 11 is what Studio uses anyway; say so, so an earlier preference for another API is undone.
  for r in ('OpenGL','Vulkan','D3D11FL10','D3D11'):flags['FFlagDebugGraphicsPrefer'+r]=r=='D3D11'
  path.parent.mkdir(exist_ok=True);path.write_text(json.dumps(flags,indent=1))
- say('Studio settings: light (30 fps, lowest quality)')
+ say('Studio settings: light (24 fps, lowest quality, reduced 3D resolution)')
 # Box64 names an instruction it cannot run ("Unimplemented Opcode") only at BOX64_LOG=1, which also logs
 # every unaligned access it fixes and every child-process signal. Studio runs at that level and this
 # drops the noise, keeping the lines that say why it crashed.
@@ -1058,15 +1066,17 @@ BENIGN_FAULT=re.compile(r'\(mmap\)|mmapped:3')
 # reports that as SIGILL). Why is in Studio's own log, in the Wine prefix.
 STUDIO_LOG_ERROR=re.compile(r'Error|error|Crash|crash|xception|ailed|Fatal|fatal|Assert|not supported|unsupported')
 def studio_log(prefix,since):
- """Prints the end of the newest log Studio wrote since `since`, and returns its error lines."""
+ """Prints the end of the newest log Studio wrote since `since`. Returns (its error lines, whether
+ Studio ended normally: it logs "End of main. Return value 0" when it was closed)."""
  logs=[p for p in prefix.glob('drive_c/users/*/AppData/Local/Roblox/logs/*.log')
   if 'Studio' in p.name and p.stat().st_mtime>=since]
- if not logs:say('Studio wrote no log of its own');return []
+ if not logs:say('Studio wrote no log of its own');return [],False
  log=max(logs,key=lambda p:p.stat().st_mtime)
  lines=[l.rstrip() for l in log.read_text(errors='replace').splitlines() if l.strip()]
  say("Studio's own log (%s), last 60 lines:"%log.name)
  for l in lines[-60:]:say('Studio log: '+l[:400])
- return [l for l in lines if STUDIO_LOG_ERROR.search(l) and not STUDIO_LOG_BENIGN.search(l)][-8:]
+ closed='End of main. Return value 0' in '\n'.join(lines[-200:])
+ return [l for l in lines if STUDIO_LOG_ERROR.search(l) and not STUDIO_LOG_BENIGN.search(l)][-8:],closed
 # Errors Studio logs on every start under Wine that have nothing to do with a crash.
 STUDIO_LOG_BENIGN=re.compile(r"EnableNonClientDpiScaling|DAPClient|Secure Storage read failed|onResizeEvent|ThumbnailController|CreatorWarning|"
  r"isn't defined in C\+\+ code|referenced from Lua")
