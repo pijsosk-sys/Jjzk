@@ -152,10 +152,14 @@ public final class Terrain {
       return this.world.method_8320(this.cursor).method_26214(this.world, this.cursor) >= 0.0F;
    }
 
-   /** Roughly how long this block takes to break, as a path cost. */
+   /**
+    * Roughly what breaking this block costs, in the same units as a step. Breaking is paid for in
+    * time, and a second of swinging buys several seconds of walking, so it has to be dear: priced
+    * near a step, the search tunnelled through every hill it met instead of walking over them.
+    */
    public double hardness(int x, int y, int z) {
       this.cursor.method_10103(x, y, z);
       float hardness = this.world.method_8320(this.cursor).method_26214(this.world, this.cursor);
-      return hardness < 0.0F ? 1000.0 : Math.min(40.0, 2.0 + hardness * 3.0);
+      return hardness < 0.0F ? 1000.0 : Math.min(30.0, 1.0 + hardness * 2.5);
    }
 }

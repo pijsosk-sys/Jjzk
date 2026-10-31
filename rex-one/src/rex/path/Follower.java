@@ -49,6 +49,8 @@ public final class Follower {
    private class_243 watch;
    private int watchTicks;
    private int breakTicks;
+   private int lastIndex = -1;
+   private int indexTicks;
    public String status = "Idle";
    public boolean sprint = true;
 
@@ -58,6 +60,8 @@ public final class Follower {
       this.watch = null;
       this.watchTicks = 0;
       this.breakTicks = 0;
+      this.lastIndex = -1;
+      this.indexTicks = 0;
    }
 
    public Path path() {
@@ -140,6 +144,18 @@ public final class Follower {
          this.watch = null;
          this.release();
          this.status = "Stuck at " + target.method_10263() + " " + target.method_10264() + " " + target.method_10260();
+         return Result.STUCK;
+      }
+      // Moving is not the same as getting anywhere. Bobbing in water changed the position every
+      // tick, so the watchdog above never fired while the same cell stayed out of reach for
+      // minutes. Six seconds on one cell is a dead end whatever the position is doing.
+      if (this.index != this.lastIndex) {
+         this.lastIndex = this.index;
+         this.indexTicks = 0;
+      } else if (++this.indexTicks > 120) {
+         this.indexTicks = 0;
+         this.release();
+         this.status = "Cannot get into " + target.method_10263() + " " + target.method_10264() + " " + target.method_10260();
          return Result.STUCK;
       }
 
@@ -243,10 +259,13 @@ public final class Follower {
       }
       int feetY = class_3532.method_15357(at.field_1351);
       boolean inWater = terrain.water(class_3532.method_15357(at.field_1352), feetY, class_3532.method_15357(at.field_1350));
-      // Jump for a step up, and hold jump in water so it swims out instead of sinking.
-      this.steering.jump = inWater || kind == Path.JUMP && target.method_10264() > feetY && player.method_24828();
-      // Sprint only on a straight clear run: sprinting into a corner overshoots it.
-      this.steering.sprint = this.sprint && !inWater && player.method_24828() && this.straightRun() >= 3;
+      // Jump for a step up, and swim up in water - but not when the next cell is below, or it
+      // floats on the surface for ever over a cell it is supposed to sink into.
+      boolean swimUp = inWater && target.method_10264() >= feetY;
+      this.steering.jump = swimUp || kind == Path.JUMP && target.method_10264() > feetY && player.method_24828();
+      // Sprint on a straight clear run - and in water, where sprinting is what swimming is.
+      // Sprinting into a corner overshoots it, so only with a few plain steps ahead.
+      this.steering.sprint = this.sprint && (inWater || player.method_24828()) && this.straightRun() >= 3;
       this.steering.sneak = kind == Path.BRIDGE;
       this.steering.method_3129();
    }
@@ -256,7 +275,7 @@ public final class Follower {
       int run = 0;
       for (int i = this.index; i < this.path.length() && run < 4; i++) {
          byte kind = this.path.moves[i];
-         if (kind != Path.WALK && kind != Path.DIAGONAL) {
+         if (kind != Path.WALK && kind != Path.DIAGONAL && kind != Path.SWIM) {
             break;
          }
          run++;

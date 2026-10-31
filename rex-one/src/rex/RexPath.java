@@ -55,7 +55,9 @@ public final class RexPath extends Module {
    public final NumberSetting microsPerTick = new NumberSetting("Microseconds Per Tick", 200.0, 20000.0, 3000.0, 100.0)
       .describe("Thinking time each tick. Higher finds long routes sooner and costs frames.");
    public final NumberSetting nodesPerTick = new NumberSetting("Cells Per Tick", 200.0, 40000.0, 4000.0, 100.0);
-   public final NumberSetting maxNodes = new NumberSetting("Search Limit", 10000.0, 2000000.0, 300000.0, 10000.0)
+   public final NumberSetting horizon = new NumberSetting("Horizon", 48.0, 512.0, 256.0, 16.0)
+      .describe("How far from the start of a stretch the search may look.");
+   public final NumberSetting maxNodes = new NumberSetting("Search Limit", 5000.0, 2000000.0, 60000.0, 5000.0)
       .describe("Cells one search may look at before it settles for the best part of the way.");
    public final NumberSetting lookAhead = new NumberSetting("Plan Ahead", 2.0, 60.0, 12.0, 1.0)
       .describe("Cells left on the current stretch when the next search starts.");
@@ -94,7 +96,7 @@ public final class RexPath extends Module {
       this.addSettings(
          new Setting[]{
             this.pauseOnScreen, this.allowBreak, this.allowPlace, this.allowSwim, this.sprint, this.maxFall,
-            this.microsPerTick, this.nodesPerTick, this.maxNodes, this.lookAhead,
+            this.microsPerTick, this.nodesPerTick, this.maxNodes, this.horizon, this.lookAhead,
             this.showPath, this.beacon, this.throughWalls, this.hud, this.anchor, this.offsetX, this.offsetY, this.width,
             this.pathColor, this.nextColor, this.goalColor, this.background, this.accent, this.text
          }
@@ -120,7 +122,9 @@ public final class RexPath extends Module {
 
    private Traveller.Tuning tuning() {
       return new Traveller.Tuning(
-         new PathFinder.Options(this.allowBreak.get(), this.allowPlace.get(), this.allowSwim.get(), this.maxFall.getInt(), 1.35, this.maxNodes.getInt()),
+         new PathFinder.Options(
+            this.allowBreak.get(), this.allowPlace.get(), this.allowSwim.get(), this.maxFall.getInt(), 1.6, this.maxNodes.getInt(), this.horizon.getInt()
+         ),
          this.pauseOnScreen.get(),
          this.lookAhead.getInt(),
          this.microsPerTick.getLong(),

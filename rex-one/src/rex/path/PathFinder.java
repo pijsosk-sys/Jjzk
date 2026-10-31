@@ -31,9 +31,9 @@ public final class PathFinder {
    }
 
    @Environment(EnvType.CLIENT)
-   public record Options(boolean allowBreak, boolean allowPlace, boolean allowSwim, int maxFall, double weight, int maxNodes) {
+   public record Options(boolean allowBreak, boolean allowPlace, boolean allowSwim, int maxFall, double weight, int maxNodes, int horizon) {
       public static Options standard() {
-         return new Options(true, false, true, 4, 1.35, 300000);
+         return new Options(true, false, true, 4, 1.6, 60000, 256);
       }
    }
 
@@ -46,9 +46,14 @@ public final class PathFinder {
     * pushing on.
     */
    private static final double DEPTH_BONUS = 1.0E-4;
+   /** What it costs to decide to dig through something rather than go round it. */
+   private static final double BREAK_BASE = 3.0;
 
    private Terrain terrain;
    private Goal goal;
+   private int startX;
+   private int startY;
+   private int startZ;
    private Options options = Options.standard();
 
    private long[] cell = new long[1024];
@@ -115,6 +120,9 @@ public final class PathFinder {
       this.options = options;
       this.reset();
       this.result = null;
+      this.startX = x;
+      this.startY = y;
+      this.startZ = z;
       int start = this.node(class_2338.method_10064(x, y, z));
       this.cost[start] = 0.0;
       this.estimate[start] = goal.heuristic(x, y, z) * options.weight();
@@ -224,7 +232,7 @@ public final class PathFinder {
                   }
                   extra += t.hardness(nx, y + 1, nz);
                }
-               this.offer(from, nx, y, nz, 1.0 + extra, Path.BREAK);
+               this.offer(from, nx, y, nz, BREAK_BASE + extra, Path.BREAK);
             }
          }
 
@@ -235,12 +243,14 @@ public final class PathFinder {
             for (int drop = 1; drop <= this.options.maxFall(); drop++) {
                byte below = t.at(nx, y - drop, nz);
                if (below == Terrain.FLOOR) {
-                  this.offer(from, nx, y - drop + 1, nz, 1.0 + 0.5 * (drop - 1), Path.FALL);
+                  // Dropping is not free. Priced at a step, the search drifted downhill into every
+                  // cave it passed, because down always looked cheaper than along.
+                  this.offer(from, nx, y - drop + 1, nz, 1.4 + 0.5 * (drop - 1), Path.FALL);
                   landed = true;
                   break;
                }
                if (below == Terrain.WATER) {
-                  this.offer(from, nx, y - drop, nz, 1.5 + 0.2 * drop, Path.FALL);
+                  this.offer(from, nx, y - drop, nz, 3.0 + 0.2 * drop, Path.FALL);
                   landed = true;
                   break;
                }
@@ -254,7 +264,9 @@ public final class PathFinder {
          }
 
          if (this.options.allowSwim() && t.water(nx, y, nz) && t.clear(nx, y + 1, nz)) {
-            this.offer(from, nx, y, nz, 2.2, Path.SWIM);
+            // Swimming is about two and a half times slower than sprinting, so it is priced that
+            // way: a detour three times as long round a lake still beats crossing it.
+            this.offer(from, nx, y, nz, 3.5, Path.SWIM);
          }
       }
 
@@ -276,16 +288,22 @@ public final class PathFinder {
       // Up and down inside water.
       if (this.options.allowSwim() && t.water(x, y, z)) {
          if (t.clear(x, y + 1, z)) {
-            this.offer(from, x, y + 1, z, 2.5, Path.SWIM);
+            this.offer(from, x, y + 1, z, 3.5, Path.SWIM);
          }
          if (t.water(x, y - 1, z)) {
-            this.offer(from, x, y - 1, z, 2.5, Path.SWIM);
+            this.offer(from, x, y - 1, z, 3.5, Path.SWIM);
          }
       }
    }
 
    private void offer(int from, int x, int y, int z, double step, byte kind) {
       if (this.terrain.harmful(x, y, z) || this.terrain.harmful(x, y + 1, z)) {
+         return;
+      }
+      // A bounded box around where this stretch started. Without it a search with nowhere to go
+      // walks outward for ever, and in real terrain "nowhere to go" is common enough.
+      int horizon = this.options.horizon();
+      if (Math.abs(x - this.startX) > horizon || Math.abs(z - this.startZ) > horizon || Math.abs(y - this.startY) > 160) {
          return;
       }
       long position = class_2338.method_10064(x, y, z);

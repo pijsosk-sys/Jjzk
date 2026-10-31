@@ -23,7 +23,7 @@ import rex.RexPath;
 public final class PathDriver implements ClientModInitializer {
    private static final boolean TRACE = Boolean.getBoolean("rexpath.trace");
 
-   private record Scenario(String name, String what, int seconds, List<String> setup, int[] goal, boolean screenTest) {
+   private record Scenario(String name, String what, int seconds, List<String> setup, int[] goal, boolean screenTest, boolean column) {
    }
 
    private final List<String> lines = new ArrayList<>();
@@ -62,15 +62,17 @@ public final class PathDriver implements ClientModInitializer {
       return all;
    }
 
+   private net.minecraft.class_243 spawn;
+
    private void build() {
       List<Scenario> all = new ArrayList<>();
 
-      all.add(new Scenario("flat", "60 blocks across open ground", 120, base(), new int[]{60, -60, 0}, false));
+      all.add(new Scenario("flat", "60 blocks across open ground", 120, base(), new int[]{60, -60, 0}, false, false));
 
       // An obsidian wall it is not allowed to break, with the only way round at the far edge.
       all.add(new Scenario("wall", "round a wall it cannot break", 180,
          with("fill 20 -60 -16 20 -57 13 minecraft:obsidian"),
-         new int[]{40, -60, 0}, false));
+         new int[]{40, -60, 0}, false, false));
 
       // Sealed in a stone box: the only way out is through a block.
       all.add(new Scenario("break", "out of a sealed stone box", 180,
@@ -78,7 +80,7 @@ public final class PathDriver implements ClientModInitializer {
               "fill -3 -60 -3 3 -57 3 minecraft:stone hollow",
               "fill -2 -60 -2 2 -57 2 minecraft:air",
               "tp @a 0.5 -60 0.5 90 0"),
-         new int[]{20, -60, 0}, false));
+         new int[]{20, -60, 0}, false, false));
 
       // A staircase of single steps: eight jumps up.
       List<String> climb = base();
@@ -86,15 +88,25 @@ public final class PathDriver implements ClientModInitializer {
          climb.add("setblock " + (2 + i) + " " + (-61 + i) + " 0 minecraft:stone");
          climb.add("setblock " + (2 + i) + " " + (-61 + i) + " 1 minecraft:stone");
       }
-      all.add(new Scenario("climb", "eight steps up a staircase", 180, climb, new int[]{9, -53, 0}, false));
+      all.add(new Scenario("climb", "eight steps up a staircase", 180, climb, new int[]{9, -53, 0}, false, false));
 
       // A cliff: the far half of the floor is lower, so it has to walk off the edge.
       all.add(new Scenario("drop", "off a cliff onto lower ground", 180,
          with("fill 12 -62 -16 100 -61 16 minecraft:air"),
-         new int[]{30, -62, 0}, false));
+         new int[]{30, -62, 0}, false, false));
 
       // The one the walk has to stop for: a screen opens halfway.
-      all.add(new Scenario("screen", "stops while a screen is open, carries on after", 240, base(), new int[]{80, -60, 0}, true));
+      all.add(new Scenario("screen", "stops while a screen is open, carries on after", 240, base(), new int[]{80, -60, 0}, true, false));
+
+      // The one that runs in a generated world: WORLD=normal, no terrain built, 110 blocks of
+      // whatever the seed put there - hills, trees, water, caves.
+      all.add(new Scenario("terrain", "110 blocks across real ground", 600,
+         new ArrayList<>(List.of(
+            "gamemode survival @a", "clear @a", "effect clear @a",
+            "effect give @a minecraft:resistance infinite 255 true", "time set day", "weather clear",
+            "gamerule doMobSpawning false", "give @a minecraft:cobblestone 64",
+            String.format(Locale.ROOT, "tp @a %.1f %.1f %.1f", this.spawn.field_1352, this.spawn.field_1351, this.spawn.field_1350))),
+         new int[]{(int)this.spawn.field_1352 + 110, 0, (int)this.spawn.field_1350}, false, true));
 
       String only = System.getProperty("rexpath.scenarios", "").toLowerCase(Locale.ROOT);
       for (Scenario scenario : all) {
@@ -138,6 +150,7 @@ public final class PathDriver implements ClientModInitializer {
       }
       switch (this.phase) {
          case 0 -> {
+            this.spawn = client.field_1724.method_73189();
             this.build();
             this.lines.add("scenarios: " + this.queue.size());
             this.phase = 1;
@@ -160,8 +173,9 @@ public final class PathDriver implements ClientModInitializer {
             this.wait = 60;
          }
          case 2 -> {
-            int[] goal = this.queue.get(this.index).goal();
-            RexPath.command(".goto " + goal[0] + " " + goal[1] + " " + goal[2]);
+            Scenario next = this.queue.get(this.index);
+            int[] goal = next.goal();
+            RexPath.command(next.column() ? ".goto " + goal[0] + " " + goal[2] : ".goto " + goal[0] + " " + goal[1] + " " + goal[2]);
             this.phase = 3;
             this.wait = 5;
          }
@@ -178,7 +192,9 @@ public final class PathDriver implements ClientModInitializer {
                this.shot(client, scenario.name() + "-walking"); // a picture of the route being walked
             }
             class_2338 feet = client.field_1724.method_24515();
-            double distance = Math.sqrt(feet.method_10262(new class_2338(scenario.goal()[0], scenario.goal()[1], scenario.goal()[2])));
+            double distance = scenario.column()
+               ? Math.hypot(feet.method_10263() - scenario.goal()[0], feet.method_10260() - scenario.goal()[2])
+               : Math.sqrt(feet.method_10262(new class_2338(scenario.goal()[0], scenario.goal()[1], scenario.goal()[2])));
             this.closest = Math.min(this.closest, distance);
 
             if (scenario.screenTest()) {

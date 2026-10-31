@@ -192,7 +192,7 @@ public final class Overlord {
 
    /** How Overlord walks: it may break through, it never bridges, and a screen stops it. */
    private static final rex.path.Traveller.Tuning TRAVEL = new rex.path.Traveller.Tuning(
-      new rex.path.PathFinder.Options(true, false, true, 4, 1.35, 200000), true, 12, 2500L, 3000, true
+      new rex.path.PathFinder.Options(true, false, true, 4, 1.6, 60000, 192), true, 12, 2500L, 3000, true
    );
 
    // ---------------------------------------------------------------- the tick
