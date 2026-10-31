@@ -198,6 +198,7 @@ BODDY_STUDIO_SESSION=$$ setsid bash -c 'echo $$ >"$1"; "$2" "${@:4}"; echo $? >"
             "Installing Hangover"*) say 2 "# Installing the Windows compatibility layer..." ;;
             "Waiting for the internet"*) say "# Waiting for the internet..." ;;
             "Warning: "*) say "# ${line#Warning: }" ;;
+            "Note: "*" Linux processes are running"*) ;;
             "Testing Windows command"*) say 5 "# Setting up Windows compatibility (the first time takes several minutes)..." ;;
             "Could not check for Studio updates"*) say "# Offline: opening the installed Studio..." ;;
             "Desktop enlarged"*) say 95 "# Making room on the desktop..." ;;

@@ -8,6 +8,12 @@
  * (Box64's own recompiler depends on it), so when that mprotect() fails, this moves the pages'
  * contents into anonymous memory, in place and in one step, and makes that executable instead.
  *
+ * It also hides the CPU model from /proc/cpuinfo when BODDY_GENERIC_CPU=1. Mesa's software renderers
+ * (llvmpipe, lavapipe) compile shaders with LLVM for the CPU model named there; on Snapdragon phones
+ * that model (e.g. Cortex-A520) implies SVE, which the kernel leaves switched off, so the first
+ * drawn frame dies with SIGILL. Without "CPU implementer"/"CPU part" lines LLVM targets a generic
+ * ARMv8 CPU plus only the features the kernel lists, which every phone can run.
+ *
  * Built without a C library's headers so it can be cross-compiled anywhere:
  *   clang --target=aarch64-linux-gnu -O2 -fPIC -shared -nostdlib -fuse-ld=lld -o libboddy-execmod.so execmod-fix.c
  */
@@ -32,6 +38,12 @@ extern void *mmap(void *addr, size_t len, int prot, int flags, int fd, long offs
 extern int munmap(void *addr, size_t len);
 extern void *mremap(void *old, size_t old_len, size_t new_len, int flags, ...);
 extern void *memcpy(void *to, const void *from, size_t n);
+extern int memfd_create(const char *name, unsigned flags);
+extern long read(int fd, void *buf, size_t n);
+extern long write(int fd, const void *buf, size_t n);
+extern long lseek(int fd, long offset, int whence);
+extern int close(int fd);
+extern char *getenv(const char *name);
 
 static int (*real_mprotect)(void *, size_t, int);
 
@@ -61,3 +73,86 @@ fail:
     *__errno_location() = EACCES;
     return -1;
 }
+
+#define O_CREAT 0x40
+#define O_TMPFILE_BIT 0x400000  /* __O_TMPFILE, the same on arm64 and x86-64 */
+#define O_CLOEXEC 0x80000
+#define MFD_CLOEXEC 1
+#define AT_FDCWD (-100)
+#ifndef CPUINFO_SOURCE
+#define CPUINFO_SOURCE "/proc/cpuinfo"  /* tests point it at a sample file */
+#endif
+
+static int starts_with(const char *s, const char *prefix)
+{
+    while (*prefix) if (*s++ != *prefix++) return 0;
+    return 1;
+}
+
+static int is_cpuinfo(const char *path)
+{
+    const char *want = "/proc/cpuinfo";
+    while (*want) if (*path++ != *want++) return 0;
+    if (*path) return 0;
+    const char *on = getenv("BODDY_GENERIC_CPU");
+    return on && on[0] == '1' && !on[1];
+}
+
+/* A memfd holding /proc/cpuinfo without the lines that name the CPU model; -1 if that fails. */
+static int generic_cpuinfo(int flags)
+{
+    static int (*real_openat)(int, const char *, int, ...);
+    static char in[65536], out[65536];
+    if (!real_openat) real_openat = (int (*)(int, const char *, int, ...))dlsym(RTLD_NEXT, "openat");
+    int src = real_openat(AT_FDCWD, CPUINFO_SOURCE, 0);
+    if (src < 0) return -1;
+    long n = 0, got;
+    while (n < (long)sizeof(in) - 1 && (got = read(src, in + n, sizeof(in) - 1 - n)) > 0) n += got;
+    close(src);
+    long o = 0;
+    for (long i = 0; i < n;) {
+        long end = i;
+        while (end < n && in[end] != '\n') end++;
+        if (end < n) end++;  /* keep the newline */
+        const char *line = in + i;
+        if (!starts_with(line, "CPU implementer") && !starts_with(line, "CPU part") &&
+            !starts_with(line, "CPU variant") && !starts_with(line, "CPU revision"))
+            for (long j = i; j < end; j++) out[o++] = in[j];
+        i = end;
+    }
+    int fd = memfd_create("cpuinfo", (flags & O_CLOEXEC) ? MFD_CLOEXEC : 0);
+    if (fd < 0) return -1;
+    if (write(fd, out, o) != o || lseek(fd, 0, 0) != 0) { close(fd); return -1; }
+    return fd;
+}
+
+#define OPEN_WRAPPER(name)                                                        \
+int name(const char *path, int flags, ...)                                        \
+{                                                                                 \
+    static int (*real)(const char *, int, ...);                                   \
+    unsigned mode = 0;                                                            \
+    if (flags & (O_CREAT | O_TMPFILE_BIT)) {                                      \
+        __builtin_va_list ap; __builtin_va_start(ap, flags);                      \
+        mode = __builtin_va_arg(ap, unsigned); __builtin_va_end(ap);              \
+    }                                                                             \
+    if (is_cpuinfo(path)) { int fd = generic_cpuinfo(flags); if (fd >= 0) return fd; } \
+    if (!real) real = (int (*)(const char *, int, ...))dlsym(RTLD_NEXT, #name);   \
+    return real(path, flags, mode);                                               \
+}
+#define OPENAT_WRAPPER(name)                                                      \
+int name(int dir, const char *path, int flags, ...)                               \
+{                                                                                 \
+    static int (*real)(int, const char *, int, ...);                              \
+    unsigned mode = 0;                                                            \
+    if (flags & (O_CREAT | O_TMPFILE_BIT)) {                                      \
+        __builtin_va_list ap; __builtin_va_start(ap, flags);                      \
+        mode = __builtin_va_arg(ap, unsigned); __builtin_va_end(ap);              \
+    }                                                                             \
+    if (is_cpuinfo(path)) { int fd = generic_cpuinfo(flags); if (fd >= 0) return fd; } \
+    if (!real) real = (int (*)(int, const char *, int, ...))dlsym(RTLD_NEXT, #name); \
+    return real(dir, path, flags, mode);                                          \
+}
+OPEN_WRAPPER(open)
+OPEN_WRAPPER(open64)
+OPENAT_WRAPPER(openat)
+OPENAT_WRAPPER(openat64)

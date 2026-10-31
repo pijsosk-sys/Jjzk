@@ -541,6 +541,9 @@ def diagnose():
  say('Processes: %d (Android stops Boddy above about %d)'%(process_count(),PHANTOM_LIMIT))
  say('Page size: %d bytes%s'%(PAGE_SIZE,'' if PAGE_SIZE==4096 else '  <-- too big; Windows programs need 4096'))
  say('Execmod fix for Wine: '+(execmod_fix() or 'missing  <-- Wine cannot load Windows programs on Android without it'))
+ try:features=next((l.split(':',1)[1].split() for l in open('/proc/cpuinfo') if l.startswith('Features')),[])
+ except OSError:features=[]
+ say('SVE in the kernel: %s (Mesa is told to use a generic CPU either way)'%('yes' if 'sve' in features else 'no'))
  say('Making changed file pages executable: '+execmod_probe())
  say('Wine version wanted: '+(wine_major() or 'newest'))
  # Wine maps its DLLs from disk as executable. If Android refuses that, no Wine can ever work here.
@@ -583,7 +586,7 @@ BOX64_SPEED={'fast':{'BOX64_DYNAREC_STRONGMEM':'1'},
 # preloaded into Wine only, moves such pages to anonymous memory first (see execmod-fix.c). Box64 notes it
 # cannot load it as an x86 library and carries on; the host side, where mprotect() runs, loads it.
 EXECMOD_LIB_NAME='libboddy-execmod.so'
-EXECMOD_LIB_SHA256='deef8d551565ef1644b005510ee27ca964be3f6f94c318dceaa2d2104038112e'
+EXECMOD_LIB_SHA256='36390a2659d9528cf2ec0d6815552a85d462d31cc6704676a60a7bb14ec8b671'
 EXECMOD_LIB_URL='https://raw.githubusercontent.com/pijsosk-sys/Jjzk/ccr-f8458f15-i347hd/boddy/'+EXECMOD_LIB_NAME
 def execmod_fix(fetch_missing=False):
  """Path of the ARM64 execmod fix library, downloading it if asked and it is not shipped with Boddy."""
@@ -615,6 +618,9 @@ def wine_env(prefix):
  if runtime()=='box64':
   if os.getenv('BODDY_BOX64_LOG'):env.update(BOX64_LOG=os.environ['BODDY_BOX64_LOG'],BOX64_SHOWSEGV='1')
  fix=execmod_fix(fetch_missing=True)
+ # The same library hides the CPU model from Mesa's LLVM, which otherwise compiles shaders with SVE
+ # instructions a Snapdragon's kernel does not allow (SIGILL on the first frame; see execmod-fix.c).
+ env.setdefault('BODDY_GENERIC_CPU','1')
  if fix and fix not in env.get('LD_PRELOAD','').split():env['LD_PRELOAD']=' '.join(filter(None,[fix,env.get('LD_PRELOAD')]))
  return env
 def set_default_handler(mime,desktop):
@@ -739,8 +745,8 @@ def start_monitor(stop):
     f.write('%s processes=%d mem=%dMB step: %s\n'%(time.strftime('%H:%M:%S'),n,mem_available_mb(),last_said[:120]));f.flush();os.fsync(f.fileno())
     if n>=PHANTOM_LIMIT-4 and not warned:
      warned=True
-     say('Warning: %d Linux processes are running and Android 12+ stops Boddy above %d. On Android 14+ turn on '
-      'Developer options > Disable child process restrictions.'%(n,PHANTOM_LIMIT))
+     say('Note: %d Linux processes are running. Fine if Android\'s child process limit is off (Developer options > '
+      'Disable child process restrictions); with it on, Android stops Boddy above %d.'%(n,PHANTOM_LIMIT))
     if stop.wait(10):break
    f.write('%s Launcher finished\n'%time.strftime('%H:%M:%S'))
  thread=threading.Thread(target=run,daemon=True);thread.start()
@@ -828,6 +834,10 @@ def main():
  # Wine's DirectX crashed on a phone at the same point on OpenGL and Vulkan, and DXVK got furthest: go back
  # to DXVK once, now that the exception Studio crashes on is recorded.
  migrated=ROOT/'.choice-v5'
+ if not migrated.exists():
+  SETUP_FILE.unlink(missing_ok=True);migrated.touch()
+ # Every back end died the same way, from Mesa's LLVM emitting SVE (now fixed): start again at DXVK.
+ migrated=ROOT/'.choice-v6'
  if not migrated.exists():
   SETUP_FILE.unlink(missing_ok=True);migrated.touch()
  place=None
