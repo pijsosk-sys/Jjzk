@@ -222,7 +222,7 @@ Six for six, in a real 1.21.11 client. Sixty blocks of open ground take ten seco
 sprinting pace, and the search for it costs a few thousand cells.
 
 A seventh runs in a generated world (`WORLD=normal`): `terrain`, a hundred and ten blocks across
-whatever the seed put there - hills, trees, a lake - **pass, 183.4s**. That one is where the move
+whatever the seed put there - hills, trees, a lake - **pass, 202.2s**. That one is where the move
 costs were settled. On a flat plain breaking, dropping and swimming can be priced at roughly a
 step each and nothing looks wrong; on real ground it tunnelled through every hill rather than
 walking over it, drifted down into every cave it passed, and swam lakes it should have walked
