@@ -862,7 +862,12 @@ def try_every_way(place):
   if not code:sys.exit(0)
   # Windows started, so this Wine works: a crash once Studio runs comes from how it is run (its CPU
   # features, emulation speed or 3D drawing), so the next start uses the next setup rather than another Wine.
-  why='an instruction the emulator could not run (SIGILL)' if code in (-4,132) else 'code %d'%code
+  errors=studio_log(prefix,began-5)
+  crashed_itself=any('RobloxCrashHandler' in l for l in notable) or bool(errors)
+  why=('Studio hit an error and closed itself' if crashed_itself else
+   'an instruction the emulator could not run (SIGILL)' if code in (-4,132) else 'code %d'%code)
+  notable=[l for l in notable if 'Unimplemented' in l or 'Signal 4:' in l or 'Unhandled' in l]+[
+   'Studio log: '+l[l.find('[')if '[' in l else 0:][:200] for l in errors]
   details='\n\nWhat failed:\n'+'\n'.join('  '+l[:200] for l in notable[-6:]) if notable else ''
   if setup['step']+1<len(SETUPS):
    SETUP_FILE.write_text(str(setup['step']+1));nxt=current_setup()
@@ -920,8 +925,30 @@ def write_studio_settings(studio,renderer):
 # every unaligned access it fixes and every child-process signal. Studio runs at that level and this
 # drops the noise, keeping the lines that say why it crashed.
 STUDIO_NOISE=re.compile(r'Special unaligned case|Marked db .* as dirty|sigaction handler for sig (3|17)\b|Signal (3|17):|'
- r'Using (native\(wrapped\)|emulated) |Applied settings from rcfile|BOX64ENV|^\s+BOX64_')
-STUDIO_NOTABLE=re.compile(r'Unimplemented|Signal (4|7|8|11):|SIGILL|SIGSEGV|Unhandled|unhandled|err:seh|wine: |NYI|Illegal')
+ r'Using (native\(wrapped\)|emulated) |Applied settings from rcfile|BOX64ENV|^\s+BOX64_|'
+ # what Box64 says each time a Wine process starts
+ r'Parsing volatile metadata|Dynarec for ARM64|Running on .* cores|hardware counter|Wine preloader detected|Wine64 detected|'
+ r'48bits of address space|program break not found|prereserve|Detected running wine|Counted \d+ Env var|'
+ r'trying to Preload|cannot pre-load|Library search path|Binary search path|Looking for /|argv\[\d+\]=|Rename process|'
+ r'Unsupported libc Syscall 0x143|'
+ # Wine's write watches: a fault Box64 hands to Wine, which resumes; the register dump that follows it
+ r'Context has been changed in Sigactionhanlder|^RSP[-+:]|^RAX:|^ ?R(8|12):|^ES:|\(mmap\)|mmapped:3')
+STUDIO_NOTABLE=re.compile(r'Unimplemented|Signal (4|7|8|11):|SIGILL|SIGSEGV|Unhandled|unhandled|err:seh|wine: |NYI|Illegal|RobloxCrashHandler')
+# Faults on memory Wine watches for writes ("(mmap)", "mmapped:3"): Wine handles them and Studio carries on.
+BENIGN_FAULT=re.compile(r'\(mmap\)|mmapped:3')
+# When Studio hits an error it cannot recover from, it starts RobloxCrashHandler and ends itself (Box64
+# reports that as SIGILL). Why is in Studio's own log, in the Wine prefix.
+STUDIO_LOG_ERROR=re.compile(r'Error|error|Crash|crash|xception|ailed|Fatal|fatal|Assert|not supported|unsupported')
+def studio_log(prefix,since):
+ """Prints the end of the newest log Studio wrote since `since`, and returns its error lines."""
+ logs=[p for p in prefix.glob('drive_c/users/*/AppData/Local/Roblox/logs/*.log')
+  if 'Studio' in p.name and p.stat().st_mtime>=since]
+ if not logs:say('Studio wrote no log of its own');return []
+ log=max(logs,key=lambda p:p.stat().st_mtime)
+ lines=[l.rstrip() for l in log.read_text(errors='replace').splitlines() if l.strip()]
+ say("Studio's own log (%s), last 60 lines:"%log.name)
+ for l in lines[-60:]:say('Studio log: '+l[:400])
+ return [l for l in lines if STUDIO_LOG_ERROR.search(l)][-8:]
 def run_studio(args,cwd,env):
  """Runs Studio with Box64's opcode log, printing what matters. Returns (exit code, notable lines)."""
  env=dict(env)
@@ -931,9 +958,11 @@ def run_studio(args,cwd,env):
  try:
   for line in proc.stdout:
    line=line.rstrip('\n')
+   # Box64's start-up line for the crash handler is noise like the rest, but it means Studio crashed.
+   if 'Detected running wine with "RobloxCrashHandler' in line:notable.append('RobloxCrashHandler started: Studio crashed')
    if STUDIO_NOISE.search(line):continue
    print(line,flush=True)
-   if STUDIO_NOTABLE.search(line):notable.append(line.replace('\x1b[31m','').replace('\x1b[0m',''))
+   if STUDIO_NOTABLE.search(line) and not BENIGN_FAULT.search(line):notable.append(line.replace('\x1b[31m','').replace('\x1b[0m',''))
   return proc.wait(),list(notable)
  finally:
   if proc.poll() is None:proc.kill()
