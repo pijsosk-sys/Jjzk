@@ -32,6 +32,10 @@ public final class Sites {
    private class_2338 enchantSite;
    private class_2338 chest;
    private int chestTicks;
+   /** Where a workstation was just put down, and how long it has been waited for. */
+   private String pendingKey = "";
+   private class_2338 pendingStation;
+   private int pendingTicks;
    public String status = "";
 
    public static String dimension(class_310 client) {
@@ -44,6 +48,7 @@ public final class Sites {
 
    public void worldChanged() {
       this.stations.clear();
+      this.pendingStation = null;
       this.frame = null;
       this.frameDimension = "";
       this.enchantSite = null;
@@ -131,23 +136,35 @@ public final class Sites {
          known = null;
       }
       if (known == null) {
-         known = this.nearby(client, id, 5);
+         known = this.nearby(client, id, 6);
          if (known != null) {
             this.stations.put(key, known);
          }
       }
       if (known != null) {
+         this.pendingStation = null;
          this.use(client, navigator, known, false, null, "Opening the " + Ids.pretty(id));
          return false;
+      }
+      // A block does not appear in the world on the tick its click is sent. Checking for it there
+      // and then always said no, so nothing was ever remembered and it kept putting another one
+      // down until the cobblestone ran out.
+      if (this.pendingStation != null && this.pendingKey.equals(key)) {
+         if (++this.pendingTicks <= 40) {
+            this.status = "Waiting for the " + Ids.pretty(id) + " to appear at " + coords(this.pendingStation);
+            return false;
+         }
+         this.pendingStation = null;
       }
       class_2338 spot = this.freeSpot(client);
       if (spot == null) {
          this.status = "No clear ground to put a " + Ids.pretty(id) + " down";
          return false;
       }
-      this.use(client, navigator, spot, true, id, "Putting a " + Ids.pretty(id) + " down");
-      if (block(client, spot).equals(id)) {
-         this.stations.put(key, spot);
+      if (this.use(client, navigator, spot, true, id, "Putting a " + Ids.pretty(id) + " down")) {
+         this.pendingKey = key;
+         this.pendingStation = spot;
+         this.pendingTicks = 0;
       }
       return false;
    }
