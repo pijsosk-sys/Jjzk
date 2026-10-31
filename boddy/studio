@@ -17,8 +17,10 @@ VERSION_URL='https://clientsettingscdn.roblox.com/v2/client-version/WindowsStudi
 CDN='https://setup.rbxcdn.com/'
 DEST={'ApplicationConfig':'ApplicationConfig','BuiltInPlugins':'BuiltInPlugins','BuiltInStandalonePlugins':'BuiltInStandalonePlugins','Plugins':'Plugins','Qml':'Qml','StudioFonts':'StudioFonts','RibbonConfig':'RibbonConfig','shaders':'shaders','ssl':'ssl','WebView2RuntimeInstaller':'WebView2RuntimeInstaller','content-textures2':'content/textures','content-textures3':'PlatformContent/pc/textures','content-terrain':'PlatformContent/pc/terrain','content-platform-fonts':'PlatformContent/pc/fonts','content-platform-dictionaries':'PlatformContent/pc/shared_compression_dictionaries','content-studio_svg_textures':'content/studio_svg_textures','content-qt_translations':'content/qt_translations','content-api-docs':'content/api_docs'}
 _say_lock=threading.Lock()
+last_said=''  # the session monitor records it, so a log cut off by Android still shows the step
 def say(s):
- with _say_lock:print(s,flush=True)  # downloads report from several threads
+ global last_said
+ with _say_lock:print(s,flush=True);last_said=s.splitlines()[0] if s else s  # downloads report from several threads
 class TlsError(RuntimeError):pass
 class OfflineError(RuntimeError):pass
 _tls=None
@@ -557,9 +559,11 @@ def diagnose():
  say('Report does not include account tokens or application configuration files.')
 AUTH_SCHEME='roblox-studio-auth:'
 AUTH_DESKTOP='boddy-roblox-studio-auth.desktop'
+# Box64's errors still show at BOX64_LOG=0; 1 and SHOWSEGV add a line for every child process signal and
+# unaligned access it fixes, which buries Wine's own errors. BODDY_BOX64_LOG=1 brings them back for debugging.
 # Box64's "conservative" settings (as Winlator's preset): slower, but safe for a heavily multi-threaded
 # program like Studio. Any of them can be overridden from the environment.
-BOX64_ENV={'BOX64_NOBANNER':'1','BOX64_LOG':'1','BOX64_SHOWSEGV':'1','BOX64_DYNAREC_SAFEFLAGS':'2','BOX64_DYNAREC_FASTNAN':'0',
+BOX64_ENV={'BOX64_NOBANNER':'1','BOX64_LOG':'0','BOX64_SHOWSEGV':'0','BOX64_DYNAREC_SAFEFLAGS':'2','BOX64_DYNAREC_FASTNAN':'0',
  'BOX64_DYNAREC_FASTROUND':'0','BOX64_DYNAREC_X87DOUBLE':'1','BOX64_DYNAREC_BIGBLOCK':'0','BOX64_DYNAREC_STRONGMEM':'2',
  'BOX64_DYNAREC_CALLRET':'0','BOX64_DYNAREC_WAIT':'1'}
 # Android forbids making written-to file pages executable, which is how Wine loads every DLL; this library,
@@ -586,9 +590,11 @@ def wine_env(prefix):
  nofile=os.getenv('BODDY_NOFILE_SOFT') or str(resource.getrlimit(resource.RLIMIT_NOFILE)[0])
  env=dict(os.environ,BODDY_NOFILE_SOFT=nofile,WINEPREFIX=str(prefix),WINEARCH='win64',WINEDEBUG=os.getenv('BODDY_WINEDEBUG','-all,err+all'),LIBGL_ALWAYS_SOFTWARE='1',QT_X11_NO_MITSHM='1')
  # Without this, creating the prefix stops at "install wine-mono?" and waits for a click nobody sees.
- env.setdefault('WINEDLLOVERRIDES','mscoree=;mshtml=')
+ # winemenubuilder only adds Linux menu entries for Windows programs: one process fewer under Android's limit.
+ env.setdefault('WINEDLLOVERRIDES','mscoree=;mshtml=;winemenubuilder.exe=d')
  if runtime()=='box64':
   for k,v in BOX64_ENV.items():env.setdefault(k,v)
+  if os.getenv('BODDY_BOX64_LOG'):env.update(BOX64_LOG=os.environ['BODDY_BOX64_LOG'],BOX64_SHOWSEGV='1')
  fix=execmod_fix(fetch_missing=True)
  if fix and fix not in env.get('LD_PRELOAD','').split():env['LD_PRELOAD']=' '.join(filter(None,[fix,env.get('LD_PRELOAD')]))
  return env
@@ -703,10 +709,16 @@ def start_monitor(stop):
   with path.open('w') as f:
    f.write('Roblox Studio session monitor. If Boddy restarts, the last line shows the state just before.\n'
     'processes = Linux processes of the Boddy app (Android 12+ stops apps above %d); mem = available memory.\n'%PHANTOM_LIMIT)
+   warned=False
    while True:
-    f.write('%s processes=%d mem=%dMB\n'%(time.strftime('%H:%M:%S'),process_count(),mem_available_mb()));f.flush();os.fsync(f.fileno())
-    if stop.wait(15):break
-   f.write('%s Studio closed normally\n'%time.strftime('%H:%M:%S'))
+    n=process_count()
+    f.write('%s processes=%d mem=%dMB step: %s\n'%(time.strftime('%H:%M:%S'),n,mem_available_mb(),last_said[:120]));f.flush();os.fsync(f.fileno())
+    if n>=PHANTOM_LIMIT-4 and not warned:
+     warned=True
+     say('Warning: %d Linux processes are running and Android 12+ stops Boddy above %d. On Android 14+ turn on '
+      'Developer options > Disable child process restrictions.'%(n,PHANTOM_LIMIT))
+    if stop.wait(10):break
+   f.write('%s Launcher finished\n'%time.strftime('%H:%M:%S'))
  thread=threading.Thread(target=run,daemon=True);thread.start()
  return path,thread
 STUDIO_MIN_HEIGHT=int(os.getenv('BODDY_STUDIO_HEIGHT') or 768)
@@ -774,6 +786,11 @@ def main():
   if not place.is_file():raise RuntimeError('Place file does not exist')
  # Try every way of running Windows there is, the saved choice first, until Studio starts; the one that
  # works is saved so the next start goes straight to it.
+ stop=threading.Event();monitor,monitor_thread=start_monitor(stop)
+ say('Session monitor: %s'%monitor)
+ try:try_every_way(place)
+ finally:stop.set();monitor_thread.join(5)
+def try_every_way(place):
  tried=[];todo=combinations()
  for i,(rt,major) in enumerate(todo):
   last=i==len(todo)-1
@@ -791,15 +808,13 @@ def main():
   say('Launching real Roblox Studio. A process start alone does not prove the editor works.')
   say('Studio\'s built-in login does not work here: choose "Login via Browser", sign in in the Firefox window that opens,')
   say('then allow Firefox to open the Roblox Studio sign-in link.')
-  restore_display=fit_display();stop=threading.Event();monitor,monitor_thread=start_monitor(stop)
-  say('Session monitor: %s'%monitor)
+  restore_display=fit_display()
   if process_count()>PHANTOM_LIMIT-12:
    say('Note: %d Linux processes are already running. Android 12+ stops Boddy above %d; close other Boddy apps,'%(process_count(),PHANTOM_LIMIT))
    say('or turn off Android\'s child process limit (see "Boddy keeps reconnecting" in the Studio README).')
   began=time.time()
   try:result=subprocess.run(args,cwd=studio,env=env)
-  finally:
-   stop.set();restore_display();monitor_thread.join(5)
+  finally:restore_display()
   ran=time.time()-began
   # Studio that crashes straight away under one Wine can run under another; one that ran for a while was closed by the user.
   if result.returncode and ran<STUDIO_CRASH_SECONDS and not last:

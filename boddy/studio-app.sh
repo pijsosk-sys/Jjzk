@@ -17,7 +17,12 @@ escape() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }  # for zen
 copy_log() {
     command -v xclip >/dev/null || apt-get install -y -q --no-install-recommends xclip >/dev/null 2>&1
     report=$( echo "Roblox Studio on Boddy - log from $(date '+%Y-%m-%d %H:%M')"
-              echo "=== launcher log (last 200 lines) ==="; grep -v "^Download progress: " "$1" 2>/dev/null | tail -n 200
+              # The steps and errors from the whole run first: on a long run the tail alone can miss them.
+              echo "=== steps and errors ==="
+              grep -E '^(Trying |Installing |Studio [0-9]+/|Roblox Studio: |Launching real|Studio process exited|Studio crashed|Warning: |LAUNCH FAILED)|did not work:|^[0-9a-f]{4}:err:|Error|error' "$1" 2>/dev/null |
+                  grep -vE 'Special unaligned|sigaction handler|Signal 17' | tail -n 80
+              echo "=== launcher log (last 150 lines) ==="
+              grep -vE '^Download progress: |Special unaligned case|Marked db .* as dirty|sigaction handler for sig 17|Signal 17: ' "$1" 2>/dev/null | tail -n 150
               [ -s "$MONITOR" ] && { echo "=== session monitor (last 20 lines) ==="; tail -n 20 "$MONITOR"; } )
     if command -v xclip >/dev/null && printf '%s\n' "$report" | xclip -selection clipboard 2>/dev/null; then
         zenity --info --width=360 --title="$TITLE" --timeout=6 --text="Log copied. Paste it anywhere on your phone." 2>/dev/null
@@ -31,8 +36,9 @@ copy_log() {
 if [ -e "$RUNNING" ] && ! kill -0 "$(cat "$RUNNING" 2>/dev/null)" 2>/dev/null; then
     rm -f "$RUNNING"
     previous=$(readlink -f "$LOG_DIR/latest.log")
+    state=$(grep -E '^[0-9:]+ processes=' "$MONITOR" 2>/dev/null | tail -n 1)
     where=$(grep -E '^(Studio [0-9]+/[0-9]+:|Trying |Testing Windows|Installing (Box64|Wine|Hangover)|Launching real)' "$previous" 2>/dev/null | tail -n 1)
-    text="Roblox Studio was stopped before it finished last time${where:+ (at: $where)}.\n\nThis usually means Android stopped Boddy: too many background processes or low memory. On Android 14+ turn on Developer options > Disable child process restrictions, and close other apps. Downloads continue where they stopped."
+    text="Roblox Studio was stopped before it finished last time${where:+ (at: $where)}.${state:+\n\nLast check: $state}\n\nThis usually means Android stopped Boddy: too many background processes or low memory. On Android 14+ turn on Developer options > Disable child process restrictions, and close other apps. Downloads continue where they stopped."
     [ "$(zenity --warning --width=520 --title="$TITLE" --ok-label="Continue" --extra-button="Copy log" \
         --text="$(printf '%s' "$text" | escape)" 2>/dev/null)" = "Copy log" ] && copy_log "$previous"
 fi
@@ -131,6 +137,7 @@ setsid bash -c 'echo $$ >"$1"; "$2" "${@:4}"; echo $? >"$3"' _ \
             "Installing Wine"*) say 2 "# Installing the Windows compatibility layer..." ;;
             "Installing Hangover"*) say 2 "# Installing the Windows compatibility layer..." ;;
             "Waiting for the internet"*) say "# Waiting for the internet..." ;;
+            "Warning: "*) say "# ${line#Warning: }" ;;
             "Testing Windows command"*) say 5 "# Setting up Windows compatibility (the first time takes several minutes)..." ;;
             "Could not check for Studio updates"*) say "# Offline: opening the installed Studio..." ;;
             "Desktop enlarged"*) say 95 "# Making room on the desktop..." ;;
