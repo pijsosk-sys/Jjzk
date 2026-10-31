@@ -21,6 +21,23 @@ public final class Mine {
    private static final int[][] HEADINGS = {{1, 0}, {0, 1}, {-1, 0}, {0, -1}};
    private static final Set<String> HAZARDS = Set.of("lava", "water", "flowing_lava", "flowing_water");
    private static final Set<String> UNBREAKABLE = Set.of("bedrock", "barrier", "end_portal_frame", "reinforced_deepslate");
+   /**
+    * Things a tunnel goes round rather than through. The strip mine used to drive straight through
+    * whatever was in front of it, which on one run meant the smithing table Overlord had just put
+    * down: it then had to craft another, which needed iron, which started another tunnel. On a
+    * server it would be somebody's chests.
+    */
+   private static final Set<String> KEEP = Set.of(
+      "crafting_table", "furnace", "blast_furnace", "smoker", "smithing_table", "enchanting_table", "anvil", "chipped_anvil",
+      "damaged_anvil", "brewing_stand", "cartography_table", "fletching_table", "grindstone", "loom", "stonecutter", "lectern",
+      "beacon", "bookshelf", "chiseled_bookshelf", "chest", "trapped_chest", "ender_chest", "barrel", "hopper", "dispenser",
+      "dropper", "furnace_minecart", "jukebox", "note_block", "respawn_anchor", "bell", "campfire", "shulker_box"
+   );
+
+   /** True for anything the miner must leave standing. */
+   private static boolean keep(String block) {
+      return KEEP.contains(block) || block.endsWith("_shulker_box") || block.endsWith("_bed") || block.endsWith("_banner");
+   }
    /** Cells the scanner may look at each tick. */
    private static final int BUDGET = 24000;
 
@@ -158,7 +175,7 @@ public final class Mine {
          if (block.equals("air")) {
             continue;
          }
-         if (UNBREAKABLE.contains(block) || !Dig.canBreak(stock, block)) {
+         if (UNBREAKABLE.contains(block) || keep(block) || !Dig.canBreak(stock, block)) {
             this.turn(Ids.pretty(block) + " in the way");
             return;
          }

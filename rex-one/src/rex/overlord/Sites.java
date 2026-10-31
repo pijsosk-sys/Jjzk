@@ -80,7 +80,11 @@ public final class Sites {
       }
       class_3965 hit = Reach.hitFor(client, target, placing);
       if (hit == null) {
-         BuilderNavigator.Result walk = navigator.moveTo(client, target);
+         // Walking to an empty cell asks the navigator a question it is not built to answer: its
+         // goal test is "can I click this block from here", and there is no block there yet. The
+         // ground the new block will sit on is a real block, so walk to that instead.
+         class_2338 walkTo = placing && !air(client, target.method_10074()) ? target.method_10074() : target;
+         BuilderNavigator.Result walk = navigator.moveTo(client, walkTo);
          if (walk == BuilderNavigator.Result.ARRIVED) {
             // The navigator is happy where it stands but no face of the block can be seen from
             // here. Give this spot up, or the two of them argue for ever.
@@ -109,9 +113,15 @@ public final class Sites {
       return pos.method_10263() + " " + pos.method_10264() + " " + pos.method_10260();
    }
 
-   /** A remembered station of this kind still stands nearby. */
+   /** A station of this kind stands nearby, or one is on its way down this very moment. */
    public boolean available(class_310 client, String id) {
-      class_2338 pos = this.stations.get(dimension(client) + id);
+      String key = dimension(client) + id;
+      // Without the pending half of this, the tick after a placement reads as "no table here" and
+      // the whole recipe for another one starts, materials and all.
+      if (this.pendingStation != null && this.pendingKey.equals(key)) {
+         return true;
+      }
+      class_2338 pos = this.stations.get(key);
       return pos != null && block(client, pos).equals(id);
    }
 
