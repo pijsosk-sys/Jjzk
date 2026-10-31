@@ -23,7 +23,12 @@ one.23 needs it any more, so a missing or changed Baritone no longer breaks anyt
   `RexOverlord.command`, which the jar's `RexCommands` already calls for every line.
 - Overlord's exploration (`wander`) goes through a `Traveller` of its own; everything within reach
   still uses `BuilderNavigator`. Only one of the two holds the movement input in a tick.
-- Tested with `test/runtime/run-path.sh` and `test/path/src/rexpath/PathDriver.java`.
+- Tested with `test/runtime/run-path.sh` and `test/path/src/rexpath/PathDriver.java`: six
+  scenarios on the flat world, plus `terrain` in a generated one (`WORLD=normal`).
+- **There is a generated test world now.** `test/runtime/make-world.sh normal` builds it (fixed
+  seed) into `.runtime/world-normal`; both runners take `WORLD=normal`. Superflat cannot show
+  whether a bot can play: the move costs and the fight's reach were both wrong and both only
+  showed up on real ground.
 
 **Overlord (one.23, rewritten):** `src/rex/overlord/` plus `src/rex/RexOverlord.java`.
 - The shipped module did not work: in game it stopped after about twenty seconds with

@@ -121,9 +121,26 @@ cat /tmp/g1/rexoverlord-results.txt
 
 Nine for nine, in a real 1.21.11 client, on the jar in `out/`.
 
+**And in a world with terrain in it.** Everything above runs on superflat, which is the right
+table for Auto Build and the wrong place to test a bot that is supposed to play the game: no
+trees, no ore, no caves, no hills. `test/runtime/make-world.sh normal` builds an ordinary
+generated world on a fixed seed and `WORLD=normal` runs the scenarios in it:
+
+| Scenario | What it has to do | Result |
+| --- | --- | --- |
+| `wild` | a stone pickaxe from an empty inventory, on real spruce and real stone | pass, 90.9s |
+| `mobnight` | a zombie six blocks off at night, closed on and killed | pass, 43.8s, moved 11.6 blocks |
+| `mobpack` | three zombies at once | pass, 13.1s, moved 11.3 blocks |
+
+The mob pair is there because of a bug this found: the fight engaged anything inside a box three
+and a half blocks wide, which reaches further than a sword does, so it would stand in front of a
+zombie swinging at nothing - not moving, not hitting. The sword's own reach now decides whether to
+swing or to close the gap.
+
 The long route past the portal - the nether, ancient debris, the upgrade template in a bastion
-chest - is not reachable in a flat test world, so those stages are still only exercised by the
-stages either side of them. That is the honest limit of what has been shown to work.
+chest - is reachable in a generated world but takes far longer than a test run, so those stages
+are still only exercised by the stages either side of them. That is the honest limit of what has
+been shown to work.
 
 ## New in one.23: REX Pathfinder, our own one
 
@@ -149,7 +166,10 @@ Three things keep it quick:
   is where a pathfinder's time actually goes.
 
 **It shows you where it is going.** The route is drawn in the world as a trail of flat markers,
-the step it is on is brighter and thicker, and the goal gets a full cube. Colours, line width and
+the step it is on is brighter and thicker, the goal gets a full cube and a slim column over it so
+you can see it from a distance. Overlord draws what it is working on too: the block it is
+breaking, the block it is placing and the mob it is fighting, each in its own colour (`Show
+Target`). Colours, line width and
 through-walls are settings. The drawing goes through the client's one world renderer, so it costs
 nothing extra in pipelines.
 
@@ -196,6 +216,14 @@ each shape built out of commands and each run checked by where the player actual
 
 Six for six, in a real 1.21.11 client. Sixty blocks of open ground take ten seconds, which is
 sprinting pace, and the search for it costs a few thousand cells.
+
+A seventh runs in a generated world (`WORLD=normal`): `terrain`, a hundred and ten blocks across
+whatever the seed put there - hills, trees, a lake - **pass, 183.4s**. That one is where the move
+costs were settled. On a flat plain breaking, dropping and swimming can be priced at roughly a
+step each and nothing looks wrong; on real ground it tunnelled through every hill rather than
+walking over it, drifted down into every cave it passed, and swam lakes it should have walked
+round at a fifth of the speed. They now cost what they cost a player in time: a break starts at
+three steps plus hardness, a drop at one and a half, a stroke of swimming at three and a half.
 
 ## New in one.22: safety audit, a new menu, and seven new test builds
 
