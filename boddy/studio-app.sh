@@ -205,6 +205,7 @@ BODDY_STUDIO_SESSION=$$ setsid bash -c 'echo $$ >"$1"; "$2" "${@:4}"; echo $? >"
             "Trying "*) say "# ${line%% (*}..." ;;
             "Installing the 3D"*) say "# Installing 3D graphics libraries (one time)..." ;;
             "Installing DXVK"*) say "# Installing DXVK (one time)..." ;;
+            "Recording details"*) say "# Starting Studio with crash details recorded..." ;;
             "Installing Box64"*) say 1 "# Installing the x86 translator (one time)..." ;;
             "Installing Wine"*) say 2 "# Installing the Windows compatibility layer..." ;;
             "Installing Hangover"*) say 2 "# Installing the Windows compatibility layer..." ;;

@@ -572,10 +572,10 @@ def diagnose():
  say('Report does not include account tokens or application configuration files.')
 AUTH_SCHEME='roblox-studio-auth:'
 AUTH_DESKTOP='boddy-roblox-studio-auth.desktop'
-# BOX64_LOG=1 adds a line for every unaligned access Box64 fixes, which buries Wine's own errors; SHOWSEGV
-# stays on so a crash says which instruction and address (the copied log drops its child-exit lines).
-# BODDY_BOX64_LOG=1 brings the full log back for debugging.
-BOX64_ENV={'BOX64_NOBANNER':'1','BOX64_LOG':'0','BOX64_SHOWSEGV':'1'}
+# Quiet by default: BOX64_LOG=1 adds a line for every unaligned access Box64 fixes, and SHOWSEGV a
+# register dump for every fault Wine handles, which slows Studio down. The start after a crash turns
+# them on (see run_studio); BODDY_BOX64_LOG=1 does it always.
+BOX64_ENV={'BOX64_NOBANNER':'1','BOX64_LOG':'0','BOX64_SHOWSEGV':'0'}
 # Speed: Box64's own defaults are its fast settings; STRONGMEM=1 adds the cheap memory barriers a heavily
 # multi-threaded x86 program like Studio relies on. "safe" is Box64's conservative preset (as Winlator's):
 # often twice as slow, kept as the last resort.
@@ -586,7 +586,7 @@ BOX64_SPEED={'fast':{'BOX64_DYNAREC_STRONGMEM':'1'},
 # preloaded into Wine only, moves such pages to anonymous memory first (see execmod-fix.c). Box64 notes it
 # cannot load it as an x86 library and carries on; the host side, where mprotect() runs, loads it.
 EXECMOD_LIB_NAME='libboddy-execmod.so'
-EXECMOD_LIB_SHA256='36390a2659d9528cf2ec0d6815552a85d462d31cc6704676a60a7bb14ec8b671'
+EXECMOD_LIB_SHA256='435cac690e72be3ccc9d79ef8d75534338bba60686b5cad2dd204f09fd34f31b'
 EXECMOD_LIB_URL='https://raw.githubusercontent.com/pijsosk-sys/Jjzk/ccr-f8458f15-i347hd/boddy/'+EXECMOD_LIB_NAME
 def execmod_fix(fetch_missing=False):
  """Path of the ARM64 execmod fix library, downloading it if asked and it is not shipped with Boddy."""
@@ -921,13 +921,16 @@ def try_every_way(place):
   finally:restore_display()
   ran=time.time()-began
   say('Studio process exited with code %d after %d s'%(code,ran))
-  if not code:sys.exit(0)
+  if not code:DIAGNOSE_FILE.unlink(missing_ok=True);sys.exit(0)
   # Windows started, so this Wine works: a crash once Studio runs comes from how it is run (its CPU
   # features, emulation speed or 3D drawing), so the next start uses the next setup rather than another Wine.
   errors,closed=studio_log(prefix,began-5)
   # Studio that finished its own shutdown was closed (its window, or the Wine desktop window around it);
   # Wine may still end the process by force afterwards (exit code -9), which is no crash.
-  if closed:say('Studio closed normally (its log ends with "End of main. Return value 0")');sys.exit(0)
+  if closed:
+   say('Studio closed normally (its log ends with "End of main. Return value 0")')
+   DIAGNOSE_FILE.unlink(missing_ok=True);sys.exit(0)
+  DIAGNOSE_FILE.touch()  # the next start records the details of a crash like this one
   crashed_itself=any('RobloxCrashHandler' in l for l in notable) or bool(errors)
   dump=studio_crash_dump(prefix,began-5,30 if crashed_itself else 0)
   why=('Studio hit an error and closed itself' if crashed_itself else
@@ -942,7 +945,8 @@ def try_every_way(place):
   if setup['step']+1<len(SETUPS):
    SETUP_FILE.write_text(str(setup['step']+1));nxt=current_setup()
    raise RuntimeError('Roblox Studio crashed after %d s: %s. It was using %s.\n\nNext time Boddy will use %s, '
-    'which may work on this phone: choose Open Studio again.%s'%(ran,why,describe_setup(setup),describe_setup(nxt),details))
+    'which may work on this phone: choose Open Studio again (it records more details this time).%s'%(
+    ran,why,describe_setup(setup),describe_setup(nxt),details))
   SETUP_FILE.write_text('0')
   raise RuntimeError('Roblox Studio crashed (%s) with every setup Boddy has (%d). Choose "Copy log" and send '
    'the log.%s'%(why,len(SETUPS),details))
@@ -985,6 +989,8 @@ dxgi.customDeviceId = 1c81
 dxgi.customDeviceDesc = "NVIDIA GeForce GTX 1050"
 dxgi.maxDeviceMemory = 2048
 dxgi.maxFrameLatency = 1
+# Boddy's screen is a VNC framebuffer with no refresh to wait for; Studio caps its own frame rate.
+dxgi.syncInterval = 0
 """
 def install_dxvk():
  d=ROOT/('dxvk-'+DXVK_VERSION)
@@ -1162,12 +1168,17 @@ class ExceptionLog:
   pick=next((e for e in reversed(before) if e[1] in SEVERE),None) or next(
    (e for e in reversed(before) if e[1] not in HARMLESS),None)
   return self.describe(pick) if pick else None
+# After a crash the next start records what Studio does in detail (Box64's opcode and fault log, Wine's
+# exception and DLL-load log); those cost time, so ordinary starts leave them off.
+DIAGNOSE_FILE=ROOT/'diagnose-next-start'
 def run_studio(args,cwd,env):
- """Runs Studio with Box64's opcode log and Wine's exception log, printing what matters.
- Returns (exit code, notable lines)."""
+ """Runs Studio, printing what matters; with diagnostics on, with Box64's opcode log and Wine's
+ exception log. Returns (exit code, notable lines)."""
  env=dict(env)
- if 'BOX64_LOG' in env and not os.getenv('BODDY_BOX64_LOG'):env['BOX64_LOG']='1'
- if not os.getenv('BODDY_WINEDEBUG'):env['WINEDEBUG']=env.get('WINEDEBUG','-all,err+all')+',+seh,+loaddll'
+ if DIAGNOSE_FILE.exists() or os.getenv('BODDY_STUDIO_DIAGNOSE')=='1':
+  say('Recording details of this run, because the last one crashed')
+  if 'BOX64_LOG' in env and not os.getenv('BODDY_BOX64_LOG'):env.update(BOX64_LOG='1',BOX64_SHOWSEGV='1')
+  if not os.getenv('BODDY_WINEDEBUG'):env['WINEDEBUG']=env.get('WINEDEBUG','-all,err+all')+',+seh,+loaddll'
  notable=collections.deque(maxlen=20);exceptions=ExceptionLog()
  proc=subprocess.Popen(args,cwd=cwd,env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,errors='replace',bufsize=1)
  try:

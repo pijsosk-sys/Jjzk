@@ -8,11 +8,12 @@
  * (Box64's own recompiler depends on it), so when that mprotect() fails, this moves the pages'
  * contents into anonymous memory, in place and in one step, and makes that executable instead.
  *
- * It also hides the CPU model from /proc/cpuinfo when BODDY_GENERIC_CPU=1. Mesa's software renderers
+ * It also replaces the CPU model in /proc/cpuinfo when BODDY_GENERIC_CPU=1. Mesa's software renderers
  * (llvmpipe, lavapipe) compile shaders with LLVM for the CPU model named there; on Snapdragon phones
- * that model (e.g. Cortex-A520) implies SVE, which the kernel leaves switched off, so the first
- * drawn frame dies with SIGILL. Without "CPU implementer"/"CPU part" lines LLVM targets a generic
- * ARMv8 CPU plus only the features the kernel lists, which every phone can run.
+ * that model (e.g. Cortex-X4) implies SVE, which the kernel leaves switched off, so the first drawn
+ * frame dies with SIGILL. The model becomes Cortex-A78 (ARMv8.2: LSE atomics, dot product, FP16, no
+ * SVE) when the kernel lists all of its features, and is left out otherwise, which makes LLVM target
+ * a generic ARMv8 CPU; either way LLVM adds only the features the kernel lists.
  *
  * Built without a C library's headers so it can be cross-compiled anywhere:
  *   clang --target=aarch64-linux-gnu -O2 -fPIC -shared -nostdlib -fuse-ld=lld -o libboddy-execmod.so execmod-fix.c
@@ -89,6 +90,23 @@ static int starts_with(const char *s, const char *prefix)
     return 1;
 }
 
+/* Whether the cpuinfo line [line, end) is a Features line holding every word in `words`. */
+static int has_features(const char *line, const char *end, const char *const *words)
+{
+    if (!starts_with(line, "Features")) return 0;
+    for (; *words; words++) {
+        int found = 0;
+        for (const char *p = line; p < end && !found; p++) {
+            if (p != line && p[-1] != ' ' && p[-1] != '\t') continue;  /* word starts only */
+            const char *w = *words, *q = p;
+            while (*w && q < end && *q == *w) { q++; w++; }
+            found = !*w && (q == end || *q == ' ' || *q == '\n' || *q == '\t');
+        }
+        if (!found) return 0;
+    }
+    return 1;
+}
+
 static int is_cpuinfo(const char *path)
 {
     const char *want = "/proc/cpuinfo";
@@ -102,7 +120,9 @@ static int is_cpuinfo(const char *path)
 static int generic_cpuinfo(int flags)
 {
     static int (*real_openat)(int, const char *, int, ...);
-    static char in[65536], out[65536];
+    static char in[65536], out[65536 + 8192];
+    static const char *const a78[] = { "atomics", "asimddp", "fphp", "asimdhp", "lrcpc", "asimdrdm", 0 };
+    static const char a78_model[] = "CPU implementer\t: 0x41\nCPU part\t: 0xd41\n";
     if (!real_openat) real_openat = (int (*)(int, const char *, int, ...))dlsym(RTLD_NEXT, "openat");
     int src = real_openat(AT_FDCWD, CPUINFO_SOURCE, 0);
     if (src < 0) return -1;
@@ -116,8 +136,14 @@ static int generic_cpuinfo(int flags)
         if (end < n) end++;  /* keep the newline */
         const char *line = in + i;
         if (!starts_with(line, "CPU implementer") && !starts_with(line, "CPU part") &&
-            !starts_with(line, "CPU variant") && !starts_with(line, "CPU revision"))
+            !starts_with(line, "CPU variant") && !starts_with(line, "CPU revision")) {
             for (long j = i; j < end; j++) out[o++] = in[j];
+            /* Each processor's block lists its features once; name the model right after them. */
+            if (has_features(line, in + end, a78) && o + (long)sizeof(a78_model) < (long)sizeof(out)) {
+                if (o && out[o - 1] != '\n') out[o++] = '\n';
+                for (const char *m = a78_model; *m; m++) out[o++] = *m;
+            }
+        }
         i = end;
     }
     int fd = memfd_create("cpuinfo", (flags & O_CLOEXEC) ? MFD_CLOEXEC : 0);
