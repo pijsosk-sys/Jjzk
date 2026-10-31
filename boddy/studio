@@ -825,6 +825,11 @@ def main():
  if not migrated.exists():
   for f in (RENDERER_FILE,SETUP_FILE):f.unlink(missing_ok=True)
   migrated.touch()
+ # Wine's DirectX crashed on a phone at the same point on OpenGL and Vulkan, and DXVK got furthest: go back
+ # to DXVK once, now that the exception Studio crashes on is recorded.
+ migrated=ROOT/'.choice-v5'
+ if not migrated.exists():
+  SETUP_FILE.unlink(missing_ok=True);migrated.touch()
  place=None
  if arg and not arg.startswith('--'):
   place=Path(arg).resolve()
@@ -873,10 +878,12 @@ def try_every_way(place):
   dump=studio_crash_dump(prefix,began-5,30 if crashed_itself else 0)
   why=('Studio hit an error and closed itself' if crashed_itself else
    'an instruction the emulator could not run (SIGILL)' if code in (-4,132) else 'code %d'%code)
-  notable=([('Crash: %s in %s'%dump)] if dump else [])+[
+  exception=next((l for l in notable if l.startswith('Exception: ')),None)
+  notable=([('Crash: %s in %s'%dump)] if dump else [])+([exception] if exception else [])+[
    l for l in notable if 'Unimplemented' in l or 'Signal 4:' in l or 'Unhandled' in l or l.startswith('err:')]+[
    'Studio log: '+l[l.find('[')if '[' in l else 0:][:200] for l in errors]
   if dump:why='Studio crashed: %s in %s'%dump
+  elif exception:why='Studio crashed: '+exception[len('Exception: '):]
   details='\n\nWhat failed:\n'+'\n'.join('  '+l[:200] for l in notable[:6]) if notable else ''
   if setup['step']+1<len(SETUPS):
    SETUP_FILE.write_text(str(setup['step']+1));nxt=current_setup()
@@ -1012,7 +1019,7 @@ def studio_log(prefix,since):
  for l in lines[-60:]:say('Studio log: '+l[:400])
  return [l for l in lines if STUDIO_LOG_ERROR.search(l) and not STUDIO_LOG_BENIGN.search(l)][-8:]
 # Errors Studio logs on every start under Wine that have nothing to do with a crash.
-STUDIO_LOG_BENIGN=re.compile(r"EnableNonClientDpiScaling|DAPClient|Secure Storage read failed|onResizeEvent|"
+STUDIO_LOG_BENIGN=re.compile(r"EnableNonClientDpiScaling|DAPClient|Secure Storage read failed|onResizeEvent|ThumbnailController|CreatorWarning|"
  r"isn't defined in C\+\+ code|referenced from Lua")
 # What a Windows program crashed on, from the minidump its crash handler (Crashpad) writes.
 EXCEPTIONS={0xC0000005:'access violation',0xC000001D:'illegal instruction',0xC0000409:'fast fail (Studio stopped itself)',
@@ -1055,23 +1062,71 @@ def studio_crash_dump(prefix,since,wait=30):
  except (OSError,struct.error,IndexError) as e:say('Could not read the crash dump %s: %s'%(dump.name,e));return None
  if found:say('Studio crash dump %s: %s in %s'%(dump.name,*found))
  return found
+# Wine logs every exception a program raises (+seh) and where each DLL is loaded (+loaddll). Studio's
+# crash handler leaves no dump under Wine, so the last serious exception before the handler starts,
+# placed in the DLL it happened in, is what says why Studio crashed.
+SEH_EXCEPTION=re.compile(r':seh:dispatch_exception code=([0-9a-fA-F]+) \(?(\w*)\)? ?flags=\w+ addr=(?:0x)?([0-9a-fA-F]+)')
+SEH_INFO=re.compile(r':seh:dispatch_exception\s+info\[(\d+)\]=(?:0x)?([0-9a-fA-F]+)')
+DLL_LOADED=re.compile(r':loaddll:\w+ Loaded L"(.+?)" at (?:0x)?([0-9a-fA-F]+)')
+SEVERE=(0xC0000005,0xC000001D,0xC0000409,0xC0000374,0xC00000FD,0x80000003,0xC0000096,0xC0000094,0xC000041D,0xC0000420)
+HARMLESS=(0x406D1388,0x40010006,0x4001000A,0xE06D7363,0x000006BA,0x80010108)  # thread names, debug prints, C++ throws, RPC
+class ExceptionLog:
+ def __init__(self):
+  self.dlls=[];self.exceptions=collections.deque(maxlen=300);self.handler_at=None;self.seq=0
+ def feed(self,line):
+  """Takes a Wine trace line; True if it was one (and so is not printed)."""
+  m=DLL_LOADED.search(line)
+  if m:self.seq+=1;self.dlls.append((self.seq,int(m.group(2),16),m.group(1).replace('\\\\','\\')));return True
+  m=SEH_EXCEPTION.search(line)
+  if m:self.seq+=1;self.exceptions.append([self.seq,int(m.group(1),16),m.group(2),int(m.group(3),16),{}]);return True
+  m=SEH_INFO.search(line)
+  if m:
+   if self.exceptions:self.exceptions[-1][4][int(m.group(1))]=int(m.group(2),16)
+   return True
+  return ':seh:' in line or ':loaddll:' in line or ':relay:' in line
+ def crash_handler_started(self):
+  if self.handler_at is None:self.handler_at=self.seq
+ def where(self,seq,addr):
+  # The DLL loaded before this exception with the highest base not above the address.
+  best=max(((base,name) for s,base,name in self.dlls if s<seq and base<=addr),default=None)
+  if not best or addr-best[0]>0x10000000:return '0x%x (not in a Windows DLL: Wine itself or a Linux library)'%addr
+  return '%s+0x%x'%(best[1].split('\\')[-1],addr-best[0])
+ def describe(self,e):
+  seq,code,name,addr,info=e
+  what=EXCEPTIONS.get(code) or name or 'exception 0x%08X'%code
+  if code==0xC0000005 and 1 in info:
+   what+=' %s 0x%x'%({0:'reading',1:'writing',8:'executing'}.get(info.get(0),'at'),info[1])
+  return '%s at %s (code %08x)'%(what,self.where(seq,addr),code)
+ def crash(self):
+  """The exception Studio most likely crashed on, described, or None."""
+  before=[e for e in self.exceptions if self.handler_at is None or e[0]<=self.handler_at]
+  pick=next((e for e in reversed(before) if e[1] in SEVERE),None) or next(
+   (e for e in reversed(before) if e[1] not in HARMLESS),None)
+  return self.describe(pick) if pick else None
 def run_studio(args,cwd,env):
- """Runs Studio with Box64's opcode log, printing what matters. Returns (exit code, notable lines)."""
+ """Runs Studio with Box64's opcode log and Wine's exception log, printing what matters.
+ Returns (exit code, notable lines)."""
  env=dict(env)
  if 'BOX64_LOG' in env and not os.getenv('BODDY_BOX64_LOG'):env['BOX64_LOG']='1'
- notable=collections.deque(maxlen=20)
+ if not os.getenv('BODDY_WINEDEBUG'):env['WINEDEBUG']=env.get('WINEDEBUG','-all,err+all')+',+seh,+loaddll'
+ notable=collections.deque(maxlen=20);exceptions=ExceptionLog()
  proc=subprocess.Popen(args,cwd=cwd,env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,errors='replace',bufsize=1)
  try:
   for line in proc.stdout:
    line=line.rstrip('\n')
+   if exceptions.feed(line):continue
    # Box64's start-up line for the crash handler is noise like the rest, but it means Studio crashed.
-   if 'Detected running wine with "RobloxCrashHandler' in line:notable.append('RobloxCrashHandler started: Studio crashed')
+   if 'Detected running wine with "RobloxCrashHandler' in line:
+    notable.append('RobloxCrashHandler started: Studio crashed');exceptions.crash_handler_started()
    if STUDIO_NOISE.search(line):continue
    print(line,flush=True)
    if STUDIO_NOTABLE.search(line) and not BENIGN_FAULT.search(line):notable.append(line.replace('\x1b[31m','').replace('\x1b[0m',''))
-  return proc.wait(),list(notable)
+  code=proc.wait()
  finally:
   if proc.poll() is None:proc.kill()
+ crash=exceptions.crash()
+ if crash:say('Last serious exception in Studio: '+crash);notable.appendleft('Exception: '+crash)
+ return code,list(notable)
 def offline(e):
  """Whether an error means the internet is not reachable (rather than one Wine version failing)."""
  if isinstance(e,(TlsError,OfflineError,ConnectionError,TimeoutError)):return True

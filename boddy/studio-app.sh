@@ -22,7 +22,7 @@ copy_log() {
     report=$( echo "Roblox Studio on Boddy - log from $(date '+%Y-%m-%d %H:%M')"
               # The steps and errors from the whole run first: on a long run the tail alone can miss them.
               echo "=== steps and errors ==="
-              grep -E '^(Trying |Installing |Studio [0-9]+/|Roblox Studio: |Launching real|Studio process exited|Studio crashed|Warning: |LAUNCH FAILED)|did not work:|^[0-9a-f]{4}:err:|Error|error|Function not implemented|Unimplemented|Signal (4|7|8|11):|Unhandled|What failed|^Studio log: .*(rror|rash|xception|ailed|atal)|^Studio crash dump|^err: ' "$1" 2>/dev/null |
+              grep -E '^(Trying |Installing |Studio [0-9]+/|Roblox Studio: |Launching real|Studio process exited|Studio crashed|Warning: |LAUNCH FAILED)|did not work:|^[0-9a-f]{4}:err:|Error|error|Function not implemented|Unimplemented|Signal (4|7|8|11):|Unhandled|What failed|^Studio log: .*(rror|rash|xception|ailed|atal)|^Studio crash dump|^Last serious exception|^err: ' "$1" 2>/dev/null |
                   grep -vE 'Special unaligned|sigaction handler|Signal (3|17):|\(mmap\)|mmapped:3' | tail -n 80
               echo "=== launcher log (last 150 lines) ==="
               grep -vE '^Download progress: |Special unaligned case|Marked db .* as dirty|sigaction handler for sig (3|17)|Signal (3|17): ' "$1" 2>/dev/null | tail -n 150
