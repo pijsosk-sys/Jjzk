@@ -60,6 +60,8 @@ public final class RexPath extends Module {
    public final NumberSetting lookAhead = new NumberSetting("Plan Ahead", 2.0, 60.0, 12.0, 1.0)
       .describe("Cells left on the current stretch when the next search starts.");
    public final BooleanSetting showPath = new BooleanSetting("Show Path", true);
+   public final BooleanSetting beacon = new BooleanSetting("Goal Beacon", true)
+      .describe("A slim column over the goal, so you can see where it is heading from a distance.");
    public final BooleanSetting throughWalls = new BooleanSetting("Through Walls", true);
    public final BooleanSetting hud = new BooleanSetting("HUD", true);
    // Overlord's panel sits top left and the build HUD top right, so this one goes bottom right.
@@ -93,7 +95,7 @@ public final class RexPath extends Module {
          new Setting[]{
             this.pauseOnScreen, this.allowBreak, this.allowPlace, this.allowSwim, this.sprint, this.maxFall,
             this.microsPerTick, this.nodesPerTick, this.maxNodes, this.lookAhead,
-            this.showPath, this.throughWalls, this.hud, this.anchor, this.offsetX, this.offsetY, this.width,
+            this.showPath, this.beacon, this.throughWalls, this.hud, this.anchor, this.offsetX, this.offsetY, this.width,
             this.pathColor, this.nextColor, this.goalColor, this.background, this.accent, this.text
          }
       );
@@ -248,6 +250,16 @@ public final class RexPath extends Module {
                (colour & 0xFFFFFF) | (colour >>> 24) / 5 << 24, colour, 2.0F, through
             )
          );
+         if (path.beacon.get()) {
+            // A slim column over the goal: the cube alone is invisible past thirty blocks.
+            out.add(
+               new HighlightRenderer.Overlay(
+                  new class_238(marker.method_10263() + 0.4, marker.method_10264() + 1, marker.method_10260() + 0.4,
+                     marker.method_10263() + 0.6, marker.method_10264() + 24, marker.method_10260() + 0.6),
+                  (colour & 0xFFFFFF) | (colour >>> 24) / 8 << 24, (colour & 0xFFFFFF) | (colour >>> 24) / 2 << 24, 1.5F, true
+               )
+            );
+         }
       }
       return out;
    }

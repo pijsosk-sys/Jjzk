@@ -38,6 +38,10 @@ public final class OverlordDriver implements ClientModInitializer {
    private final Map<String, Integer> stages = new LinkedHashMap<>();
    private String lastStage = "";
    private String worstStatus = "";
+   /** Where the player stood when the world was joined, which in a generated world is dry land. */
+   private net.minecraft.class_243 spawn;
+   private net.minecraft.class_243 startedAt;
+   private double moved;
 
    private static int have(class_746 player, String id) {
       return Stock.count(Stock.counts(player), id);
@@ -50,6 +54,14 @@ public final class OverlordDriver implements ClientModInitializer {
          }
       }
       return true;
+   }
+
+   /** Nothing hostile left standing within twelve blocks, and the player still alive. */
+   private static boolean noHostiles(class_746 player) {
+      return player.method_5805()
+         && player.method_73183()
+            .method_8333(player, player.method_5829().method_1014(12.0), entity -> entity instanceof net.minecraft.class_1588 && entity.method_5805())
+            .isEmpty();
    }
 
    private static boolean allEnchanted(class_746 player) {
@@ -78,6 +90,26 @@ public final class OverlordDriver implements ClientModInitializer {
          "fill -24 -60 -24 24 -56 24 minecraft:air",
          "tp @a 0.5 -60 0.5 90 0"
       ));
+   }
+
+   /**
+    * The base for scenarios that run in a generated world: no terrain is built, because the point
+    * of those is the real one. Back to the spawn, which the game guarantees is somewhere a player
+    * can stand.
+    */
+   private List<String> wild(String... extra) {
+      List<String> commands = new ArrayList<>(List.of(
+         "gamemode survival @a",
+         "clear @a",
+         "effect clear @a",
+         "effect give @a minecraft:resistance infinite 255 true",
+         "weather clear",
+         "gamerule doMobSpawning false",
+         "gamerule keepInventory true",
+         String.format(Locale.ROOT, "tp @a %.1f %.1f %.1f", this.spawn.field_1352, this.spawn.field_1351, this.spawn.field_1350)
+      ));
+      commands.addAll(List.of(extra));
+      return commands;
    }
 
    private static List<String> with(String... extra) {
@@ -148,6 +180,28 @@ public final class OverlordDriver implements ClientModInitializer {
             .method_8333(player, player.method_5829().method_1014(8.0), entity -> entity instanceof net.minecraft.class_1588 && entity.method_5805())
             .isEmpty()));
 
+      // These three need a generated world: test/runtime/make-world.sh normal, then WORLD=normal.
+      all.add(new Scenario("wild", "a stone pickaxe out of real terrain", 900,
+         this.wild("time set day"),
+         player -> have(player, "stone_pickaxe") > 0));
+
+      all.add(new Scenario("mobnight", "a zombie six blocks away closed on and killed", 240,
+         this.wild("time set midnight", "give @a minecraft:iron_sword 1", "give @a minecraft:stone_pickaxe 1",
+            String.format(Locale.ROOT, "summon minecraft:zombie %.1f %.1f %.1f {PersistenceRequired:1b}",
+               this.spawn.field_1352 + 6.0, this.spawn.field_1351, this.spawn.field_1350)),
+         OverlordDriver::noHostiles));
+
+      all.add(new Scenario("mobpack", "three zombies at once", 300,
+         this.wild("time set midnight", "give @a minecraft:iron_sword 1", "give @a minecraft:diamond_chestplate 1",
+            "give @a minecraft:stone_pickaxe 1",
+            String.format(Locale.ROOT, "summon minecraft:zombie %.1f %.1f %.1f {PersistenceRequired:1b}",
+               this.spawn.field_1352 + 5.0, this.spawn.field_1351, this.spawn.field_1350),
+            String.format(Locale.ROOT, "summon minecraft:zombie %.1f %.1f %.1f {PersistenceRequired:1b}",
+               this.spawn.field_1352 - 6.0, this.spawn.field_1351, this.spawn.field_1350 + 2.0),
+            String.format(Locale.ROOT, "summon minecraft:zombie %.1f %.1f %.1f {PersistenceRequired:1b}",
+               this.spawn.field_1352 + 2.0, this.spawn.field_1351, this.spawn.field_1350 - 7.0)),
+         OverlordDriver::noHostiles));
+
       String only = System.getProperty("rexoverlord.scenarios", "").toLowerCase(Locale.ROOT);
       for (Scenario scenario : all) {
          if (only.isEmpty() || List.of(only.split(",")).contains(scenario.name())) {
@@ -190,6 +244,7 @@ public final class OverlordDriver implements ClientModInitializer {
       }
       switch (this.phase) {
          case 0 -> {
+            this.spawn = client.field_1724.method_73189();
             this.build();
             this.lines.add("scenarios: " + this.queue.size());
             this.phase = 1;
@@ -207,6 +262,8 @@ public final class OverlordDriver implements ClientModInitializer {
             this.lastStage = "";
             this.worstStatus = "";
             this.ticks = 0;
+            this.startedAt = null;
+            this.moved = 0.0;
             this.phase = 2;
             this.wait = 60;
          }
@@ -233,6 +290,10 @@ public final class OverlordDriver implements ClientModInitializer {
                }
             }
             this.ticks++;
+            if (this.startedAt == null) {
+               this.startedAt = client.field_1724.method_73189();
+            }
+            this.moved = Math.max(this.moved, client.field_1724.method_73189().method_1022(this.startedAt));
             boolean reached = scenario.goal().test(client.field_1724);
             boolean out = this.ticks > scenario.seconds() * 20;
             boolean gaveUp = engine != null && !engine.stopped.isEmpty();
@@ -240,9 +301,9 @@ public final class OverlordDriver implements ClientModInitializer {
                String verdict = reached ? "PASS" : gaveUp ? "GAVE-UP" : "TIMEOUT";
                this.lines.add(String.format(
                   Locale.ROOT,
-                  "%-12s %-7s %6.1fs  goal: %s | stage: %s | last: %s%s",
+                  "%-12s %-7s %6.1fs  goal: %s | stage: %s | moved %.1f | last: %s%s",
                   scenario.name(), verdict, this.ticks / 20.0, scenario.goalText(),
-                  engine == null ? "?" : engine.stage.name(), this.worstStatus,
+                  engine == null ? "?" : engine.stage.name(), this.moved, this.worstStatus,
                   gaveUp ? " | gave up: " + engine.stopped : ""
                ));
                this.lines.add("             stages seen: " + this.stages.keySet());

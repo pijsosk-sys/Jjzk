@@ -10,7 +10,12 @@ import dev.krypton.core.setting.ColorSetting;
 import dev.krypton.core.setting.EnumSetting;
 import dev.krypton.core.setting.NumberSetting;
 import dev.krypton.core.setting.Setting;
+import dev.donut.client.render.HighlightRenderer;
 import dev.krypton.util.Color;
+import java.util.ArrayList;
+import java.util.List;
+import net.minecraft.class_238;
+import net.minecraft.class_2338;
 import net.minecraft.class_310;
 import net.minecraft.class_332;
 import rex.overlord.Overlord;
@@ -36,6 +41,11 @@ public final class RexOverlord extends Module {
    public final NumberSetting width = new NumberSetting("Width", 120.0, 400.0, 220.0, 2.0);
    public final BooleanSetting announce = new BooleanSetting("Chat Updates", true)
       .describe("Says in chat when the stage changes.");
+   public final BooleanSetting showTarget = new BooleanSetting("Show Target", true)
+      .describe("Draws the block it is breaking or placing, and what it is fighting.");
+   public final ColorSetting breakColor = new ColorSetting("Breaking", 255, 150, 60, 230);
+   public final ColorSetting placeColor = new ColorSetting("Placing", 120, 255, 160, 230);
+   public final ColorSetting fightColor = new ColorSetting("Fighting", 255, 90, 90, 230);
    public final ColorSetting background = new ColorSetting("Background", 22, 12, 31, 205);
    public final ColorSetting accent = new ColorSetting("Accent", 255, 171, 69, 255);
    public final ColorSetting text = new ColorSetting("Text", 231, 216, 239, 255);
@@ -53,8 +63,56 @@ public final class RexOverlord extends Module {
       );
       instance = this;
       this.addSettings(
-         new Setting[]{this.hud, this.anchor, this.offsetX, this.offsetY, this.width, this.announce, this.background, this.accent, this.text}
+         new Setting[]{
+            this.hud, this.anchor, this.offsetX, this.offsetY, this.width, this.announce, this.showTarget,
+            this.breakColor, this.placeColor, this.fightColor, this.background, this.accent, this.text
+         }
       );
+      install();
+   }
+
+   private static boolean rendering;
+
+   /** Hooks the target marker into the client's one world renderer, once. */
+   private static void install() {
+      if (!rendering) {
+         rendering = true;
+         HighlightRenderer.overlay(RexOverlord::boxes);
+      }
+   }
+
+   /** The block it is working on, drawn where it is. */
+   private static List<HighlightRenderer.Overlay> boxes() {
+      RexOverlord module = instance;
+      if (module == null || !module.isEnabled() || !module.showTarget.get()) {
+         return List.of();
+      }
+      Overlord.Focus focus = module.engine.focus();
+      if (focus == null) {
+         return List.of();
+      }
+      int colour = HudPanel.argb(
+         switch (focus.kind()) {
+            case PLACE -> module.placeColor.m();
+            case FIGHT -> module.fightColor.m();
+            case BREAK -> module.breakColor.m();
+            default -> module.accent.m();
+         }
+      );
+      class_238 box;
+      if (focus.mob() != null) {
+         box = focus.mob().method_5829().method_1014(0.08);
+      } else {
+         class_2338 at = focus.block();
+         if (at == null) {
+            return List.of();
+         }
+         box = new class_238(at.method_10263(), at.method_10264(), at.method_10260(), at.method_10263() + 1, at.method_10264() + 1, at.method_10260() + 1)
+            .method_1014(0.004);
+      }
+      List<HighlightRenderer.Overlay> out = new ArrayList<>(1);
+      out.add(new HighlightRenderer.Overlay(box, (colour & 0xFFFFFF) | (colour >>> 24) / 6 << 24, colour, 2.0F, false));
+      return out;
    }
 
    public String status() {

@@ -118,6 +118,48 @@ public final class Overlord {
       return this.mine.broken;
    }
 
+   /** What Overlord is working on this tick: a block to break, to place, or a mob. */
+   @Environment(EnvType.CLIENT)
+   public record Focus(class_2338 block, class_1297 mob, Kind kind) {
+   }
+
+   @Environment(EnvType.CLIENT)
+   public enum Kind {
+      BREAK,
+      PLACE,
+      USE,
+      FIGHT,
+      WALK
+   }
+
+   private Focus focus;
+
+   /** Null when it is not working on anything in particular. */
+   public Focus focus() {
+      return this.running ? this.focus : null;
+   }
+
+   private void setFocus() {
+      if (this.fight.threat() != null) {
+         this.focus = new Focus(null, this.fight.threat(), Kind.FIGHT);
+         return;
+      }
+      class_2338 mining = this.mine.focus();
+      if (this.mining && mining != null) {
+         this.focus = new Focus(mining, null, Kind.BREAK);
+         return;
+      }
+      if (this.sites.focus != null && this.acted) {
+         this.focus = new Focus(this.sites.focus, null, this.sites.focusPlacing ? Kind.PLACE : Kind.USE);
+         return;
+      }
+      if (this.pickup != null) {
+         this.focus = new Focus(this.pickup.method_24515(), null, Kind.WALK);
+         return;
+      }
+      this.focus = null;
+   }
+
    /**
     * A widening spiral of walks, for when what is needed is simply not here. This is the one hop
     * that is genuinely long, so it goes through the pathfinder rather than the builder navigator,
@@ -211,7 +253,10 @@ public final class Overlord {
 
       if (this.fight.tick(client, this.navigator, this.stock, this.ticks)) {
          this.mine.reset(client);
+         // The fight walks with the navigator, so the pathfinder must let go of the input.
+         this.traveller.release();
          this.status = this.fight.status;
+         this.setFocus();
          return;
       }
 
@@ -253,6 +298,7 @@ public final class Overlord {
          // Only one thing may hold the movement input at a time.
          this.traveller.release();
       }
+      this.setFocus();
    }
 
    /** Walks onto nearby drops. True when this tick went on fetching one. */

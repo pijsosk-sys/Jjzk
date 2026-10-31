@@ -33,6 +33,9 @@ public final class Sites {
    private class_2338 chest;
    private int chestTicks;
    /** Where a workstation was just put down, and how long it has been waited for. */
+   /** The last block use() was aimed at, and whether it was putting one down. */
+   public class_2338 focus;
+   public boolean focusPlacing;
    private String pendingKey = "";
    private class_2338 pendingStation;
    private int pendingTicks;
@@ -68,6 +71,8 @@ public final class Sites {
     * is reachable. True only on the tick the click actually went out.
     */
    public boolean use(class_310 client, BuilderNavigator navigator, class_2338 target, boolean placing, String item, String what) {
+      this.focus = target;
+      this.focusPlacing = placing;
       class_746 player = client.field_1724;
       class_2338 feet = player.method_24515();
       // A block cannot go where the player is standing. The server simply refuses it, and the ring

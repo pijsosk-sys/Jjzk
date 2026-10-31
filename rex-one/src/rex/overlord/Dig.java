@@ -29,6 +29,11 @@ public final class Dig {
    private int ticks;
    public String status = "";
 
+   /** The block being broken right now, for the marker drawn in the world. */
+   public class_2338 breaking() {
+      return this.target;
+   }
+
    public void stop(class_310 client) {
       if (this.target != null && client.field_1761 != null) {
          client.field_1761.method_2925();

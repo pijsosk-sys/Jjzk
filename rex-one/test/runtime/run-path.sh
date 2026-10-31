@@ -14,7 +14,10 @@ cp "$HERE/test/path/fabric.mod.json" "$DRIVER/"
 (cd "$DRIVER" && zip -qr "$GAME/mods/rexpathtest.jar" .)
 cp "$REX" "$GAME/mods/rex-one.jar"
 cp "$RT/mods/fabric-api.jar" "$GAME/mods/"
-cp -r "$RT/world" "$GAME/saves/smoke"
+# WORLD=normal runs in a generated world instead of the flat one.
+SAVE="$RT/world"; [ "${WORLD:-flat}" = normal ] && SAVE="$RT/world-normal"
+[ -d "$SAVE" ] || { echo "no world at $SAVE; run test/runtime/make-world.sh ${WORLD:-flat}"; exit 1; }
+cp -r "$SAVE" "$GAME/saves/smoke"
 # Skip the first-launch accessibility prompt, which would sit in front of quick play.
 printf "onboardAccessibility:false\ntutorialStep:none\nskipMultiplayerWarning:true\njoinedFirstServer:true\nrenderDistance:5\nsimulationDistance:5\nmaxFps:60\n" > "$GAME/options.txt"
 cd "$GAME"

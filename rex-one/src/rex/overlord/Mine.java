@@ -78,6 +78,11 @@ public final class Mine {
       return this.blocks.isEmpty();
    }
 
+   /** The block it is breaking, or the one it is walking to. */
+   public class_2338 focus() {
+      return this.dig.breaking() != null ? this.dig.breaking() : this.current;
+   }
+
    /**
     * Always a band around the player, never one around the target layer. Scanning only the layer
     * meant a vein two blocks from the feet went unseen while the tunnel set off for y=16.
