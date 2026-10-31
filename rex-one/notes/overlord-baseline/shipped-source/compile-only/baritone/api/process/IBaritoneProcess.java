@@ -1,0 +1,1 @@
+package baritone.api.process;public interface IBaritoneProcess{boolean isActive();PathingCommand onTick(boolean failed,boolean safe);void onLostControl();double priority();boolean isTemporary();String displayName0();}
