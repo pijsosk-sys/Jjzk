@@ -295,11 +295,12 @@ def wait_for_internet(host='deb.debian.org',seconds=90):
 # Wine draws Studio with OpenGL, through EGL (Wine 11) or GLX; Box64 hands those calls to these ARM64
 # libraries, and Mesa's llvmpipe draws on the processor. Without them: "Failed to load libEGL.so.1".
 GRAPHICS_PACKAGES=('libegl1','libegl-mesa0','libgl1','libglx-mesa0','libgl1-mesa-dri')
-def ensure_graphics():
+def ensure_graphics(renderer=''):
  def installed(p):
   r=subprocess.run(['dpkg-query','-W','-f=${Status}',p],capture_output=True,text=True)
   return 'ok installed' in r.stdout
- missing=[p for p in GRAPHICS_PACKAGES if not installed(p)]
+ wanted=GRAPHICS_PACKAGES+(('libvulkan1','mesa-vulkan-drivers') if renderer=='Vulkan' else ())
+ missing=[p for p in wanted if not installed(p)]
  if missing:say('Installing the 3D graphics libraries Studio draws with (one time): '+' '.join(missing));apt_install(*missing)
 def apt_install(*packages):
  wait_for_internet()
@@ -781,6 +782,10 @@ def main():
  try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
  except BlockingIOError:raise RuntimeError('A Studio launcher is already running')
  if arg=='--diagnose':diagnose();return
+ if arg.startswith('--use-renderer='):
+  want=arg.split('=',1)[1]
+  if want not in RENDERERS:raise RuntimeError('Graphics mode must be one of: '+', '.join(RENDERERS))
+  RENDERER_FILE.write_text(want);say('Studio will now draw with %s graphics'%want);return
  if arg in ('--use-box64','--use-hangover'):
   RUNTIME_FILE.write_text(arg[6:]);say('Studio will now run with '+arg[6:]);return
  if arg.startswith('--use-wine'):
@@ -794,6 +799,12 @@ def main():
  if arg=='--uninstall':raise RuntimeError('Automatic deletion disabled. Remove installations manually after exporting projects.')
  if not os.getenv('DISPLAY'):raise RuntimeError('Open this launcher inside the Boddy desktop so DISPLAY is set')
  preflight()
+ # The previous version switched Wine (and so saved Hangover) whenever Studio crashed, though Studio's
+ # crashes come from its 3D drawing. Forget that saved choice once, so Box64 with the newest Wine comes first.
+ migrated=ROOT/'.choice-v2'
+ if not migrated.exists():
+  for f in (RUNTIME_FILE,WINE_MAJOR_FILE):f.unlink(missing_ok=True)
+  migrated.touch()
  place=None
  if arg and not arg.startswith('--'):
   place=Path(arg).resolve()
@@ -807,7 +818,6 @@ def main():
 def try_every_way(place):
  tried=[];todo=combinations()
  for i,(rt,major) in enumerate(todo):
-  last=i==len(todo)-1
   FORCED.update(runtime=rt,wine=major)
   name=combination_name(rt,major)
   say('Trying %s (%d of %d)'%(name,i+1,len(todo)))
@@ -817,7 +827,8 @@ def try_every_way(place):
    say('%s did not work: %s'%(name,e));tried.append((name,str(e).strip().splitlines()[0] if str(e).strip() else type(e).__name__))
    continue
   save_combination(rt,major)
-  studio=install_studio();ensure_graphics();setup_browser_login(wine,env,prefix);tune_prefix(wine,env,prefix);args=[*wine,str(studio/'RobloxStudioBeta.exe')]
+  renderer=current_renderer()
+  studio=install_studio();ensure_graphics(renderer);write_studio_settings(studio,renderer);setup_browser_login(wine,env,prefix);tune_prefix(wine,env,prefix);args=[*wine,str(studio/'RobloxStudioBeta.exe')]
   if place:args.append('Z:'+str(place).replace('/','\\'))
   say('Launching real Roblox Studio. A process start alone does not prove the editor works.')
   say('Studio\'s built-in login does not work here: choose "Login via Browser", sign in in the Firefox window that opens,')
@@ -826,22 +837,56 @@ def try_every_way(place):
   if process_count()>PHANTOM_LIMIT-12:
    say('Note: %d Linux processes are already running. Android 12+ stops Boddy above %d; close other Boddy apps,'%(process_count(),PHANTOM_LIMIT))
    say('or turn off Android\'s child process limit (see "Boddy keeps reconnecting" in the Studio README).')
-  say('Roblox Studio is starting (%s); its window can take several minutes to appear on a phone.'%name)
+  say('Roblox Studio is starting (%s, %s graphics); its window can take several minutes to appear on a phone.'%(name,renderer))
   began=time.time()
   try:result=subprocess.run(args,cwd=studio,env=env)
   finally:restore_display()
   ran=time.time()-began
-  # Studio that crashes straight away under one Wine can run under another; one that ran for a while was closed by the user.
-  if result.returncode and ran<STUDIO_CRASH_SECONDS and not last:
-   say('Studio crashed after %d s (code %d) under %s; trying the next way'%(ran,result.returncode,name))
-   tried.append((name,'Studio crashed on start (code %d)'%result.returncode))
-   continue
-  say('Studio process exited with code '+str(result.returncode));sys.exit(result.returncode)
+  say('Studio process exited with code %d after %d s'%(result.returncode,ran))
+  if not result.returncode:sys.exit(0)
+  # Windows started, so this Wine works: a crash once Studio runs is its 3D drawing (it crashed opening a
+  # place on a phone), so the next start uses the next graphics mode rather than another Wine.
+  nxt=next_renderer(renderer)
+  if nxt:
+   RENDERER_FILE.write_text(nxt)
+   raise RuntimeError('Roblox Studio crashed (code %d) after %d min with %s graphics.\n\nNext time it will use %s '
+    'graphics instead, which may work on this phone: choose Open Studio again. (Studio menu > Graphics mode '
+    'changes it by hand.)'%(result.returncode,ran//60,renderer,nxt))
+  RENDERER_FILE.write_text(RENDERERS[0])
+  raise RuntimeError('Roblox Studio crashed (code %d) with every graphics mode (%s). Choose "Copy log" and send '
+   'the log.'%(result.returncode,', '.join(RENDERERS)))
  raise RuntimeError('Tried every way Boddy has of running Windows, and none could start Roblox Studio on this phone:\n'+
   '\n'.join('  %s: %s'%t for t in tried)+
   '\n\nChoose "Copy log" and send the log; it shows why each one stopped. Roblox Tools > "Start a new game I can '
   'edit with an AI agent" still works without Studio.')
-STUDIO_CRASH_SECONDS=180
+# Studio's 3D view is drawn by the phone's processor (Mesa llvmpipe), so: the graphics mode with the fewest
+# translation layers first (Roblox's own OpenGL renderer straight to Mesa), then Vulkan (Mesa lavapipe),
+# then Direct3D 11, which Wine translates to OpenGL, at feature level 10 and then full.
+RENDERERS=('OpenGL','Vulkan','D3D11FL10','D3D11')
+RENDERER_FILE=ROOT/'renderer'
+def current_renderer():
+ r=os.getenv('BODDY_STUDIO_RENDERER') or (RENDERER_FILE.read_text().strip() if RENDERER_FILE.exists() else '')
+ return r if r in RENDERERS else RENDERERS[0]
+def next_renderer(r):
+ i=RENDERERS.index(r)
+ return RENDERERS[i+1] if i+1<len(RENDERERS) else None
+# Light settings for drawing on a phone's processor: every frame is drawn in software, so a 30 fps cap, the
+# lowest quality level and textures, and no shadows or post effects cut the work (and memory) the most.
+# Studio reads these from ClientSettings next to its program, like Roblox's player does.
+LIGHT_FLAGS={'DFIntTaskSchedulerTargetFps':30,'DFIntDebugFRMQualityLevelOverride':1,'FFlagDisablePostFx':True,
+ 'FIntRenderShadowIntensity':0,'DFFlagDebugRenderForceTechnologyVoxel':True,
+ 'DFFlagTextureQualityOverrideEnabled':True,'DFIntTextureQualityOverride':0,
+ # Wine handles Alt+Enter itself; Studio's own handling breaks the window under Wine (as Vinegar sets it).
+ 'FFlagHandleAltEnterFullscreenManually':False}
+def write_studio_settings(studio,renderer):
+ path=studio/'ClientSettings'/'ClientAppSettings.json'
+ try:flags=json.loads(path.read_text()) if path.exists() else {}
+ except ValueError:flags={}  # not ours and not valid: replaced
+ if not isinstance(flags,dict):flags={}
+ if os.getenv('BODDY_STUDIO_FULL_GRAPHICS')!='1':flags.update(LIGHT_FLAGS)
+ for r in RENDERERS:flags['FFlagDebugGraphicsPrefer'+r]=r==renderer
+ path.parent.mkdir(exist_ok=True);path.write_text(json.dumps(flags,indent=1))
+ say('Studio graphics: %s, light settings (30 fps, lowest quality)'%renderer)
 def offline(e):
  """Whether an error means the internet is not reachable (rather than one Wine version failing)."""
  if isinstance(e,(TlsError,OfflineError,ConnectionError,TimeoutError)):return True

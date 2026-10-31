@@ -92,7 +92,7 @@ fi
 # The action can be given as an argument (e.g. from a desktop shortcut): studio-app.sh "Open Studio"
 choice=${1:-}
 [ -n "$choice" ] || choice=$(zenity --list --title="$TITLE" --width=420 --height=300 --column=Action \
-    "Open Studio" "Open a place file" "Diagnostics" "Wine version" "Compatibility mode" "Reset Studio" 2>/dev/null) || exit 0
+    "Open Studio" "Open a place file" "Graphics mode" "Diagnostics" "Wine version" "Compatibility mode" "Reset Studio" 2>/dev/null) || exit 0
 case "$choice" in
     "Open Studio") args=() ;;
     "Open a place file")
@@ -100,6 +100,24 @@ case "$choice" in
         args=("$f") ;;
     "Diagnostics")
         "$STUDIO" --diagnose 2>&1 | zenity --text-info --title="$TITLE diagnostics" --width=760 --height=520 2>/dev/null
+        exit 0 ;;
+    "Graphics mode")
+        rf=$HOME/.local/share/roblox-studio/renderer
+        now=$(cat "$rf" 2>/dev/null); [ -n "$now" ] || now=OpenGL
+        mark() { [ "$now" = "$1" ] && echo "in use" || echo "$2"; }
+        pick=$(zenity --list --title="$TITLE" --width=520 --height=320 \
+            --text="How Studio draws its 3D view. Change this if Studio crashes when a game opens.\nBoddy also moves to the next one by itself after a crash." \
+            --column=Mode --column=Status \
+            "OpenGL" "$(mark OpenGL 'lightest on a phone, tried first')" \
+            "Vulkan" "$(mark Vulkan 'second choice')" \
+            "D3D11FL10" "$(mark D3D11FL10 'DirectX 11, reduced')" \
+            "D3D11" "$(mark D3D11 'DirectX 11, the usual Windows mode')" 2>/dev/null) || exit 0
+        [ -n "$pick" ] || exit 0
+        if out=$("$STUDIO" --use-renderer="$pick" 2>&1); then
+            zenity --info --width=400 --title="$TITLE" --text="Graphics mode set to $pick. Choose Open Studio to use it." 2>/dev/null
+        else
+            zenity --error --width=460 --title="$TITLE" --text="$(printf '%s' "$out" | escape)" 2>/dev/null
+        fi
         exit 0 ;;
     "Wine version")
         wf=$HOME/.local/share/roblox-studio/wine-major
