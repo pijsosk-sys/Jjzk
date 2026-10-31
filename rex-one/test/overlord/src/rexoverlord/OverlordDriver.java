@@ -131,9 +131,13 @@ public final class OverlordDriver implements ClientModInitializer {
               "xp set @a 60 levels"),
          OverlordDriver::allEnchanted));
 
+      // The saturation the other scenarios run with has to go first, and it has to stay gone: with
+      // twenty saturation banked the hunger bar does not move for the best part of a minute, which
+      // is longer than the effect used to last, and nothing was ever hungry enough to eat.
       all.add(new Scenario("eat", "food eaten before the bar runs out", 180,
-         with("give @a minecraft:cooked_beef 8", "give @a minecraft:stone_pickaxe 1", "effect clear @a minecraft:saturation",
-              "effect give @a minecraft:hunger 30 20 true"),
+         with("effect clear @a", "effect give @a minecraft:resistance infinite 255 true",
+              "give @a minecraft:cooked_beef 8", "give @a minecraft:stone_pickaxe 1", "give @a minecraft:stone_sword 1",
+              "effect give @a minecraft:hunger 160 20 true"),
          player -> have(player, "cooked_beef") < 8));
 
       all.add(new Scenario("fight", "a zombie beaten off", 180,
