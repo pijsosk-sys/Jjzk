@@ -1,0 +1,950 @@
+<roblox version="4"><Item class="Folder" referent="RBX00000012"><Properties><string name="Name">MCPStudioPlugin</string></Properties><Item class="Script" referent="RBX00000001"><Properties><string name="Name">Main</string><ProtectedString name="Source"><![CDATA[local Main = script:FindFirstAncestor("MCPStudioPlugin")
+local ConsoleOutput = require(Main.Utils.ConsoleOutput)
+local DataModelType = require(Main.Utils.DataModelType)
+local GameStopUtil = require(Main.Utils.GameStopUtil)
+local MockWebSocketService = require(Main.MockWebSocketService)
+local PluginUtils = require(Main.Utils.PluginUtils)
+local ToolDispatcher = require(Main.Utils.ToolDispatcher)
+local Types = require(Main.Types)
+
+local ChangeHistoryService = game:GetService("ChangeHistoryService")
+local HttpService = game:GetService("HttpService")
+local RunService = game:GetService("RunService")
+local StudioService = game:GetService("StudioService")
+
+local URI = "http://localhost:44755"
+local RECEIVE_ENDPOINT = "/request"
+local SEND_ENDPOINT = "/response"
+local PLUGIN_DISABLED_SETTING_KEY = "Disabled-MCP-plugin-setting"
+
+PluginUtils.plugin = plugin
+
+local datamodelType = DataModelType.getDataModelType()
+
+if datamodelType == "Server" then
+	task.spawn(GameStopUtil.monitorForStopPlay)
+end
+
+if RunService:IsRunning() then
+	return
+end
+
+local connMessageOut = ConsoleOutput.startListener()
+plugin.Unloading:Connect(function()
+	connMessageOut:Disconnect()
+end)
+
+local old_warn = warn
+local function log(...)
+	if false then
+		old_warn(...)
+	end
+end
+
+local function toolCallHandler(args: Types.ToolArgs): string
+	local toolName = next(args)
+	if not toolName then
+		error("No tool name found in request")
+	end
+
+	local toolArgs = args[toolName]
+	if not toolArgs or type(toolArgs) ~= "table" then
+		error("Invalid tool args found for tool name: " .. toolName)
+	end
+
+	local recording = ChangeHistoryService:TryBeginRecording("StudioMCP")
+	local success, response = pcall(ToolDispatcher.dispatchTool, toolName, toolArgs)
+	if recording then
+		ChangeHistoryService:FinishRecording(recording, Enum.FinishRecordingOperation.Commit)
+	end
+
+	if success then
+		return response or ""
+	end
+	error("Error handling request: " .. tostring(response))
+end
+
+local function connectWebSocket()
+	local client = MockWebSocketService:CreateClient(URI)
+	client:SetReceiveEndpoint(RECEIVE_ENDPOINT)
+	client:SetSendEndpoint(SEND_ENDPOINT)
+
+	client.Opened:Once(function()
+		log("[MCP] Connection opened")
+	end)
+
+	client.Closed:Once(function()
+		log("[MCP] Connection closed")
+	end)
+
+	client.MessageReceived:Connect(function(message)
+		log("[MCP] Message received")
+
+		local body = HttpService:JSONDecode(message)
+		assert(body and body.id and body.args, "Invalid message received")
+
+		local id: string = body.id
+		local responseSent = false
+		local function sendResponseOnce(success: boolean, response: string)
+			if not responseSent then
+				log("[MCP] Sending response:", response)
+				responseSent = true
+				client:Send({
+					id = id,
+					success = success,
+					response = response,
+				})
+			end
+		end
+
+		local args: Types.ToolArgs = body.args
+
+		local success, response = pcall(toolCallHandler, args)
+		sendResponseOnce(success, response)
+
+		log("[MCP] Successfully handled request")
+	end)
+
+	return client
+end
+
+local function getButtonImage()
+	local ok, response = pcall(function()
+		return StudioService:GetClassIcon("PackageLink").Image
+	end)
+	return ok and response or "rbxasset://textures/ui/GuiImagePlaceholder.png"
+end
+
+local toolbar = plugin:CreateToolbar("MCP")
+local toggleButton = toolbar:CreateButton("Toggle MCP", "Toggle connection to the server", getButtonImage())
+toggleButton.ClickableWhenViewportHidden = true
+
+local currentClient: MockWebSocketService.MockWebSocketClient?
+
+if not plugin:GetSetting(PLUGIN_DISABLED_SETTING_KEY) then
+	currentClient = connectWebSocket()
+	print("The MCP Studio plugin is ready for prompts.")
+end
+
+toggleButton:SetActive(currentClient ~= nil)
+
+toggleButton.Click:Connect(function()
+	if not currentClient then
+		currentClient = connectWebSocket()
+		print("The MCP Studio plugin is ready for prompts.")
+	else
+		currentClient:Close()
+		currentClient = nil
+		print("The MCP Studio plugin is stopped.")
+	end
+	toggleButton:SetActive(currentClient ~= nil)
+	plugin:SetSetting(PLUGIN_DISABLED_SETTING_KEY, currentClient == nil)
+end)
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000002"><Properties><string name="Name">MockWebSocketService</string><ProtectedString name="Source"><![CDATA[local HttpService = game:GetService("HttpService")
+
+local MockWebSocketClient = {}
+MockWebSocketClient.__index = MockWebSocketClient
+
+local EnumWebSocketState = {
+	Connecting = "Connecting",
+	Open = "Open",
+	Closing = "Closing",
+	Closed = "Closed",
+}
+
+local CloseableStates = {
+	[EnumWebSocketState.Connecting] = true,
+	[EnumWebSocketState.Open] = true,
+}
+
+local POLL_WAIT_TIME = 1
+
+export type MockWebSocketClient = {
+	Send: (self: MockWebSocketClient, data: any) -> (),
+	Close: (self: MockWebSocketClient) -> (),
+	SetReceiveEndpoint: (self: MockWebSocketClient, endpoint: string) -> (),
+	SetSendEndpoint: (self: MockWebSocketClient, endpoint: string) -> (),
+	Opened: RBXScriptSignal,
+	Closed: RBXScriptSignal,
+	MessageReceived: RBXScriptSignal,
+	ConnectionState: typeof(EnumWebSocketState.Connecting),
+}
+
+type MockWebSocketClientPrivate = MockWebSocketClient & {
+	new: (uri: string) -> MockWebSocketClient,
+	_OpenImpl: (self: MockWebSocketClient) -> (),
+	_uri: string,
+	_receiveEndpoint: string,
+	_sendEndpoint: string,
+	_pollTask: thread?,
+	_OpenedEvent: BindableEvent,
+	_ClosedEvent: BindableEvent,
+	_MessageReceivedEvent: BindableEvent,
+}
+
+function MockWebSocketClient.new(uri: string): MockWebSocketClient
+	local self: MockWebSocketClientPrivate = setmetatable({}, MockWebSocketClient) :: any
+
+	self._uri = uri
+	self._receiveEndpoint = ""
+	self._sendEndpoint = ""
+	self._pollTask = nil :: thread?
+
+	self._OpenedEvent = Instance.new("BindableEvent")
+	self.Opened = self._OpenedEvent.Event
+
+	self._ClosedEvent = Instance.new("BindableEvent")
+	self.Closed = self._ClosedEvent.Event
+
+	self._MessageReceivedEvent = Instance.new("BindableEvent")
+	self.MessageReceived = self._MessageReceivedEvent.Event
+
+	self.ConnectionState = EnumWebSocketState.Connecting
+
+	task.defer(self._OpenImpl, self)
+
+	return self
+end
+
+local function doRequest(url: string, method: "GET" | "POST", body: any)
+	local ok, response = pcall(function()
+		return HttpService:RequestAsync({
+			Url = url,
+			Method = method,
+			Headers = {
+				["Content-Type"] = "application/json",
+			},
+			Body = if body then HttpService:JSONEncode(body) else nil,
+			Compress = Enum.HttpCompression.None,
+		})
+	end)
+
+	return if ok then response else nil
+end
+
+function MockWebSocketClient._OpenImpl(self: MockWebSocketClientPrivate)
+	assert(self.ConnectionState == EnumWebSocketState.Connecting, "WebSocket is not in the Connecting state")
+
+	self.ConnectionState = EnumWebSocketState.Open
+	self._OpenedEvent:Fire()
+
+	self._pollTask = task.spawn(function()
+		while self.ConnectionState == EnumWebSocketState.Open do
+			local response = doRequest(self._uri .. self._receiveEndpoint, "GET")
+
+			if response then
+				if response.StatusCode == 200 and response.Success then
+					self._MessageReceivedEvent:Fire(response.Body)
+					continue
+				elseif response.StatusCode == 423 then
+					continue
+				end
+			end
+
+			task.wait(POLL_WAIT_TIME)
+		end
+	end)
+end
+
+function MockWebSocketClient.Send(self: MockWebSocketClientPrivate, data: any)
+	doRequest(self._uri .. self._sendEndpoint, "POST", data)
+end
+
+function MockWebSocketClient.Close(self: MockWebSocketClientPrivate)
+	if CloseableStates[self.ConnectionState] then
+		self.ConnectionState = EnumWebSocketState.Closing
+
+		if self._pollTask and coroutine.status(self._pollTask) == "running" then
+			task.cancel(self._pollTask)
+			self._pollTask = nil :: any
+		end
+
+		self.ConnectionState = EnumWebSocketState.Closed
+		self._ClosedEvent:Fire()
+	end
+end
+
+-- START DEVIATION: These methods are not present in the real WebSocketClient instance
+function MockWebSocketClient.SetReceiveEndpoint(self: MockWebSocketClientPrivate, endpoint: string)
+	self._receiveEndpoint = endpoint
+end
+
+function MockWebSocketClient.SetSendEndpoint(self: MockWebSocketClientPrivate, endpoint: string)
+	self._sendEndpoint = endpoint
+end
+-- END DEVIATION
+
+local MockWebSocketService = {}
+MockWebSocketService.__index = MockWebSocketService
+
+type MockWebSocketService = {
+	CreateClient: (self: MockWebSocketService, uri: string) -> MockWebSocketClient,
+}
+
+function MockWebSocketService.CreateClient(_: MockWebSocketService, uri: string)
+	return MockWebSocketClient.new(uri)
+end
+
+return MockWebSocketService
+]]></ProtectedString></Properties></Item><Item class="Folder" referent="RBX00000009"><Properties><string name="Name">Tools</string></Properties><Item class="ModuleScript" referent="RBX00000003"><Properties><string name="Name">GetConsoleOutput</string><ProtectedString name="Source"><![CDATA[local Main = script:FindFirstAncestor("MCPStudioPlugin")
+local Types = require(Main.Types)
+
+local ConsoleOutput = require(Main.Utils.ConsoleOutput)
+
+local function handleGetConsoleOutput(): string?
+	local result = ConsoleOutput.outputMessage or ""
+	return result
+end
+
+return handleGetConsoleOutput :: Types.ToolFunction
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000004"><Properties><string name="Name">GetStudioMode</string><ProtectedString name="Source"><![CDATA[local Main = script:FindFirstAncestor("MCPStudioPlugin")
+local GlobalVariables = require(Main.Utils.GlobalVariables)
+local Types = require(Main.Types)
+
+local function handleGetStudioMode(): string?
+	local result = GlobalVariables.studioMode
+	return result
+end
+
+return handleGetStudioMode :: Types.ToolFunction
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000005"><Properties><string name="Name">InsertModel</string><ProtectedString name="Source"><![CDATA[local Main = script:FindFirstAncestor("MCPStudioPlugin")
+local Types = require(Main.Types)
+
+local INSERT_MAX_SEARCH_DEPTH = 2048
+local INSERT_MAX_DISTANCE_AWAY = 20
+
+local function getInsertPosition()
+	local camera = workspace.CurrentCamera
+	local viewportPoint = camera.ViewportSize / 2
+	local unitRay = camera:ViewportPointToRay(viewportPoint.X, viewportPoint.Y, 0)
+
+	local ray = Ray.new(unitRay.Origin, unitRay.Direction * INSERT_MAX_SEARCH_DEPTH)
+	local params = RaycastParams.new()
+	params.BruteForceAllSlow = true
+
+	local result = workspace:Raycast(ray.Origin, ray.Direction, params)
+
+	if result then
+		return result.Position
+	else
+		return camera.CFrame.Position + unitRay.Direction * INSERT_MAX_DISTANCE_AWAY
+	end
+end
+
+local InsertService = game:GetService("InsertService")
+
+type GetFreeModelsResponse = {
+	[number]: {
+		CurrentStartIndex: number,
+		TotalCount: number,
+		Results: {
+			[number]: {
+				Name: string,
+				AssetId: number,
+				AssetVersionId: number,
+				CreatorName: string,
+			},
+		},
+	},
+}
+
+local function toTitleCase(str: string): string
+	local function titleCase(first: string, rest: string)
+		return first:upper() .. rest:lower()
+	end
+
+	local intermediate = string.gsub(str, "(%a)([%w_']*)", titleCase :: (string) -> string)
+	return intermediate:gsub("%s+", "")
+end
+
+local function collapseObjectsIntoContainer(objects: { Instance }): Instance?
+	local isPhysical = false
+	for _, object in objects do
+		if object:IsA("PVInstance") then
+			isPhysical = true
+			break
+		end
+	end
+
+	if isPhysical then
+		local model = Instance.new("Model")
+		for _, object in objects do
+			object.Parent = model
+		end
+		return model
+	end
+
+	if #objects > 1 then
+		local folder = Instance.new("Folder")
+		for _, object in objects do
+			object.Parent = folder
+		end
+		return folder
+	end
+
+	return objects[1]
+end
+
+local function loadAsset(assetId: number): Instance?
+	local objects = game:GetObjects("rbxassetid://" .. assetId)
+	return collapseObjectsIntoContainer(objects)
+end
+
+local function getAssets(query: string): number?
+	local results: GetFreeModelsResponse = InsertService:GetFreeModels(query, 0)
+	local assets = {}
+	for i, result in results[1].Results do
+		if i > 6 then
+			break
+		end
+		table.insert(assets, result.AssetId)
+	end
+
+	return table.remove(assets, 1)
+end
+
+local function insertFromMarketplace(query: string): string
+	local primaryResult = getAssets(query)
+	if not primaryResult then
+		error("Failed to find asset")
+	end
+
+	local instance = loadAsset(primaryResult)
+	if not instance then
+		error("Failed to load asset")
+	end
+
+	local name = toTitleCase(query)
+	local i = 1
+	while workspace:FindFirstChild(name) do
+		name = query .. i
+		i += 1
+	end
+
+	instance.Name = name
+	instance.Parent = workspace
+
+	if instance:IsA("Model") then
+		instance:PivotTo(CFrame.new(getInsertPosition()))
+	end
+
+	return name
+end
+
+local function handleInsertModel(insertModelArgs: Types.InsertModelArgs): string?
+	if type(insertModelArgs.query) ~= "string" then
+		error("Missing query in InsertModel")
+	end
+
+	return insertFromMarketplace(insertModelArgs.query)
+end
+
+return handleInsertModel :: Types.ToolFunction
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000006"><Properties><string name="Name">RunCode</string><ProtectedString name="Source"><![CDATA[local Main = script:FindFirstAncestor("MCPStudioPlugin")
+local Types = require(Main.Types)
+
+local HttpService = game:GetService("HttpService")
+
+local function runCodeWithOutput(command: string): string
+	local output = ""
+
+	local function getTableType(arg)
+		local hasArray = false
+		local hasTable = false
+		for key, _value in arg do
+			if typeof(key) == "number" then
+				hasArray = true
+			else
+				hasTable = true
+			end
+			if hasArray and hasTable then
+				break
+			end
+		end
+		return hasArray, hasTable
+	end
+
+	local function serializeTable(arg): any
+		if typeof(arg) == "table" then
+			local _, isTable = getTableType(arg)
+
+			local newArg = {}
+			for key, value in arg do
+				local newKey = serializeTable(key)
+				newArg[if isTable then tostring(newKey) else newKey] = serializeTable(value)
+			end
+			return newArg
+		elseif type(arg) == "userdata" then
+			return tostring(arg) or "UNABLE_TO_SERIALIZE"
+		end
+		return arg
+	end
+
+	local function deepClone(t, cache)
+		local clone = {}
+		for key, value in t do
+			local newKey = key
+			if typeof(key) == "table" then
+				if not cache[key] then
+					cache[key] = deepClone(key, cache)
+				end
+				newKey = cache[key]
+			end
+
+			local newValue = value
+			if typeof(value) == "table" then
+				if not cache[value] then
+					cache[value] = deepClone(value, cache)
+				end
+				newValue = cache[value]
+			end
+
+			clone[newKey] = newValue
+		end
+		return clone
+	end
+
+	local function toStrTable(t: { any }): { string }
+		local clonedTable = deepClone(t, {})
+		local strTable = table.create(#clonedTable)
+		for i, arg in clonedTable do
+			local serializedArg = serializeTable(arg)
+			strTable[i] = if typeof(serializedArg) == "table"
+				then HttpService:JSONEncode(serializedArg)
+				else serializedArg
+		end
+		return strTable
+	end
+
+	local function addToOutput(header: string, ...)
+		local strResults = toStrTable(table.pack(...))
+		output ..= header .. " " .. table.concat(strResults, "\t") .. "\n"
+	end
+
+	local function executeCode()
+		local chunk = loadstring(command) :: any
+		local chunkfenv = getfenv(chunk)
+
+		local oldPrint = print
+		chunkfenv.print = function(...)
+			oldPrint(...)
+			addToOutput("[OUTPUT]", ...)
+		end
+
+		local oldWarn = warn
+		chunkfenv.warn = function(...)
+			oldWarn(...)
+			addToOutput("[WARNING]", ...)
+		end
+
+		local oldError = error
+		chunkfenv.error = function(...)
+			oldError(...)
+			addToOutput("[ERROR]", ...)
+		end
+
+		local results = table.pack(chunk())
+		if #results > 0 then
+			addToOutput("[RETURNED RESULTS]", table.unpack(results))
+		end
+
+		return results
+	end
+
+	local ok, errorMessage = pcall(executeCode)
+	if not ok then
+		addToOutput("[UNEXPECTED ERROR]", errorMessage)
+	end
+
+	return output
+end
+
+local function handleRunCode(runCodeArgs: Types.RunCodeArgs): string?
+	if type(runCodeArgs.command) ~= "string" then
+		error("Missing command in RunCode")
+	end
+
+	return runCodeWithOutput(runCodeArgs.command)
+end
+
+return handleRunCode :: Types.ToolFunction
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000007"><Properties><string name="Name">RunScriptInPlayMode</string><ProtectedString name="Source"><![CDATA[local Main = script:FindFirstAncestor("MCPStudioPlugin")
+local ConsoleOutput = require(Main.Utils.ConsoleOutput)
+local GlobalVariables = require(Main.Utils.GlobalVariables)
+local StartStopPlay = require(Main.Tools.StartStopPlay)
+local Types = require(Main.Types)
+
+local HttpService = game:GetService("HttpService")
+local ServerScriptService = game:GetService("ServerScriptService")
+local StudioTestService = game:GetService("StudioTestService")
+
+local TEST_SCRIPT_NAME = "AssistantTestScript"
+
+local function buildTestRunnerSource(userCode: string, timeout: number): string
+	local timeoutStr = tostring(timeout)
+	return [[
+local StudioTestService = game:GetService("StudioTestService")
+local LogService = game:GetService("LogService")
+local RunService = game:GetService("RunService")
+
+if not RunService:IsRunning() then
+	return
+end
+
+local capturedLogs = {}
+local logConnection = nil
+
+local MESSAGE_TYPE_MAP = {
+	[Enum.MessageType.MessageOutput] = "output",
+	[Enum.MessageType.MessageInfo] = "info",
+	[Enum.MessageType.MessageWarning] = "warning",
+	[Enum.MessageType.MessageError] = "error",
+}
+
+logConnection = LogService.MessageOut:Connect(function(message, messageType)
+	if string.sub(message, 1, 5) == "[MCP]" then return end
+	table.insert(capturedLogs, {
+		level = MESSAGE_TYPE_MAP[messageType] or "output",
+		message = message,
+		ts = os.clock(),
+	})
+end)
+
+local startTime = os.clock()
+local isTimeout = false
+
+local function endTest()
+	local duration = os.clock() - startTime
+	task.wait(0.1)
+
+	if logConnection then logConnection:Disconnect() end
+
+	local errors = {}
+	for _, log in ipairs(capturedLogs) do
+		if log.level == "error" or log.level == "warning" then
+			table.insert(errors, log)
+		end
+	end
+
+	StudioTestService:EndTest({
+		success = ok,
+		value = if ok then tostring(result) else nil,
+		error = if not ok then tostring(result) else nil,
+		logs = capturedLogs,
+		errors = errors,
+		duration = duration,
+		isTimeout = isTimeout,
+	})
+end
+
+
+task.spawn(function()
+	wait(]] .. timeoutStr .. [[)
+	isTimeout = true
+	endTest()
+end)
+
+local ok, result = pcall(function()
+]] .. userCode .. [[
+
+end)
+
+endTest()
+]]
+end
+
+local function removeTestScript()
+	local testScript = ServerScriptService:FindFirstChild(TEST_SCRIPT_NAME)
+	if testScript then
+		testScript:Destroy()
+	end
+end
+
+local function injectTestScript(args: Types.RunScriptInPlayModeArgs)
+	removeTestScript()
+
+	local source = buildTestRunnerSource(args.code, args.timeout or 1_000_000)
+	local testScript = Instance.new("Script")
+	testScript.Name = TEST_SCRIPT_NAME
+	testScript.Parent = ServerScriptService
+	testScript.Source = source
+end
+
+local function runScriptInPlayMode(args: Types.RunScriptInPlayModeArgs): string?
+	injectTestScript(args)
+
+	ConsoleOutput.outputMessage = ""
+	local success, result = pcall(function()
+		if args.mode == "start_play" then
+			GlobalVariables.studioMode = "start_play"
+			return StudioTestService:ExecutePlayModeAsync({})
+		else
+			GlobalVariables.studioMode = "run_server"
+			return StudioTestService:ExecuteRunModeAsync({})
+		end
+	end)
+
+	GlobalVariables.studioMode = "stop"
+	removeTestScript()
+
+	if not success then
+		error("Failed to run script in play mode: " .. result)
+	end
+
+	local resultStr = HttpService:JSONEncode(result)
+	return resultStr
+end
+
+local function handleRunScriptInPlayMode(runScriptInPlayModeArgs: Types.RunScriptInPlayModeArgs): string?
+	if type(runScriptInPlayModeArgs.code) ~= "string" or runScriptInPlayModeArgs.code == "" then
+		error("Missing code in RunScriptInPlayMode")
+	end
+
+	if runScriptInPlayModeArgs.timeout ~= nil then
+		if type(runScriptInPlayModeArgs.timeout) ~= "number" or runScriptInPlayModeArgs.timeout < 0 then
+			error("Timeout must be a number greater than 0 in RunScriptInPlayMode")
+		end
+	end
+
+	StartStopPlay({ mode = "stop" })
+	wait(0.2)
+
+	return runScriptInPlayMode(runScriptInPlayModeArgs)
+end
+
+return handleRunScriptInPlayMode :: Types.ToolFunction
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000008"><Properties><string name="Name">StartStopPlay</string><ProtectedString name="Source"><![CDATA[local Main = script:FindFirstAncestor("MCPStudioPlugin")
+local Types = require(Main.Types)
+local StudioTestService = game:GetService("StudioTestService")
+local ConsoleOutput = require(Main.Utils.ConsoleOutput)
+local GameStopUtil = require(Main.Utils.GameStopUtil)
+local GlobalVariables = require(Main.Utils.GlobalVariables)
+
+-- If callback finishes before timeout, returns callback result, otherwise returns timeoutResult
+-- StudioTestService:ExecutePlayModeAsync({}) may error "Previous call to start play session has not been completed" immediately(still yielding) or yield until stop.
+local function callWithTimeout(callback: () -> any, timeout: number, timeoutResult: string): string?
+	local BindableEvent = Instance.new("BindableEvent")
+	local isDone = false
+	local _success = true
+	local result = timeoutResult
+	local isTimeout = false
+
+	task.spawn(function()
+		_success, result = pcall(function()
+			return callback()
+		end)
+		if not isDone then
+			isDone = true
+			BindableEvent:Fire()
+		end
+	end)
+	task.spawn(function()
+		task.wait(timeout)
+		if not isDone then
+			isDone = true
+			isTimeout = true
+			BindableEvent:Fire()
+		end
+	end)
+
+	if not isDone then
+		BindableEvent.Event:Wait()
+	end
+	return result, isTimeout
+end
+
+local function startPlay(): string?
+	ConsoleOutput.outputMessage = ""
+	GlobalVariables.studioMode = "start_play"
+	local result, isTimeout = callWithTimeout(function()
+		return StudioTestService:ExecutePlayModeAsync({})
+	end, 0.1, "Started play")
+	if not isTimeout then
+		return "Already in play mode"
+	end
+	return result
+end
+
+local function stop(): string?
+	GameStopUtil.stopPlay()
+	wait(1)
+	GlobalVariables.studioMode = "stop"
+	return "Stopped"
+end
+
+local function runServer(): string?
+	GlobalVariables.studioMode = "run_server"
+	local result, isTimeout = callWithTimeout(function()
+		return StudioTestService:ExecuteRunModeAsync({})
+	end, 0.1, "Ran server")
+	if not isTimeout then
+		return "Already in run_server mode"
+	end
+	return result
+end
+
+local function handleStartStopPlay(startStopPlayArgs: Types.StartStopPlayArgs): string?
+	if type(startStopPlayArgs.mode) ~= "string" then
+		error("Missing mode in StartStopPlay")
+	end
+
+	if startStopPlayArgs.mode == "start_play" then
+		return startPlay()
+	elseif startStopPlayArgs.mode == "stop" then
+		return stop()
+	elseif startStopPlayArgs.mode == "run_server" then
+		return runServer()
+	end
+
+	error("Invalid mode in StartStopPlay, must be start_play, stop, or run_server")
+end
+
+return handleStartStopPlay :: Types.ToolFunction
+]]></ProtectedString></Properties></Item></Item><Item class="ModuleScript" referent="RBX0000000A"><Properties><string name="Name">Types</string><ProtectedString name="Source"><![CDATA[export type InsertModelArgs = {
+	query: string,
+}
+
+export type RunCodeArgs = {
+	command: string,
+}
+
+export type TestMode = "start_play" | "run_server"
+
+export type StartStopPlayMode = TestMode | "stop"
+
+export type StartStopPlayArgs = {
+	mode: StartStopPlayMode,
+}
+
+export type RunScriptInPlayModeArgs = {
+	code: string,
+	timeout: number?,
+	mode: TestMode,
+}
+
+export type ToolArgs =
+	{}
+	| { InsertModel: InsertModelArgs }
+	| { RunCode: RunCodeArgs }
+	| { StartStopPlay: StartStopPlayArgs }
+	| { RunScriptInPlayMode: RunScriptInPlayModeArgs }
+
+export type ToolFunction = (ToolArgs) -> string?
+
+return {}
+]]></ProtectedString></Properties></Item><Item class="Folder" referent="RBX00000011"><Properties><string name="Name">Utils</string></Properties><Item class="ModuleScript" referent="RBX0000000B"><Properties><string name="Name">ConsoleOutput</string><ProtectedString name="Source"><![CDATA[local LogService = game:GetService("LogService")
+
+local DEBUG_TOOL_MAX_OUTPUT = 10000
+
+local ConsoleOutput = {
+	outputMessage = "",
+}
+
+function ConsoleOutput.startListener()
+	local connMessageOut = LogService.MessageOut:Connect(function(message: string, _: Enum.MessageType)
+		if #ConsoleOutput.outputMessage + #message <= DEBUG_TOOL_MAX_OUTPUT then
+			if #ConsoleOutput.outputMessage == 0 then
+				ConsoleOutput.outputMessage = message
+			else
+				ConsoleOutput.outputMessage = ConsoleOutput.outputMessage .. "\n" .. message
+			end
+		end
+	end)
+	return connMessageOut
+end
+
+return ConsoleOutput
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000C"><Properties><string name="Name">DataModelType</string><ProtectedString name="Source"><![CDATA[local RunService = game:GetService("RunService")
+
+export type DataModelType = "Edit" | "Client" | "Server" | "Unknown"
+
+local function getDataModelType(): DataModelType
+	if RunService:IsEdit() then
+		return "Edit"
+	else
+		if RunService:IsServer() then
+			return "Server"
+		end
+		if RunService:IsClient() then
+			return "Client"
+		end
+	end
+	return "Unknown"
+end
+
+return { getDataModelType = getDataModelType }
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000D"><Properties><string name="Name">GameStopUtil</string><ProtectedString name="Source"><![CDATA[local Main = script:FindFirstAncestor("MCPStudioPlugin")
+local PluginUtils = require(Main.Utils.PluginUtils)
+local StudioTestService = game:GetService("StudioTestService")
+
+local MCP_STOP_PLAY_MESSAGE_KEY = "MCP_STOP_PLAY_MESSAGE"
+
+local function stopPlay()
+	PluginUtils.setSettings(MCP_STOP_PLAY_MESSAGE_KEY, true)
+end
+
+local function monitorForStopPlay()
+	PluginUtils.setSettings(MCP_STOP_PLAY_MESSAGE_KEY, false)
+	while true do
+		if PluginUtils.getSettings(MCP_STOP_PLAY_MESSAGE_KEY) then
+			PluginUtils.setSettings(MCP_STOP_PLAY_MESSAGE_KEY, false)
+			StudioTestService:EndTest({})
+		end
+		task.wait(1)
+	end
+end
+
+return { stopPlay = stopPlay, monitorForStopPlay = monitorForStopPlay }
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000E"><Properties><string name="Name">GlobalVariables</string><ProtectedString name="Source"><![CDATA[local Main = script:FindFirstAncestor("MCPStudioPlugin")
+local Types = require(Main.Types)
+
+export type GlobalVariables = {
+	studioMode: Types.StartStopPlayMode,
+}
+
+local GlobalVariables = {
+	studioMode = "stop",
+}
+
+return GlobalVariables
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000000F"><Properties><string name="Name">PluginUtils</string><ProtectedString name="Source"><![CDATA[local PluginUtils = {
+	plugin = nil :: Plugin?,
+}
+
+function PluginUtils.getSettings(key: string): any
+	assert(PluginUtils.plugin, "Plugin not set")
+	return PluginUtils.plugin:GetSetting(key)
+end
+
+function PluginUtils.setSettings(key: string, value: any)
+	assert(PluginUtils.plugin, "Plugin not set")
+	PluginUtils.plugin:SetSetting(key, value)
+end
+
+return PluginUtils
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000010"><Properties><string name="Name">ToolDispatcher</string><ProtectedString name="Source"><![CDATA[local Main = script:FindFirstAncestor("MCPStudioPlugin")
+local Types = require(Main.Types)
+
+local tools: { [string]: Types.ToolFunction } = {
+	["GetConsoleOutput"] = require(Main.Tools.GetConsoleOutput),
+	["GetStudioMode"] = require(Main.Tools.GetStudioMode),
+	["InsertModel"] = require(Main.Tools.InsertModel),
+	["RunCode"] = require(Main.Tools.RunCode),
+	["RunScriptInPlayMode"] = require(Main.Tools.RunScriptInPlayMode),
+	["StartStopPlay"] = require(Main.Tools.StartStopPlay),
+}
+
+local function dispatchTool(toolName: string, args: Types.ToolArgs): string?
+	local toolFunction = tools[toolName]
+	if not toolFunction then
+		error("Tool " .. toolName .. " not found")
+	end
+
+	return toolFunction(args)
+end
+
+return {
+	tools = tools,
+	dispatchTool = dispatchTool,
+}
+]]></ProtectedString></Properties></Item></Item></Item></roblox>

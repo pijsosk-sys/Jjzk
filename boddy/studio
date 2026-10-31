@@ -294,7 +294,7 @@ def wait_for_internet(host='deb.debian.org',seconds=90):
    time.sleep(5)
 # Wine draws Studio with OpenGL, through EGL (Wine 11) or GLX; Box64 hands those calls to these ARM64
 # libraries, and Mesa's llvmpipe draws on the processor. Without them: "Failed to load libEGL.so.1".
-GRAPHICS_PACKAGES=('libegl1','libegl-mesa0','libgl1','libglx-mesa0','libgl1-mesa-dri')
+GRAPHICS_PACKAGES=('libegl1','libegl-mesa0','libgl1','libglx-mesa0','libgl1-mesa-dri','libpulse0')  # libpulse0: sound
 def ensure_graphics(renderer=''):
  def installed(p):
   r=subprocess.run(['dpkg-query','-W','-f=${Status}',p],capture_output=True,text=True)
@@ -608,6 +608,7 @@ def wine_env(prefix):
  # Without this, creating the prefix stops at "install wine-mono?" and waits for a click nobody sees.
  # winemenubuilder only adds Linux menu entries for Windows programs: one process fewer under Android's limit.
  env.setdefault('WINEDLLOVERRIDES','mscoree=;mshtml=;winemenubuilder.exe=d')
+ if Path('/tmp/pulse.sock').exists():env.setdefault('PULSE_SERVER','unix:/tmp/pulse.sock')
  if runtime()=='box64':
   for k,v in BOX64_ENV.items():env.setdefault(k,v)
  setup=current_setup()
@@ -712,16 +713,42 @@ def tune_prefix(wine,env,prefix):
  # Bluetooth and USB drivers cannot work inside Boddy (no udev or libusb devices) and only add Wine
  # driver work; Studio uses neither.
  marker=prefix/'.boddy-tuned-1'
- if marker.exists():return
- for service in ('winebth','wineusb'):
-  command([*wine,'reg','add','HKLM\\System\\CurrentControlSet\\Services\\'+service,'/v','Start','/t','REG_DWORD','/d','4','/f'],600,env)
- marker.touch()
+ if not marker.exists():
+  for service in ('winebth','wineusb'):
+   command([*wine,'reg','add','HKLM\\System\\CurrentControlSet\\Services\\'+service,'/v','Start','/t','REG_DWORD','/d','4','/f'],600,env)
+  marker.touch()
+ # Sound: Boddy plays everything through PulseAudio to the phone; Wine tried ALSA, which has no card here
+ # ("cannot find card '0'"), so Studio was silent. Wine's pulse driver goes through Box64 to libpulse.
+ marker=prefix/'.boddy-tuned-sound'
+ if not marker.exists():
+  command([*wine,'reg','add','HKCU\\Software\\Wine\\Drivers','/v','Audio','/t','REG_SZ','/d','pulse','/f'],600,env)
+  marker.touch()
+# Studio's MCP plugin (mcp-plugin/, built into MCPStudioPlugin.rbxmx), which lets Claude Code work in Studio
+# through roblox-studio-mcp. Shipped with Boddy; downloaded, checked, if this Boddy predates it.
+MCP_PLUGIN_NAME='MCPStudioPlugin.rbxmx'
+MCP_PLUGIN_SHA256='e680d8d235fd8345c80d1ec7729786d89708b3e1c38cfe765463fe84cf5d1aa7'
+MCP_PLUGIN_URL='https://raw.githubusercontent.com/pijsosk-sys/Jjzk/ccr-f8458f15-i347hd/boddy/'+MCP_PLUGIN_NAME
+def install_mcp_plugin(prefix):
+ def good(p):
+  try:return hashlib.sha256(p.read_bytes()).hexdigest()==MCP_PLUGIN_SHA256
+  except OSError:return False
+ src=next((p for p in (Path('/opt/boddy')/MCP_PLUGIN_NAME,ROOT/MCP_PLUGIN_NAME) if good(p)),None)
+ if not src:
+  try:download(MCP_PLUGIN_URL,ROOT/MCP_PLUGIN_NAME,sha256=MCP_PLUGIN_SHA256);src=ROOT/MCP_PLUGIN_NAME
+  except Exception as e:say('Could not get the Claude Code plugin for Studio: %s'%e);return
+ users=[u for u in (prefix/'drive_c'/'users').glob('*') if u.is_dir() and u.name!='Public'] or [prefix/'drive_c'/'users'/'root']
+ for user in users:
+  plugins=user/'AppData'/'Local'/'Roblox'/'Plugins';plugins.mkdir(parents=True,exist_ok=True)
+  (plugins/'MCPStudioPlugin.rbxm').unlink(missing_ok=True)  # the official installer's copy, if any: not twice
+  dst=plugins/MCP_PLUGIN_NAME
+  if not good(dst):shutil.copyfile(src,dst);say('Installed the Claude Code (MCP) plugin into Studio')
 # Studio's pop-ups (notifications, the loading box, menus) are layered, partly transparent windows.
 # Boddy's desktop has no compositor, so drawn as separate X windows their transparent parts come out
 # black, and Studio's panels redraw badly. Inside a Wine virtual desktop Wine draws every Studio window
 # into one X window itself. HKCU\Software\Wine\Explorer\Desktop names the desktop (explorer reads it
 # when the wineserver starts) and ...\Desktops holds its size.
 WINDOW_MODE_FILE=ROOT/'window-mode'
+STUDIO_SHARE=0.64  # of the screen's width for Studio in Studio Mode; Claude Code gets the rest
 DESKTOP_NAME='RobloxStudio'
 def window_mode():
  m=os.getenv('BODDY_STUDIO_WINDOWS') or (WINDOW_MODE_FILE.read_text().strip() if WINDOW_MODE_FILE.exists() else '')
@@ -735,7 +762,9 @@ def set_window_mode(wine,env,prefix):
  """Puts Studio in a Wine virtual desktop that fills the screen above Boddy's taskbar, or takes it out."""
  size=screen_size() if window_mode()=='desktop' else None
  # Room for the window's title bar and Boddy's taskbar, so the whole desktop stays on screen.
- want='%dx%d'%(size[0]-8,size[1]-72) if size else ''
+ # Studio Mode puts Claude Code beside Studio: the desktop then takes the left part of the screen.
+ share=STUDIO_SHARE if os.getenv('BODDY_STUDIO_LAYOUT')=='split' else 1.0
+ want='%dx%d'%(int(size[0]*share)-8,size[1]-72) if size else ''
  marker=prefix/'.boddy-window-mode'
  # v2: the desktop got a taskbar and a black background (bump it when the registry settings change).
  stamp='v2 '+want
@@ -855,6 +884,7 @@ def main():
  if arg=='--reset':
   p=prefix_dir()
   if p.exists():p.rename(ROOT/('prefix-backup-'+str(time.time_ns())))
+ if arg=='--cleanup':cleanup();return
  if arg=='--uninstall':raise RuntimeError('Automatic deletion disabled. Remove installations manually after exporting projects.')
  if not os.getenv('DISPLAY'):raise RuntimeError('Open this launcher inside the Boddy desktop so DISPLAY is set')
  preflight()
@@ -912,7 +942,7 @@ def try_every_way(place):
   save_combination(rt,major)
   setup=current_setup();renderer=setup['renderer']
   say('Studio setup %d of %d: %s'%(setup['step']+1,len(SETUPS),describe_setup(setup)))
-  studio=install_studio();ensure_graphics(renderer);write_studio_settings(studio,renderer);setup_browser_login(wine,env,prefix);tune_prefix(wine,env,prefix);args=[*wine,str(studio/'RobloxStudioBeta.exe')]
+  studio=install_studio();ensure_graphics(renderer);write_studio_settings(studio,renderer);setup_browser_login(wine,env,prefix);tune_prefix(wine,env,prefix);install_mcp_plugin(prefix);args=[*wine,str(studio/'RobloxStudioBeta.exe')]
   env=prepare_graphics(renderer,prefix,env)
   if place:args.append('Z:'+str(place).replace('/','\\'))
   say('Launching real Roblox Studio. A process start alone does not prove the editor works.')
@@ -1217,6 +1247,35 @@ def run_studio(args,cwd,env):
  crash=exceptions.crash()
  if crash:say('Last serious exception in Studio: '+crash);notable.appendleft('Exception: '+crash)
  return code,list(notable)
+def size_of(path):
+ total=0
+ for root,_,files in os.walk(path):
+  for f in files:
+   try:total+=os.lstat(os.path.join(root,f)).st_size
+   except OSError:pass
+ return total
+def cleanup():
+ """Removes what Studio does not use: Windows setups and Wine downloads of other Wine versions (the
+ earlier launcher installed several after a crash), backups, half-finished downloads, Hangover."""
+ keep={prefix_dir().name}
+ doomed=[p for p in ROOT.glob('prefix*') if p.is_dir() and p.name not in keep]
+ doomed+=[p for p in ROOT.glob('Studio-backup-*')]+[p for p in ROOT.glob('stage-*')]+[ROOT/'wine-x64-stage',ROOT/'dxvk-stage']
+ doomed+=[p for p in CACHE.glob('*') if p.is_file() and p.suffix in ('.part','.deb','.zip','.tar','.gz','.xz')]
+ doomed=[p for p in doomed if p.exists()]
+ freed=0
+ for p in doomed:
+  freed+=size_of(p) if p.is_dir() else p.stat().st_size
+  shutil.rmtree(p,ignore_errors=True) if p.is_dir() else p.unlink(missing_ok=True)
+  say('Removed '+p.name)
+ if runtime()=='box64':
+  hangover=[p for p in ('hangover-wine','hangover-libarm64ecfex','hangover-libwow64fex','hangover-wowbox64')
+   if 'ok installed' in subprocess.run(['dpkg-query','-W','-f=${Status}',p],capture_output=True,text=True).stdout]
+  if hangover:
+   before=shutil.disk_usage('/').free
+   subprocess.run(['apt-get','purge','-y',*hangover],env=dict(os.environ,DEBIAN_FRONTEND='noninteractive'))
+   subprocess.run(['apt-get','autoremove','-y','--purge'],env=dict(os.environ,DEBIAN_FRONTEND='noninteractive'))
+   freed+=max(0,shutil.disk_usage('/').free-before);say('Removed Hangover (not used: Studio runs with Box64)')
+ say('Freed %s.'%size_text(freed) if freed else 'Nothing to remove: everything left is in use.')
 def offline(e):
  """Whether an error means the internet is not reachable (rather than one Wine version failing)."""
  if isinstance(e,(TlsError,OfflineError,ConnectionError,TimeoutError)):return True

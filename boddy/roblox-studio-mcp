@@ -1,0 +1,267 @@
+#!/usr/bin/env python3
+"""Roblox Studio MCP server for Boddy: lets Claude Code (and other MCP clients) work in Roblox Studio.
+
+A small, dependency-free Python version of Roblox's official server
+(github.com/Roblox/studio-rust-mcp-server, MIT), speaking the same protocol to the same Studio
+plugin, so it runs on a phone without building Rust:
+  - MCP over stdio (newline-delimited JSON-RPC 2.0) to the client;
+  - HTTP on 127.0.0.1:44755 to the plugin, which long-polls GET /request for a task, gets
+    {"args": {"RunCode": {...}}, "id": "<uuid>"} (or 423 after 15 s with none), and answers with
+    POST /response {"success": bool, "response": str, "id": "<uuid>"};
+  - POST /proxy, so a second server whose port is taken passes its tasks to the first one.
+Unlike the official server it does not wait forever when Studio is not connected.
+
+    roblox-studio-mcp            run as an MCP server on stdio (what Claude Code starts)
+    roblox-studio-mcp --status   say whether Studio's plugin is polling
+"""
+import json, queue, sys, threading, time, urllib.error, urllib.request, uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+PORT = 44755
+LONG_POLL = 15          # seconds the plugin's GET /request is held open, as the official server
+CONNECT_WAIT = 30       # how long a tool call waits for Studio's plugin to show up
+REPLY_WAIT = 600        # how long a tool call waits for Studio to answer (play-mode scripts are slow)
+VERSION = '0.1.0-boddy'
+
+INSTRUCTIONS = (
+    "You must aware of current studio mode before using any tools, infer the mode from conversation context or get_studio_mode.\n"
+    "User run_code to query data from Roblox Studio place or to change it\n"
+    "After calling run_script_in_play_mode, the datamodel status will be reset to stop mode.\n"
+    "Prefer using start_stop_play tool instead run_script_in_play_mode, Only used run_script_in_play_mode to run one time unit test code on server datamodel.\n"
+    "Studio runs on a phone here: it is slow, so prefer few, larger run_code calls over many small ones.\n")
+
+def _schema(props, required):
+    return {'type': 'object', 'properties': props, 'required': required}
+
+# name -> (plugin's tool name, description, input schema); descriptions as the official server's.
+TOOLS = {
+    'run_code': ('RunCode',
+        'Runs a command in Roblox Studio and returns the printed output. Can be used to both make changes and retrieve information',
+        _schema({'command': {'type': 'string', 'description': 'Code to run'}}, ['command'])),
+    'insert_model': ('InsertModel',
+        'Inserts a model from the Roblox marketplace into the workspace. Returns the inserted model name.',
+        _schema({'query': {'type': 'string', 'description': 'Query to search for the model'}}, ['query'])),
+    'get_console_output': ('GetConsoleOutput', 'Get the console output from Roblox Studio.', _schema({}, [])),
+    'start_stop_play': ('StartStopPlay',
+        "Start or stop play mode or run the server, Don't enter run_server mode unless you are sure no client/player is needed.",
+        _schema({'mode': {'type': 'string', 'description': "Mode to start or stop, must be start_play, stop, or run_server. Don't use run_server unless you are sure no client/player is needed."}}, ['mode'])),
+    'run_script_in_play_mode': ('RunScriptInPlayMode',
+        'Run a script in play mode and automatically stop play after script finishes or timeout. Returns the output of the script.\n'
+        'Result format: { success: boolean, value: string, error: string, logs: { level: string, message: string, ts: number }[], errors: { level: string, message: string, ts: number }[], duration: number, isTimeout: boolean }.\n'
+        '- Prefer using start_stop_play tool instead run_script_in_play_mode, Only used run_script_in_play_mode to run one time unit test code on server datamodel.\n'
+        '- After calling run_script_in_play_mode, the datamodel status will be reset to stop mode.\n'
+        '- If It returns `StudioTestService: Previous call to start play session has not been completed`, call start_stop_play tool to stop play mode first then try it again.',
+        _schema({'code': {'type': 'string', 'description': 'Code to run'},
+                 'timeout': {'type': 'integer', 'description': 'Timeout in seconds, defaults to 100 seconds'},
+                 'mode': {'type': 'string', 'description': 'Mode to run in, must be start_play or run_server'}}, ['code', 'mode'])),
+    'get_studio_mode': ('GetStudioMode',
+        'Get the current studio mode. Returns the studio mode. The result will be one of start_play, run_server, or stop.',
+        _schema({}, [])),
+}
+
+def log(*a):
+    print('[roblox-studio-mcp]', *a, file=sys.stderr, flush=True)
+
+
+class Bridge:
+    """Tasks waiting for Studio's plugin, and the callers waiting for their answers."""
+    def __init__(self):
+        self.tasks = queue.Queue()
+        self.waiting = {}            # id -> Queue that gets (success, response)
+        self.lock = threading.Lock()
+        self.last_poll = 0.0         # when the plugin last asked for a task
+
+    def connected(self):
+        return time.time() - self.last_poll < LONG_POLL + 10
+
+    def submit(self, task):
+        """Queues a task ({"args": ..., "id": ...}) for the plugin; returns (success, response)."""
+        answer = queue.Queue(1)
+        with self.lock: self.waiting[task['id']] = answer
+        self.tasks.put(task)
+        try:
+            deadline = time.time() + CONNECT_WAIT
+            while not self.connected() and time.time() < deadline:
+                try: return answer.get(timeout=1)
+                except queue.Empty: pass
+            if not self.connected():
+                return False, ("Roblox Studio is not connected. Open Roblox Studio (Boddy's Roblox Studio or Studio "
+                               "Mode app) with a place open, check that the MCP plugin is on in the Plugins tab, and "
+                               "allow it to access localhost if Studio asks. Then try again.")
+            try: return answer.get(timeout=REPLY_WAIT)
+            except queue.Empty: return False, 'Roblox Studio did not answer within %d s.' % REPLY_WAIT
+        finally:
+            with self.lock: self.waiting.pop(task['id'], None)
+            self._drop(task['id'])
+
+    def _drop(self, task_id):
+        # A task nobody waits for any more must not reach Studio later.
+        kept = []
+        while True:
+            try: t = self.tasks.get_nowait()
+            except queue.Empty: break
+            if t['id'] != task_id: kept.append(t)
+        for t in kept: self.tasks.put(t)
+
+    def next_task(self):
+        """The next task someone still waits for, or None after LONG_POLL seconds without one."""
+        deadline = time.time() + LONG_POLL
+        try:
+            while True:
+                self.last_poll = time.time()
+                try: task = self.tasks.get(timeout=max(0.1, deadline - time.time()))
+                except queue.Empty: return None
+                with self.lock:
+                    if task['id'] in self.waiting: return task
+        finally: self.last_poll = time.time()
+
+    def answer(self, task_id, success, response):
+        with self.lock: target = self.waiting.get(task_id)
+        if not target: return False
+        target.put((bool(success), str(response)))
+        return True
+
+
+def make_handler(bridge):
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = 'HTTP/1.1'
+        def log_message(self, *a): pass
+        def _send(self, code, body=b'', kind='application/json'):
+            self.send_response(code)
+            self.send_header('Content-Type', kind)
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        def _json(self):
+            return json.loads(self.rfile.read(int(self.headers.get('Content-Length') or 0)) or b'null')
+        def do_GET(self):
+            if self.path.split('?')[0] == '/status':
+                state = {'studio_connected': bridge.connected(), 'tasks_waiting': bridge.tasks.qsize()}
+                return self._send(200, json.dumps(state).encode())
+            if self.path.split('?')[0] != '/request': return self._send(404)
+            task = bridge.next_task()
+            if task is None: return self._send(423)    # nothing to do: the plugin asks again
+            self._send(200, json.dumps(task).encode())
+        def do_POST(self):
+            path = self.path.split('?')[0]
+            try: body = self._json()
+            except ValueError: return self._send(400, b'invalid JSON', 'text/plain')
+            if path == '/response':
+                if not isinstance(body, dict) or not bridge.answer(body.get('id'), body.get('success'), body.get('response', '')):
+                    return self._send(400, b'Unknown ID', 'text/plain')
+                return self._send(200)
+            if path == '/proxy':
+                if not isinstance(body, dict) or not body.get('id'):
+                    return self._send(400, b'Got proxy command with no id', 'text/plain')
+                success, response = bridge.submit(body)
+                return self._send(200, json.dumps({'success': success, 'response': response, 'id': body['id']}).encode())
+            self._send(404)
+    return Handler
+
+
+def start_http(bridge):
+    """Serves the plugin on 127.0.0.1:PORT; None if another server already does (then use /proxy)."""
+    try: server = ThreadingHTTPServer(('127.0.0.1', PORT), make_handler(bridge))
+    except OSError: return None
+    server.daemon_threads = True
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+def via_proxy(task):
+    req = urllib.request.Request('http://127.0.0.1:%d/proxy' % PORT, json.dumps(task).encode(),
+                                 {'Content-Type': 'application/json'})
+    try:
+        with urllib.request.urlopen(req, timeout=CONNECT_WAIT + REPLY_WAIT + 30) as r:
+            reply = json.loads(r.read())
+        return bool(reply.get('success')), str(reply.get('response', ''))
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        return False, 'Could not reach the Roblox Studio MCP server already running on port %d: %s' % (PORT, e)
+
+
+def tool_task(name, arguments):
+    plugin_name, _, schema = TOOLS[name]
+    args = {}
+    for key in schema['properties']:
+        if key in arguments: args[key] = arguments[key]
+        elif key in schema['required']: raise ValueError('missing argument: ' + key)
+        else: args[key] = None   # as serde writes a missing Option
+    return {'args': {plugin_name: args}, 'id': str(uuid.uuid4())}
+
+
+class Mcp:
+    SUPPORTED = ('2025-06-18', '2025-03-26', '2024-11-05')
+
+    def __init__(self, run_task):
+        self.run_task = run_task
+        self.out_lock = threading.Lock()
+
+    def send(self, message):
+        with self.out_lock:
+            sys.stdout.write(json.dumps(message) + '\n')
+            sys.stdout.flush()
+
+    def reply(self, rid, result=None, error=None):
+        self.send({'jsonrpc': '2.0', 'id': rid, **({'error': error} if error else {'result': result})})
+
+    def handle(self, msg):
+        method, rid, params = msg.get('method'), msg.get('id'), msg.get('params') or {}
+        if method is None or rid is None: return   # a notification or a stray reply: nothing to answer
+        if method == 'initialize':
+            asked = params.get('protocolVersion')
+            return self.reply(rid, {
+                'protocolVersion': asked if asked in self.SUPPORTED else self.SUPPORTED[0],
+                'capabilities': {'tools': {}},
+                'serverInfo': {'name': 'Roblox_Studio', 'title': 'Roblox Studio MCP Server', 'version': VERSION},
+                'instructions': INSTRUCTIONS})
+        if method == 'ping': return self.reply(rid, {})
+        if method == 'tools/list':
+            return self.reply(rid, {'tools': [{'name': n, 'description': d, 'inputSchema': s}
+                                              for n, (_, d, s) in TOOLS.items()]})
+        if method == 'tools/call':
+            name = params.get('name')
+            if name not in TOOLS:
+                return self.reply(rid, error={'code': -32602, 'message': 'Unknown tool: %s' % name})
+            try: task = tool_task(name, params.get('arguments') or {})
+            except ValueError as e: return self.reply(rid, error={'code': -32602, 'message': str(e)})
+            # Studio can take minutes: answer from a thread so other requests are not held up.
+            def call():
+                success, response = self.run_task(task)
+                self.reply(rid, {'content': [{'type': 'text', 'text': response}], 'isError': not success})
+            return threading.Thread(target=call, daemon=True).start()
+        self.reply(rid, error={'code': -32601, 'message': 'Method not found: %s' % method})
+
+    def serve(self, stream):
+        for line in stream:
+            line = line.strip()
+            if not line: continue
+            try: msg = json.loads(line)
+            except ValueError:
+                self.send({'jsonrpc': '2.0', 'id': None, 'error': {'code': -32700, 'message': 'Parse error'}})
+                continue
+            for m in (msg if isinstance(msg, list) else [msg]):
+                if isinstance(m, dict): self.handle(m)
+
+
+def status():
+    """Exit 0 if a server is running and Studio's plugin polled it recently."""
+    try:
+        with urllib.request.urlopen('http://127.0.0.1:%d/status' % PORT, timeout=3) as r:
+            print(r.read().decode()); return 0
+    except (urllib.error.URLError, OSError):
+        print('No Roblox Studio MCP server is running (Claude Code starts it when it needs it).'); return 1
+
+
+def main():
+    if '--status' in sys.argv[1:]: return status()
+    bridge = Bridge()
+    server = start_http(bridge)
+    if server: log('serving Roblox Studio plugin on 127.0.0.1:%d' % PORT)
+    else: log('port %d is in use: passing tasks to the server already running there' % PORT)
+    Mcp(bridge.submit if server else via_proxy).serve(sys.stdin)
+    if server: server.shutdown()
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

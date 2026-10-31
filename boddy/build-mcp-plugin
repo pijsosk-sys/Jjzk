@@ -1,0 +1,44 @@
+#!/usr/bin/env python3
+"""Builds MCPStudioPlugin.rbxmx (a Roblox XML model) from mcp-plugin/src, as Rojo builds a project:
+a directory becomes a Folder, NAME.server.luau a Script, NAME.client.luau a LocalScript and NAME.luau a
+ModuleScript, all inside a Folder named MCPStudioPlugin.
+
+    build-mcp-plugin [SRC_DIR] [OUT_FILE]
+"""
+import sys
+from pathlib import Path
+from xml.sax.saxutils import escape
+
+HERE = Path(__file__).resolve().parent
+
+def cdata(text):
+    # "]]>" cannot appear inside CDATA: end the section there and start a new one.
+    return '<![CDATA[' + text.replace(']]>', ']]]]><![CDATA[>') + ']]>'
+
+def item(cls, name, source, children, counter):
+    counter[0] += 1
+    props = '<string name="Name">%s</string>' % escape(name)
+    if source is not None:
+        props += '<ProtectedString name="Source">%s</ProtectedString>' % cdata(source)
+    return ('<Item class="%s" referent="RBX%08X"><Properties>%s</Properties>%s</Item>'
+            % (cls, counter[0], props, ''.join(children)))
+
+def build(path, name, counter):
+    if path.is_dir():
+        if any(path.glob('init.*')): raise SystemExit('init files are not supported: %s' % path)
+        children = [build(p, None, counter) for p in sorted(path.iterdir())]
+        return item('Folder', name or path.name, None, [c for c in children if c], counter)
+    for suffix, cls in (('.server.luau', 'Script'), ('.client.luau', 'LocalScript'), ('.luau', 'ModuleScript')):
+        if path.name.endswith(suffix):
+            return item(cls, path.name[:-len(suffix)], path.read_text(encoding='utf-8'), [], counter)
+    raise SystemExit('unsupported file in the plugin: %s' % path)
+
+def main():
+    src = Path(sys.argv[1]) if len(sys.argv) > 1 else HERE / 'mcp-plugin' / 'src'
+    out = Path(sys.argv[2]) if len(sys.argv) > 2 else HERE / 'MCPStudioPlugin.rbxmx'
+    root = build(src, 'MCPStudioPlugin', [0])
+    out.write_text('<roblox version="4">' + root + '</roblox>\n', encoding='utf-8')
+    print('wrote', out)
+
+if __name__ == '__main__':
+    main()

@@ -92,7 +92,7 @@ fi
 # The action can be given as an argument (e.g. from a desktop shortcut): studio-app.sh "Open Studio"
 choice=${1:-}
 [ -n "$choice" ] || choice=$(zenity --list --title="$TITLE" --width=420 --height=300 --column=Action \
-    "Open Studio" "Open a place file" "Graphics mode" "Window mode" "Diagnostics" "Wine version" "Compatibility mode" "Reset Studio" 2>/dev/null) || exit 0
+    "Open Studio" "Open a place file" "Graphics mode" "Window mode" "Free up space" "Diagnostics" "Wine version" "Compatibility mode" "Reset Studio" 2>/dev/null) || exit 0
 case "$choice" in
     "Open Studio") args=() ;;
     "Open a place file")
@@ -118,6 +118,12 @@ case "$choice" in
         else
             zenity --error --width=460 --title="$TITLE" --text="$(printf '%s' "$out" | escape)" 2>/dev/null
         fi
+        exit 0 ;;
+    "Free up space")
+        zenity --question --width=460 --title="$TITLE" --ok-label="Free up space" \
+            --text="Remove what Studio does not use: Windows setups and downloads of other Wine versions, backups, unfinished downloads and Hangover. Studio, your current setup and your places stay." 2>/dev/null || exit 0
+        out=$("$STUDIO" --cleanup 2>&1 | grep -E '^(Removed|Freed|Nothing)')
+        zenity --info --width=460 --title="$TITLE" --text="$(printf '%s' "${out:-Done.}" | tail -n 12 | escape)" 2>/dev/null
         exit 0 ;;
     "Window mode")
         wm=$(cat "$HOME/.local/share/roblox-studio/window-mode" 2>/dev/null); [ -n "$wm" ] || wm=desktop
