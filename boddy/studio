@@ -10,7 +10,7 @@ LOG="$HOME/.cache/roblox-studio/$([ $helper = 1 ] && echo helper || echo launche
 python3 - "$@" <<'BODDY_PY' 2>&1 | tee "$LOG"
 #!/usr/bin/env python3
 """Boddy Linux compatibility launcher. Does not modify Roblox binaries."""
-import os,sys,json,re,hashlib,zipfile,tarfile,shutil,subprocess,time,threading,collections,concurrent.futures,urllib.request,urllib.error,urllib.parse,ssl,fcntl,signal,resource
+import os,sys,json,re,struct,hashlib,zipfile,tarfile,shutil,subprocess,time,threading,collections,concurrent.futures,urllib.request,urllib.error,urllib.parse,ssl,fcntl,signal,resource
 from pathlib import Path
 ROOT=Path.home()/'.local/share/roblox-studio';CACHE=Path.home()/'.cache/roblox-studio'
 VERSION_URL='https://clientsettingscdn.roblox.com/v2/client-version/WindowsStudio64'
@@ -870,11 +870,14 @@ def try_every_way(place):
   # features, emulation speed or 3D drawing), so the next start uses the next setup rather than another Wine.
   errors=studio_log(prefix,began-5)
   crashed_itself=any('RobloxCrashHandler' in l for l in notable) or bool(errors)
+  dump=studio_crash_dump(prefix,began-5,30 if crashed_itself else 0)
   why=('Studio hit an error and closed itself' if crashed_itself else
    'an instruction the emulator could not run (SIGILL)' if code in (-4,132) else 'code %d'%code)
-  notable=[l for l in notable if 'Unimplemented' in l or 'Signal 4:' in l or 'Unhandled' in l]+[
+  notable=([('Crash: %s in %s'%dump)] if dump else [])+[
+   l for l in notable if 'Unimplemented' in l or 'Signal 4:' in l or 'Unhandled' in l or l.startswith('err:')]+[
    'Studio log: '+l[l.find('[')if '[' in l else 0:][:200] for l in errors]
-  details='\n\nWhat failed:\n'+'\n'.join('  '+l[:200] for l in notable[-6:]) if notable else ''
+  if dump:why='Studio crashed: %s in %s'%dump
+  details='\n\nWhat failed:\n'+'\n'.join('  '+l[:200] for l in notable[:6]) if notable else ''
   if setup['step']+1<len(SETUPS):
    SETUP_FILE.write_text(str(setup['step']+1));nxt=current_setup()
    raise RuntimeError('Roblox Studio crashed after %d s: %s. It was using %s.\n\nNext time Boddy will use %s, '
@@ -992,7 +995,7 @@ STUDIO_NOISE=re.compile(r'Special unaligned case|Marked db .* as dirty|sigaction
  r'Unsupported libc Syscall 0x143|'
  # Wine's write watches: a fault Box64 hands to Wine, which resumes; the register dump that follows it
  r'Context has been changed in Sigactionhanlder|^RSP[-+:]|^RAX:|^ ?R(8|12):|^ES:|\(mmap\)|mmapped:3')
-STUDIO_NOTABLE=re.compile(r'Unimplemented|Signal (4|7|8|11):|SIGILL|SIGSEGV|Unhandled|unhandled|err:seh|wine: |NYI|Illegal|RobloxCrashHandler')
+STUDIO_NOTABLE=re.compile(r'^err: |Unimplemented|Signal (4|7|8|11):|SIGILL|SIGSEGV|Unhandled|unhandled|err:seh|wine: |NYI|Illegal|RobloxCrashHandler')
 # Faults on memory Wine watches for writes ("(mmap)", "mmapped:3"): Wine handles them and Studio carries on.
 BENIGN_FAULT=re.compile(r'\(mmap\)|mmapped:3')
 # When Studio hits an error it cannot recover from, it starts RobloxCrashHandler and ends itself (Box64
@@ -1007,7 +1010,51 @@ def studio_log(prefix,since):
  lines=[l.rstrip() for l in log.read_text(errors='replace').splitlines() if l.strip()]
  say("Studio's own log (%s), last 60 lines:"%log.name)
  for l in lines[-60:]:say('Studio log: '+l[:400])
- return [l for l in lines if STUDIO_LOG_ERROR.search(l)][-8:]
+ return [l for l in lines if STUDIO_LOG_ERROR.search(l) and not STUDIO_LOG_BENIGN.search(l)][-8:]
+# Errors Studio logs on every start under Wine that have nothing to do with a crash.
+STUDIO_LOG_BENIGN=re.compile(r"EnableNonClientDpiScaling|DAPClient|Secure Storage read failed|onResizeEvent|"
+ r"isn't defined in C\+\+ code|referenced from Lua")
+# What a Windows program crashed on, from the minidump its crash handler (Crashpad) writes.
+EXCEPTIONS={0xC0000005:'access violation',0xC000001D:'illegal instruction',0xC0000409:'fast fail (Studio stopped itself)',
+ 0x80000003:'breakpoint',0xE06D7363:'C++ exception',0xC00000FD:'stack overflow',0xC0000374:'heap corruption',
+ 0xC0000094:'division by zero',0xC0000096:'privileged instruction',0x40000015:'abort'}
+def read_minidump(path):
+ """(exception text, module text) from a Windows minidump, or None if it has no exception."""
+ d=path.read_bytes()
+ if len(d)<32 or d[:4]!=b'MDMP':return None
+ count,directory=struct.unpack_from('<II',d,8)
+ exc=None;modules=[]
+ for i in range(count):
+  kind,_,rva=struct.unpack_from('<III',d,directory+12*i)
+  if kind==6:  # ExceptionStream: thread id, alignment, then MINIDUMP_EXCEPTION
+   code,_,_,addr,nparams=struct.unpack_from('<IIQQI',d,rva+8)
+   exc=(code,addr,struct.unpack_from('<%dQ'%min(nparams,15),d,rva+40))
+  elif kind==4:  # ModuleListStream: count, then 108-byte MINIDUMP_MODULEs
+   for j in range(struct.unpack_from('<I',d,rva)[0]):
+    base,size,_,_,name_rva=struct.unpack_from('<QIIII',d,rva+4+108*j)
+    length=struct.unpack_from('<I',d,name_rva)[0]
+    modules.append((base,size,d[name_rva+4:name_rva+4+length].decode('utf-16-le',errors='replace')))
+ if not exc:return None
+ code,addr,params=exc
+ what=EXCEPTIONS.get(code,'exception 0x%08X'%code)
+ if code==0xC0000005 and len(params)>=2:
+  what+=' %s 0x%x'%({0:'reading',1:'writing',8:'executing'}.get(params[0],'at'),params[1])
+ where=next(('%s+0x%x'%(name.replace('/','\\').split('\\')[-1],addr-base) for base,size,name in modules
+  if base<=addr<base+size),'0x%x (in no loaded module)'%addr)
+ return what,where
+def studio_crash_dump(prefix,since,wait=30):
+ """The newest minidump Studio's crash handler wrote since `since`, read; waits for the handler to finish."""
+ deadline=time.time()+wait
+ while True:
+  dumps=[p for p in prefix.glob('drive_c/users/*/AppData/Local/Roblox/logs/crashes/**/*.dmp') if p.stat().st_mtime>=since]
+  if dumps or time.time()>deadline:break
+  time.sleep(2)
+ if not dumps:say('Studio wrote no crash dump');return None
+ dump=max(dumps,key=lambda p:p.stat().st_mtime)
+ try:found=read_minidump(dump)
+ except (OSError,struct.error,IndexError) as e:say('Could not read the crash dump %s: %s'%(dump.name,e));return None
+ if found:say('Studio crash dump %s: %s in %s'%(dump.name,*found))
+ return found
 def run_studio(args,cwd,env):
  """Runs Studio with Box64's opcode log, printing what matters. Returns (exit code, notable lines)."""
  env=dict(env)
