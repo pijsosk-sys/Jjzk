@@ -1,4 +1,4 @@
-# REX One: Overlord that plays, faster Auto Build, a new builder screen and a shader
+# REX One: our own pathfinder, an Overlord that plays, faster Auto Build and a shader
 
 Sources and tooling for REX One `1.0.0-one.23` (Minecraft 1.21.11, Fabric). The build takes the
 released `1.0.0-one.13` jar, replaces or adds these classes, and adds the shader files:
@@ -17,6 +17,8 @@ released `1.0.0-one.13` jar, replaces or adds these classes, and adds the shader
 | `rex.SchematicGhost` (new module) | ghost on/off (bindable) and layer view |
 | `rex.TuffShader` (new module) | the Tuff Shader |
 | `rex.RexOverlord`, `rex.OverlordInput`, `rex.overlord.*` (new) | the survival progression, rewritten without reflection or Baritone |
+| `rex.RexPath`, `rex.path.*` (new) | our own pathfinder: A* search, drawn route, `.goto`, stops for screens |
+| `dev.donut.client.render.HighlightRenderer` | takes world boxes from other subsystems, so the route is drawn by the one world renderer |
 
 Classes that shipped only as bytecode were decompiled first, and each was committed unchanged
 before being edited, so `git log -p` shows exactly what changed.
@@ -94,11 +96,81 @@ GAME_DIR=/tmp/g1 test/runtime/run-overlord.sh out/REX-One-1.21.11.jar \
 cat /tmp/g1/rexoverlord-results.txt
 ```
 
-RESULTS_TABLE_HERE
+| Scenario | What it has to end up with | Result |
+| --- | --- | --- |
+| `tools` | a stone pickaxe, from an empty inventory and three trees | pass, 23.6s |
+| `mine` | raw iron out of a vein, walked to and dug | pass, 23.3s |
+| `smelt` | iron ingots out of a furnace it placed and loaded | pass, 17.9s |
+| `irongear` | the full iron set crafted at a table | pass, 21.2s |
+| `diamondgear` | all six diamond pieces | pass, 8.9s |
+| `netherite` | all six pieces upgraded at a smithing table | pass, 6.0s |
+| `enchant` | the table placed, fifteen bookshelves round it, all six pieces enchanted | pass, 133.7s |
+| `eat` | food eaten before the hunger bar bites | pass, 176.4s |
+| `fight` | a zombie beaten off at night | pass, 1.6s |
+
+Nine for nine, in a real 1.21.11 client, on the jar in `out/`.
 
 The long route past the portal - the nether, ancient debris, the upgrade template in a bastion
 chest - is not reachable in a flat test world, so those stages are still only exercised by the
 stages either side of them. That is the honest limit of what has been shown to work.
+
+## New in one.23: REX Pathfinder, our own one
+
+A pathfinder of our own, not a wrapper: **REX Pathfinder** (Misc). Baritone is bundled in this jar
+and nothing in one.23 calls it.
+
+**How it thinks.** A* over the blocks the client already has, with a movement set a player would
+recognise: walk, corners (never cut through one), a step up, walking off an edge up to a drop you
+set, swimming, breaking a block when going round it is dearer, and - if you turn it on - throwing
+a block into a gap to bridge it. Lava, fire, cactus and powder snow are never routed through, and
+it will not path into chunks that are not loaded.
+
+Three things keep it quick:
+- **It never blocks a tick.** The search is handed a time budget and a cell budget
+  (3 ms and 4,000 cells by default) and keeps its open set between ticks. A long route costs a few
+  frames of thinking, not a freeze.
+- **It walks while it thinks.** If the budget runs out before the goal, it hands back the route to
+  the most promising cell it got to and starts walking that, planning the next stretch from the end
+  of it while the current one is being walked. A walk across a thousand blocks starts moving at
+  once.
+- **It remembers the world.** What each block is, as the search sees it, is cached and only
+  dropped for blocks that change. A search asks about most cells several times, and that lookup
+  is where a pathfinder's time actually goes.
+
+**It shows you where it is going.** The route is drawn in the world as a trail of flat markers,
+the step it is on is brighter and thicker, and the goal gets a full cube. Colours, line width and
+through-walls are settings. The drawing goes through the client's one world renderer, so it costs
+nothing extra in pipelines.
+
+**Opening a screen stops it.** Any screen - chat, inventory, a chest, the menu - hands control
+straight back to you: no steering, no digging, nothing sent. Closing it carries on from the same
+cell. That is the `Pause On Screen` setting, on by default.
+
+**HUD:** goal, what it is doing, cells left on this stretch, cells searched and microseconds spent
+on the last search, and how many blocks are in the terrain cache.
+
+**Chat:**
+
+```
+.goto <x> <y> <z>     walk to a block
+.goto <x> <z>         walk to a column, any height
+.goto y <height>      get to a height
+.goto here            walk to whatever you are looking at
+.goto <block id>      the nearest one loaded, e.g. .goto diamond_ore
+.goto stop            stop
+.goto status          where it is up to
+```
+
+`.path` does the same thing.
+
+**Settings:** Pause On Screen, Break Through, Bridge Gaps, Swim, Sprint, Max Drop, Microseconds Per
+Tick, Cells Per Tick, Search Limit, Plan Ahead, Show Path, Through Walls, and the HUD's anchor,
+size and colours.
+
+**Tested in the real game** (`test/runtime/run-path.sh`, `test/path/src/rexpath/PathDriver.java`),
+each shape built out of commands and each run checked by where the player actually ended up:
+
+PATH_RESULTS_HERE
 
 ## New in one.22: safety audit, a new menu, and seven new test builds
 

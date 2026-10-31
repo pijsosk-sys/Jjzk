@@ -10,6 +10,21 @@ rex-one/HOW-I-RAN-MINECRAFT.md, then continue."*
 needs Fabric Loader 0.18.4+ and Fabric API. Baritone is bundled inside the jar and nothing in
 one.23 needs it any more, so a missing or changed Baritone no longer breaks anything.
 
+**REX Pathfinder (one.23, new):** `src/rex/path/` plus `src/rex/RexPath.java`.
+- Our own A* over the loaded blocks: `PathFinder` (budgeted, incremental, best-so-far segments),
+  `Terrain` (cached block classification), `Follower` (walks it with the player's own input,
+  breaks through, bridges), `Traveller` (the thinking-and-walking state machine), `Goal`
+  (block / column / height / near), `Path`.
+- Baritone is bundled in the jar and is not used by any of it.
+- Drawn in the world: `HighlightRenderer.overlay(Supplier<List<Overlay>>)` is a new hook on the
+  client's one world renderer; `RexPath` feeds it the route, the current step and the goal.
+- `Pause On Screen` (default on): any open screen hands movement straight back.
+- Chat: `.goto x y z | x z | y <h> | here | <block id> | stop | status`, routed from
+  `RexOverlord.command`, which the jar's `RexCommands` already calls for every line.
+- Overlord's exploration (`wander`) goes through a `Traveller` of its own; everything within reach
+  still uses `BuilderNavigator`. Only one of the two holds the movement input in a tick.
+- Tested with `test/runtime/run-path.sh` and `test/path/src/rexpath/PathDriver.java`.
+
 **Overlord (one.23, rewritten):** `src/rex/overlord/` plus `src/rex/RexOverlord.java`.
 - The shipped module did not work: in game it stopped after about twenty seconds with
   `Stopped: baritone.api.pathing.goals.GoalNear`, because every move went through reflection by

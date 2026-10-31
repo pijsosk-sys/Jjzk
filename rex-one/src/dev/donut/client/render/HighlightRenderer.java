@@ -79,6 +79,24 @@ public final class HighlightRenderer implements AutoCloseable {
    private final HighlightRenderer.Batch lineThrough = new HighlightRenderer.Batch(LINE_THROUGH);
    private boolean registered;
    private boolean closed;
+   /**
+    * World-space boxes other subsystems want drawn on top of the finder highlights. All the GPU
+    * plumbing lives in this class, so anything that wants a box in the world (the pathfinder's
+    * route, for one) registers a source here instead of building a second pipeline.
+    */
+   private static final List<java.util.function.Supplier<List<HighlightRenderer.Overlay>>> OVERLAYS = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+   /** A box in world coordinates, with its colours. Sources hand back a fresh list each frame. */
+   @Environment(EnvType.CLIENT)
+   public record Overlay(class_238 bounds, int fill, int outline, float width, boolean throughWalls) {
+   }
+
+   /** Registers a source of extra boxes. Returning an empty list draws nothing. */
+   public static void overlay(java.util.function.Supplier<List<HighlightRenderer.Overlay>> source) {
+      if (!OVERLAYS.contains(source)) {
+         OVERLAYS.add(source);
+      }
+   }
 
    public HighlightRenderer(ClientConfig config, FinderScanner scanner) {
       this(config, scanner, null);
@@ -207,6 +225,26 @@ public final class HighlightRenderer implements AutoCloseable {
                      ghost.bounds.method_989(-camera.field_1352, -camera.field_1351, -camera.field_1350), ghost.fill, ghost.outline, 1.3F, false, ghost.faces
                   )
                );
+            }
+         }
+
+         for (java.util.function.Supplier<List<HighlightRenderer.Overlay>> source : OVERLAYS) {
+            try {
+               for (HighlightRenderer.Overlay extra : source.get()) {
+                  if (context.frustum().method_23093(extra.bounds())) {
+                     boxes.add(
+                        new HighlightRenderer.DrawBox(
+                           extra.bounds().method_989(-camera.field_1352, -camera.field_1351, -camera.field_1350),
+                           extra.fill(),
+                           extra.outline(),
+                           extra.width(),
+                           extra.throughWalls()
+                        )
+                     );
+                  }
+               }
+            } catch (RuntimeException | LinkageError failure) {
+               System.err.println("[ONE] overlay source failed: " + failure);
             }
          }
 

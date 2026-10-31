@@ -169,6 +169,11 @@ public final class RexOverlord extends Module {
 
    /** Chat entry point. Returns true when the text was an Overlord command. */
    public static boolean command(String text) {
+      // The jar's command router calls this for every line typed, so the pathfinder's own
+      // commands are picked off here rather than in a second copy of the router.
+      if (RexPath.command(text)) {
+         return true;
+      }
       OverlordInput.Command input = OverlordInput.parse(text);
       if (input == null) {
          return false;

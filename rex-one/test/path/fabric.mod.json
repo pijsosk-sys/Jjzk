@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "rexpathtest",
+  "version": "1.0.0",
+  "name": "REX One Pathfinder test",
+  "environment": "client",
+  "entrypoints": {
+    "client": ["rexpath.PathDriver"]
+  },
+  "depends": {
+    "fabric-lifecycle-events-v1": "*",
+    "krypton": "*"
+  }
+}

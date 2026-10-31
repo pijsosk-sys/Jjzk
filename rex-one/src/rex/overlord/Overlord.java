@@ -42,6 +42,8 @@ public final class Overlord {
    );
 
    private final BuilderNavigator navigator = new BuilderNavigator();
+   /** Long hops go through REX's own pathfinder; the navigator handles the last few blocks. */
+   private final rex.path.Traveller traveller = new rex.path.Traveller();
    private final Work work = new Work();
    private final Mine mine = new Mine();
    private final Sites sites = new Sites();
@@ -66,6 +68,7 @@ public final class Overlord {
    private int wanders;
    private boolean acted;
    private boolean mining;
+   private boolean travelled;
    private class_1297 prey;
    private class_1297 pickup;
    private int pickupTicks;
@@ -89,6 +92,7 @@ public final class Overlord {
       this.mine.reset(client);
       this.sites.worldChanged();
       this.navigator.reset();
+      this.traveller.stop(client);
       this.pickup = null;
       this.ignoredDrops.clear();
    }
@@ -100,6 +104,7 @@ public final class Overlord {
       this.work.clear();
       this.navigator.reset();
       this.navigator.release();
+      this.traveller.stop(client);
       if (this.stopped.isEmpty()) {
          this.status = "Stopped";
       }
@@ -113,20 +118,40 @@ public final class Overlord {
       return this.mine.broken;
    }
 
-   /** A widening spiral of walks, for when what is needed is simply not here. */
+   /**
+    * A widening spiral of walks, for when what is needed is simply not here. This is the one hop
+    * that is genuinely long, so it goes through the pathfinder rather than the builder navigator,
+    * which only ever looked a hundred blocks ahead.
+    */
    public void wander() {
       class_2338 feet = this.client.field_1724.method_24515();
       if (this.wanderTarget == null || feet.method_19455(this.wanderTarget) < 6) {
          double angle = this.wanders++ * 2.399963229728653;
          int radius = 24 + (int)Math.sqrt(this.wanders) * 16;
          this.wanderTarget = feet.method_10069((int)(Math.cos(angle) * radius), 0, (int)(Math.sin(angle) * radius));
-      }
-      BuilderNavigator.Result walk = this.navigator.moveTo(this.client, this.wanderTarget);
-      if (walk == BuilderNavigator.Result.NO_PATH || walk == BuilderNavigator.Result.STUCK) {
-         this.wanderTarget = null;
+         this.traveller.stop(this.client);
       }
       this.acted = true;
+      this.travelled = true;
+      this.navigator.release();
+      if (this.traveller.goal() == null) {
+         this.traveller.go(
+            this.client,
+            new rex.path.Goal.Near(this.wanderTarget.method_10263(), this.wanderTarget.method_10264(), this.wanderTarget.method_10260(), 4.0)
+         );
+      }
+      rex.path.Traveller.Result result = this.traveller.tick(this.client, TRAVEL, this.ticks);
+      this.status = "Exploring: " + this.traveller.status;
+      if (result == rex.path.Traveller.Result.ARRIVED || result == rex.path.Traveller.Result.UNREACHABLE) {
+         this.wanderTarget = null;
+         this.traveller.stop(this.client);
+      }
    }
+
+   /** How Overlord walks: it may break through, it never bridges, and a screen stops it. */
+   private static final rex.path.Traveller.Tuning TRAVEL = new rex.path.Traveller.Tuning(
+      new rex.path.PathFinder.Options(true, false, true, 4, 1.35, 200000), true, 12, 2500L, 3000, true
+   );
 
    // ---------------------------------------------------------------- the tick
 
@@ -182,6 +207,7 @@ public final class Overlord {
 
       this.acted = false;
       this.mining = false;
+      this.travelled = false;
 
       if (this.fight.tick(client, this.navigator, this.stock, this.ticks)) {
          this.mine.reset(client);
@@ -222,6 +248,10 @@ public final class Overlord {
          this.status = this.mine.status;
       } else if (!this.mining) {
          this.mine.reset(client);
+      }
+      if (!this.travelled) {
+         // Only one thing may hold the movement input at a time.
+         this.traveller.release();
       }
    }
 

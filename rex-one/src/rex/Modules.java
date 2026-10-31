@@ -24,7 +24,11 @@ public final class Modules {
     * screen, so these go near its top (after Fantasy World) instead of after the last row, where
     * they sat below the bottom edge of the menu.
     */
-   private static final Map<String, String[]> EXTRAS = Map.of("rex.FantasyWorld", new String[]{"rex.TuffShader", "rex.SchematicGhost"});
+   private static final Map<String, String[]> EXTRAS = Map.of(
+      "rex.FantasyWorld", new String[]{"rex.TuffShader", "rex.SchematicGhost"},
+      // The pathfinder goes in beside Overlord, which is the module that uses it.
+      "rex.RexOverlord", new String[]{"rex.RexPath"}
+   );
 
    public static void add(ModuleManager manager, String className) {
       // The redesigned menu takes the old one's place once the client has made it.
