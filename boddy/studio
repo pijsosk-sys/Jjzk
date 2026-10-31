@@ -855,21 +855,22 @@ def try_every_way(place):
    say('or turn off Android\'s child process limit (see "Boddy keeps reconnecting" in the Studio README).')
   say('Roblox Studio is starting (%s, %s graphics); its window can take several minutes to appear on a phone.'%(name,renderer))
   began=time.time()
-  try:result=subprocess.run(args,cwd=studio,env=env)
+  try:code,notable=run_studio(args,studio,env)
   finally:restore_display()
   ran=time.time()-began
-  say('Studio process exited with code %d after %d s'%(result.returncode,ran))
-  if not result.returncode:sys.exit(0)
+  say('Studio process exited with code %d after %d s'%(code,ran))
+  if not code:sys.exit(0)
   # Windows started, so this Wine works: a crash once Studio runs comes from how it is run (its CPU
   # features, emulation speed or 3D drawing), so the next start uses the next setup rather than another Wine.
-  why='an instruction the emulator could not run (SIGILL)' if result.returncode in (-4,132) else 'code %d'%result.returncode
+  why='an instruction the emulator could not run (SIGILL)' if code in (-4,132) else 'code %d'%code
+  details='\n\nWhat failed:\n'+'\n'.join('  '+l[:200] for l in notable[-6:]) if notable else ''
   if setup['step']+1<len(SETUPS):
    SETUP_FILE.write_text(str(setup['step']+1));nxt=current_setup()
    raise RuntimeError('Roblox Studio crashed after %d s: %s. It was using %s.\n\nNext time Boddy will use %s, '
-    'which may work on this phone: choose Open Studio again.'%(ran,why,describe_setup(setup),describe_setup(nxt)))
+    'which may work on this phone: choose Open Studio again.%s'%(ran,why,describe_setup(setup),describe_setup(nxt),details))
   SETUP_FILE.write_text('0')
   raise RuntimeError('Roblox Studio crashed (%s) with every setup Boddy has (%d). Choose "Copy log" and send '
-   'the log.'%(why,len(SETUPS)))
+   'the log.%s'%(why,len(SETUPS),details))
  raise RuntimeError('Tried every way Boddy has of running Windows, and none could start Roblox Studio on this phone:\n'+
   '\n'.join('  %s: %s'%t for t in tried)+
   '\n\nChoose "Copy log" and send the log; it shows why each one stopped. Roblox Tools > "Start a new game I can '
@@ -902,7 +903,10 @@ LIGHT_FLAGS={'DFIntTaskSchedulerTargetFps':30,'DFIntDebugFRMQualityLevelOverride
  'DFFlagTextureQualityOverrideEnabled':True,'DFIntTextureQualityOverride':0,
  # Wine handles Alt+Enter itself; Studio's own handling breaks the window under Wine (as Vinegar sets it).
  'FFlagHandleAltEnterFullscreenManually':False,
- 'FIntDebugForceMSAASamples':1}  # no anti-aliasing: 1 sample per pixel
+ 'FIntDebugForceMSAASamples':1,  # no anti-aliasing: 1 sample per pixel
+ # no grass or wind animation, and fewer local-light updates per frame: less to draw for the same scene
+ 'FIntFRMMinGrassDistance':0,'FIntFRMMaxGrassDistance':0,'FIntRenderGrassDetailStrands':0,'FFlagGlobalWindRendering':False,
+ 'FIntRenderLocalLightUpdatesMax':1,'FIntRenderLocalLightUpdatesMin':1,'FIntRenderLocalLightFadeInMs':0}
 def write_studio_settings(studio,renderer):
  path=studio/'ClientSettings'/'ClientAppSettings.json'
  try:flags=json.loads(path.read_text()) if path.exists() else {}
@@ -912,6 +916,27 @@ def write_studio_settings(studio,renderer):
  for r in RENDERERS:flags['FFlagDebugGraphicsPrefer'+r]=r==renderer
  path.parent.mkdir(exist_ok=True);path.write_text(json.dumps(flags,indent=1))
  say('Studio graphics: %s, light settings (30 fps, lowest quality)'%renderer)
+# Box64 names an instruction it cannot run ("Unimplemented Opcode") only at BOX64_LOG=1, which also logs
+# every unaligned access it fixes and every child-process signal. Studio runs at that level and this
+# drops the noise, keeping the lines that say why it crashed.
+STUDIO_NOISE=re.compile(r'Special unaligned case|Marked db .* as dirty|sigaction handler for sig (3|17)\b|Signal (3|17):|'
+ r'Using (native\(wrapped\)|emulated) |Applied settings from rcfile|BOX64ENV|^\s+BOX64_')
+STUDIO_NOTABLE=re.compile(r'Unimplemented|Signal (4|7|8|11):|SIGILL|SIGSEGV|Unhandled|unhandled|err:seh|wine: |NYI|Illegal')
+def run_studio(args,cwd,env):
+ """Runs Studio with Box64's opcode log, printing what matters. Returns (exit code, notable lines)."""
+ env=dict(env)
+ if 'BOX64_LOG' in env and not os.getenv('BODDY_BOX64_LOG'):env['BOX64_LOG']='1'
+ notable=collections.deque(maxlen=20)
+ proc=subprocess.Popen(args,cwd=cwd,env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,errors='replace',bufsize=1)
+ try:
+  for line in proc.stdout:
+   line=line.rstrip('\n')
+   if STUDIO_NOISE.search(line):continue
+   print(line,flush=True)
+   if STUDIO_NOTABLE.search(line):notable.append(line.replace('\x1b[31m','').replace('\x1b[0m',''))
+  return proc.wait(),list(notable)
+ finally:
+  if proc.poll() is None:proc.kill()
 def offline(e):
  """Whether an error means the internet is not reachable (rather than one Wine version failing)."""
  if isinstance(e,(TlsError,OfflineError,ConnectionError,TimeoutError)):return True
