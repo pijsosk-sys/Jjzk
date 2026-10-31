@@ -10,6 +10,9 @@ MONITOR=/root/Phone/Download/Boddy-Studio-monitor.log; [ -d /root/Phone/Download
 RUNNING="$SEEN/studio-running"
 mkdir -p "$SEEN" "$LOG_DIR"
 
+# How to lift Android 12+'s limit of 32 processes per app (its "phantom process" killer).
+LIMIT_HELP="To turn the limit off:\n• Android 14 or newer: Settings > About phone > tap Build number 7 times, then Settings > System > Developer options > turn on 'Disable child process restrictions'.\n• Android 12 or 13: from a computer with adb, run:\n  adb shell device_config set_sync_disabled_for_tests persistent\n  adb shell device_config put activity_manager max_phantom_processes 2147483647"
+
 escape() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }  # for zenity's Pango markup
 
 # Copies the end of a launch log (and the session monitor) to the clipboard; Boddy passes the
@@ -19,7 +22,7 @@ copy_log() {
     report=$( echo "Roblox Studio on Boddy - log from $(date '+%Y-%m-%d %H:%M')"
               # The steps and errors from the whole run first: on a long run the tail alone can miss them.
               echo "=== steps and errors ==="
-              grep -E '^(Trying |Installing |Studio [0-9]+/|Roblox Studio: |Launching real|Studio process exited|Studio crashed|Warning: |LAUNCH FAILED)|did not work:|^[0-9a-f]{4}:err:|Error|error' "$1" 2>/dev/null |
+              grep -E '^(Trying |Installing |Studio [0-9]+/|Roblox Studio: |Launching real|Studio process exited|Studio crashed|Warning: |LAUNCH FAILED)|did not work:|^[0-9a-f]{4}:err:|Error|error|Function not implemented' "$1" 2>/dev/null |
                   grep -vE 'Special unaligned|sigaction handler|Signal 17' | tail -n 80
               echo "=== launcher log (last 150 lines) ==="
               grep -vE '^Download progress: |Special unaligned case|Marked db .* as dirty|sigaction handler for sig 17|Signal 17: ' "$1" 2>/dev/null | tail -n 150
@@ -38,7 +41,12 @@ if [ -e "$RUNNING" ] && ! kill -0 "$(cat "$RUNNING" 2>/dev/null)" 2>/dev/null; t
     previous=$(readlink -f "$LOG_DIR/latest.log")
     state=$(grep -E '^[0-9:]+ processes=' "$MONITOR" 2>/dev/null | tail -n 1)
     where=$(grep -E '^(Studio [0-9]+/[0-9]+:|Trying |Testing Windows|Installing (Box64|Wine|Hangover)|Launching real)' "$previous" 2>/dev/null | tail -n 1)
-    text="Roblox Studio was stopped before it finished last time${where:+ (at: $where)}.${state:+\n\nLast check: $state}\n\nThis usually means Android stopped Boddy: too many background processes or low memory. On Android 14+ turn on Developer options > Disable child process restrictions, and close other apps. Downloads continue where they stopped."
+    most=$(grep -oE 'processes=[0-9]+' "$MONITOR" 2>/dev/null | cut -d= -f2 | sort -n | tail -n 1)
+    if grep -q "Function not implemented" "$previous" 2>/dev/null; then
+        text="Android closed part of Boddy while Roblox Studio was running${most:+ ($most processes were running; Android allows 32)}.\n\nStudio and Windows need about 15 processes on top of Boddy's own 24, so Studio cannot run while Android's limit is on.\n\n$LIMIT_HELP"
+    else
+        text="Roblox Studio was stopped before it finished last time${where:+ (at: $where)}.${state:+\n\nLast check: $state}\n\nThis usually means Android stopped Boddy: too many processes or low memory. Close other apps.\n\n$LIMIT_HELP\n\nDownloads continue where they stopped."
+    fi
     [ "$(zenity --warning --width=520 --title="$TITLE" --ok-label="Continue" --extra-button="Copy log" \
         --text="$(printf '%s' "$text" | escape)" 2>/dev/null)" = "Copy log" ] && copy_log "$previous"
 fi
@@ -165,6 +173,7 @@ BODDY_STUDIO_SESSION=$$ setsid bash -c 'echo $$ >"$1"; "$2" "${@:4}"; echo $? >"
             "Studio crashed after"*)
                 zenity --info --width=420 --title="$TITLE" --timeout=20 --text="Studio closed straight away, so Boddy is trying another way to run it. This can take a while; you don't need to do anything." 2>/dev/null & ;;
             "Trying "*) say "# ${line%% (*}..." ;;
+            "Installing the 3D"*) say "# Installing 3D graphics libraries (one time)..." ;;
             "Installing Box64"*) say 1 "# Installing the x86 translator (one time)..." ;;
             "Installing Wine"*) say 2 "# Installing the Windows compatibility layer..." ;;
             "Installing Hangover"*) say 2 "# Installing the Windows compatibility layer..." ;;

@@ -292,6 +292,15 @@ def wait_for_internet(host='deb.debian.org',seconds=90):
      "More connection settings), try turning it off, then tap Launch again."%(host,e,', '.join(servers) or 'none'))
    if not warned:say('Waiting for the internet (looking up %s failed)...'%host);warned=True
    time.sleep(5)
+# Wine draws Studio with OpenGL, through EGL (Wine 11) or GLX; Box64 hands those calls to these ARM64
+# libraries, and Mesa's llvmpipe draws on the processor. Without them: "Failed to load libEGL.so.1".
+GRAPHICS_PACKAGES=('libegl1','libegl-mesa0','libgl1','libglx-mesa0','libgl1-mesa-dri')
+def ensure_graphics():
+ def installed(p):
+  r=subprocess.run(['dpkg-query','-W','-f=${Status}',p],capture_output=True,text=True)
+  return 'ok installed' in r.stdout
+ missing=[p for p in GRAPHICS_PACKAGES if not installed(p)]
+ if missing:say('Installing the 3D graphics libraries Studio draws with (one time): '+' '.join(missing));apt_install(*missing)
 def apt_install(*packages):
  wait_for_internet()
  env=dict(os.environ,DEBIAN_FRONTEND='noninteractive')
@@ -706,6 +715,11 @@ def start_monitor(stop):
  # desktop and this launcher dies with it, so record the state every 15 s; the last line shows what it was.
  downloads=Path.home()/'Phone/Download';path=(downloads if downloads.is_dir() else CACHE)/'Boddy-Studio-monitor.log'
  def run():
+  # When Android kills proot, every system call of the processes it ran fails with ENOSYS ("Function not
+  # implemented"), so nothing more can be read or written; the lines already written are what remains.
+  try:record()
+  except OSError:pass
+ def record():
   with path.open('w') as f:
    f.write('Roblox Studio session monitor. If Boddy restarts, the last line shows the state just before.\n'
     'processes = Linux processes of the Boddy app (Android 12+ stops apps above %d); mem = available memory.\n'%PHANTOM_LIMIT)
@@ -803,7 +817,7 @@ def try_every_way(place):
    say('%s did not work: %s'%(name,e));tried.append((name,str(e).strip().splitlines()[0] if str(e).strip() else type(e).__name__))
    continue
   save_combination(rt,major)
-  studio=install_studio();setup_browser_login(wine,env,prefix);tune_prefix(wine,env,prefix);args=[*wine,str(studio/'RobloxStudioBeta.exe')]
+  studio=install_studio();ensure_graphics();setup_browser_login(wine,env,prefix);tune_prefix(wine,env,prefix);args=[*wine,str(studio/'RobloxStudioBeta.exe')]
   if place:args.append('Z:'+str(place).replace('/','\\'))
   say('Launching real Roblox Studio. A process start alone does not prove the editor works.')
   say('Studio\'s built-in login does not work here: choose "Login via Browser", sign in in the Firefox window that opens,')
