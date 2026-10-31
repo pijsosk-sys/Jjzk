@@ -43,6 +43,38 @@ if [ -e "$RUNNING" ] && ! kill -0 "$(cat "$RUNNING" 2>/dev/null)" 2>/dev/null; t
         --text="$(printf '%s' "$text" | escape)" 2>/dev/null)" = "Copy log" ] && copy_log "$previous"
 fi
 
+# Every process of a launch carries BODDY_STUDIO_SESSION (Wine's background processes leave the launcher's
+# process group, so the group alone cannot find them). Stops them all, launcher first.
+stop_studio() {
+    touch "$SEEN/studio-stopped"  # tells the waiting window of that launch not to report an error
+    for sig in TERM KILL; do
+        for d in /proc/[0-9]*; do
+            grep -qa 'BODDY_STUDIO_SESSION=' "$d/environ" 2>/dev/null && kill -"$sig" "${d#/proc/}" 2>/dev/null
+        done
+        [ $sig = TERM ] && sleep 5
+    done
+}
+
+# Studio, or its setup, is still going: a second launch would only stop on the launcher lock, so say
+# what is happening instead and offer to stop it.
+if [ -e "$RUNNING" ] && kill -0 "$(cat "$RUNNING" 2>/dev/null)" 2>/dev/null; then
+    since=$(date -r "$RUNNING" +%H:%M 2>/dev/null)
+    state=$(grep -E '^[0-9:]+ processes=' "$MONITOR" 2>/dev/null | tail -n 1)
+    answer=$(zenity --question --switch --width=520 --title="$TITLE" \
+        --extra-button="Keep waiting" --extra-button="Stop Studio" --extra-button="Copy log" \
+        --text="$(printf 'Roblox Studio is already starting or running (since %s). On a phone its window can take 5 to 15 minutes to appear, so there is no need to open it again.%s' \
+            "$since" "${state:+\n\nLatest check: $state}" | escape)" 2>/dev/null)
+    case "$answer" in
+        "Stop Studio")
+            zenity --question --width=420 --title="$TITLE" --ok-label="Stop it" --cancel-label="Keep it" \
+                --text="Stop Roblox Studio and its setup? Unsaved work in Studio is lost. Downloads are kept." 2>/dev/null &&
+                stop_studio ;;
+        "Copy log") copy_log "$(readlink -f "$LOG_DIR/latest.log")" ;;
+    esac
+    exit 0
+fi
+rm -f "$SEEN/studio-stopped"
+
 if [ ! -e "$SEEN/studio-intro-shown" ]; then
     zenity --question --width=460 --title="Roblox Studio (experimental)" --ok-label="Try it" --cancel-label="Cancel" \
         --text="Runs the official Windows Roblox Studio through Linux/Wine compatibility software. First setup needs several GB of storage and downloads. Android graphics and sign-in remain unverified.\n\nIf Boddy keeps reconnecting, Android is stopping it: on Android 14+ turn on Developer options > Disable child process restrictions." 2>/dev/null || exit 0
@@ -110,7 +142,7 @@ zenity --progress --title="$TITLE" --width=440 --auto-close --percentage=0 \
 zenity_pid=$!
 
 # The launcher runs in its own process group so Cancel can stop it together with its downloads.
-setsid bash -c 'echo $$ >"$1"; "$2" "${@:4}"; echo $? >"$3"' _ \
+BODDY_STUDIO_SESSION=$$ setsid bash -c 'echo $$ >"$1"; "$2" "${@:4}"; echo $? >"$3"' _ \
     "$work/pid" "$STUDIO" "$work/status" "${args[@]}" 2>&1 |
 (
     # Only this reader holds the progress pipe, so the window sees end-of-input if the launcher stops early.
@@ -157,15 +189,20 @@ if [ ! -e "$work/started" ] && [ -s "$work/pid" ] && kill -0 "$(cat "$work/pid")
     exit 0
 fi
 
-if [ -e "$work/started" ] && [ ! -e "$SEEN/studio-signin-tip-shown" ]; then
-    touch "$SEEN/studio-signin-tip-shown"
-    zenity --info --width=420 --title="$TITLE" --timeout=30 \
-        --text="To sign in, choose <b>Login via Browser</b> in Studio, sign in in the Firefox window that opens, then allow Firefox to open the Roblox Studio link." 2>/dev/null &
+if [ -e "$work/started" ]; then
+    tip=""
+    if [ ! -e "$SEEN/studio-signin-tip-shown" ]; then
+        touch "$SEEN/studio-signin-tip-shown"
+        tip="\n\nTo sign in, choose <b>Login via Browser</b> in Studio, sign in in the Firefox window that opens, then allow Firefox to open the Roblox Studio link."
+    fi
+    zenity --info --width=440 --title="$TITLE" --timeout=40 \
+        --text="Roblox Studio is starting. On a phone its window can take 5 to 15 minutes to appear: leave Boddy open and don't open Studio again.$tip" 2>/dev/null &
 fi
 
 wait "$reader_pid"
 status=$(cat "$work/status" 2>/dev/null || echo 1)
 [ "$status" = 0 ] && exit 0
+[ -e "$SEEN/studio-stopped" ] && exit 0  # stopped on purpose from a second Studio window
 
 if [ -s "$work/error" ]; then
     text="Roblox Studio could not start:\n\n$(head -c 3000 "$work/error")"

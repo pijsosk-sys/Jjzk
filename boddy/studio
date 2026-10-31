@@ -812,6 +812,7 @@ def try_every_way(place):
   if process_count()>PHANTOM_LIMIT-12:
    say('Note: %d Linux processes are already running. Android 12+ stops Boddy above %d; close other Boddy apps,'%(process_count(),PHANTOM_LIMIT))
    say('or turn off Android\'s child process limit (see "Boddy keeps reconnecting" in the Studio README).')
+  say('Roblox Studio is starting (%s); its window can take several minutes to appear on a phone.'%name)
   began=time.time()
   try:result=subprocess.run(args,cwd=studio,env=env)
   finally:restore_display()
