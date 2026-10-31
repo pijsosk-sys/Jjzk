@@ -92,7 +92,7 @@ fi
 # The action can be given as an argument (e.g. from a desktop shortcut): studio-app.sh "Open Studio"
 choice=${1:-}
 [ -n "$choice" ] || choice=$(zenity --list --title="$TITLE" --width=420 --height=300 --column=Action \
-    "Open Studio" "Open a place file" "Graphics mode" "Diagnostics" "Wine version" "Compatibility mode" "Reset Studio" 2>/dev/null) || exit 0
+    "Open Studio" "Open a place file" "Graphics mode" "Window mode" "Diagnostics" "Wine version" "Compatibility mode" "Reset Studio" 2>/dev/null) || exit 0
 case "$choice" in
     "Open Studio") args=() ;;
     "Open a place file")
@@ -118,6 +118,18 @@ case "$choice" in
         else
             zenity --error --width=460 --title="$TITLE" --text="$(printf '%s' "$out" | escape)" 2>/dev/null
         fi
+        exit 0 ;;
+    "Window mode")
+        wm=$(cat "$HOME/.local/share/roblox-studio/window-mode" 2>/dev/null); [ -n "$wm" ] || wm=desktop
+        pick=$(zenity --list --title="$TITLE" --width=520 --height=260 --column=Mode --column=Status \
+            "One window" "$([ "$wm" = desktop ] && echo 'in use, recommended: no black boxes' || echo 'recommended: no black boxes')" \
+            "Separate windows" "$([ "$wm" = separate ] && echo 'in use' || echo 'each Studio window on its own')" 2>/dev/null) || exit 0
+        case "$pick" in
+            "One window") "$STUDIO" --use-windows=desktop >/dev/null 2>&1 ;;
+            "Separate windows") "$STUDIO" --use-windows=separate >/dev/null 2>&1 ;;
+            *) exit 0 ;;
+        esac
+        zenity --info --width=400 --title="$TITLE" --text="Window mode set to $pick. Choose Open Studio to use it." 2>/dev/null
         exit 0 ;;
     "Wine version")
         wf=$HOME/.local/share/roblox-studio/wine-major

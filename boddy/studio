@@ -716,6 +716,38 @@ def tune_prefix(wine,env,prefix):
  for service in ('winebth','wineusb'):
   command([*wine,'reg','add','HKLM\\System\\CurrentControlSet\\Services\\'+service,'/v','Start','/t','REG_DWORD','/d','4','/f'],600,env)
  marker.touch()
+# Studio's pop-ups (notifications, the loading box, menus) are layered, partly transparent windows.
+# Boddy's desktop has no compositor, so drawn as separate X windows their transparent parts come out
+# black, and Studio's panels redraw badly. Inside a Wine virtual desktop Wine draws every Studio window
+# into one X window itself. HKCU\Software\Wine\Explorer\Desktop names the desktop (explorer reads it
+# when the wineserver starts) and ...\Desktops holds its size.
+WINDOW_MODE_FILE=ROOT/'window-mode'
+DESKTOP_NAME='RobloxStudio'
+def window_mode():
+ m=os.getenv('BODDY_STUDIO_WINDOWS') or (WINDOW_MODE_FILE.read_text().strip() if WINDOW_MODE_FILE.exists() else '')
+ return m if m in ('desktop','separate') else 'desktop'
+def screen_size():
+ try:out=xrandr().stdout
+ except Exception:return None
+ m=re.search(r'current (\d+) x (\d+)',out)
+ return (int(m.group(1)),int(m.group(2))) if m else None
+def set_window_mode(wine,env,prefix):
+ """Puts Studio in a Wine virtual desktop that fills the screen above Boddy's taskbar, or takes it out."""
+ size=screen_size() if window_mode()=='desktop' else None
+ # Room for the window's title bar and Boddy's taskbar, so the whole desktop stays on screen.
+ want='%dx%d'%(size[0]-8,size[1]-72) if size else ''
+ marker=prefix/'.boddy-window-mode'
+ if marker.exists() and marker.read_text()==want:return
+ reg=CACHE/'window-mode.reg'
+ reg.write_text('REGEDIT4\r\n\r\n[HKEY_CURRENT_USER\\Software\\Wine\\Explorer]\r\n'+
+  ('"Desktop"="%s"\r\n\r\n[HKEY_CURRENT_USER\\Software\\Wine\\Explorer\\Desktops]\r\n"%s"="%s"\r\n'%(DESKTOP_NAME,DESKTOP_NAME,want)
+   if want else '"Desktop"=-\r\n'))
+ command([*wine,'regedit','/S','Z:'+str(reg).replace('/','\\')],600,env)
+ # explorer only reads it when the wineserver starts: end this one, so Studio starts a fresh one.
+ server=Path(wine[-1]).parent/'wineserver'
+ if server.exists():subprocess.run([*wine[:-1],str(server),'-k'],env=env,timeout=120)
+ marker.write_text(want)
+ say('Studio windows: '+('one Wine window of %s'%want if want else 'separate windows'))
 PHANTOM_LIMIT=32
 def process_count():
  return sum(1 for n in os.listdir('/proc') if n.isdigit())
@@ -802,6 +834,10 @@ def main():
   if want=='Automatic':RENDERER_FILE.unlink(missing_ok=True);say('Studio will now choose its graphics mode itself');return
   if want not in GRAPHICS:raise RuntimeError('Graphics mode must be Automatic or one of: '+', '.join(GRAPHICS))
   RENDERER_FILE.write_text(want);say('Studio will now draw with '+GRAPHICS[want]);return
+ if arg.startswith('--use-windows='):
+  want=arg.split('=',1)[1]
+  if want not in ('desktop','separate'):raise RuntimeError('Window mode must be desktop or separate')
+  WINDOW_MODE_FILE.write_text(want);say('Studio will now use '+('one Wine window' if want=='desktop' else 'separate windows'));return
  if arg in ('--use-box64','--use-hangover'):
   RUNTIME_FILE.write_text(arg[6:]);say('Studio will now run with '+arg[6:]);return
  if arg.startswith('--use-wine'):
@@ -870,7 +906,7 @@ def try_every_way(place):
   say('Launching real Roblox Studio. A process start alone does not prove the editor works.')
   say('Studio\'s built-in login does not work here: choose "Login via Browser", sign in in the Firefox window that opens,')
   say('then allow Firefox to open the Roblox Studio sign-in link.')
-  restore_display=fit_display()
+  restore_display=fit_display();set_window_mode(wine,env,prefix)
   if process_count()>PHANTOM_LIMIT-12:
    say('Note: %d Linux processes are already running. Android 12+ stops Boddy above %d; close other Boddy apps,'%(process_count(),PHANTOM_LIMIT))
    say('or turn off Android\'s child process limit (see "Boddy keeps reconnecting" in the Studio README).')
@@ -989,7 +1025,10 @@ LIGHT_FLAGS={'DFIntTaskSchedulerTargetFps':30,'DFIntDebugFRMQualityLevelOverride
  'FIntDebugForceMSAASamples':1,  # no anti-aliasing: 1 sample per pixel
  # no grass or wind animation, and fewer local-light updates per frame: less to draw for the same scene
  'FIntFRMMinGrassDistance':0,'FIntFRMMaxGrassDistance':0,'FIntRenderGrassDetailStrands':0,'FFlagGlobalWindRendering':False,
- 'FIntRenderLocalLightUpdatesMax':1,'FIntRenderLocalLightUpdatesMin':1,'FIntRenderLocalLightFadeInMs':0}
+ 'FIntRenderLocalLightUpdatesMax':1,'FIntRenderLocalLightUpdatesMin':1,'FIntRenderLocalLightFadeInMs':0,
+ # Draw the 3D view at about 300,000 pixels (a 1274x532 view is 678,000) and scale it up: on a
+ # processor-drawn view that roughly halves the work per frame, for a softer picture.
+ 'DFIntDebugDynamicRenderKiloPixels':300}
 def write_studio_settings(studio,renderer):
  path=studio/'ClientSettings'/'ClientAppSettings.json'
  try:flags=json.loads(path.read_text()) if path.exists() else {}
