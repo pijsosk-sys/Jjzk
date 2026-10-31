@@ -299,7 +299,7 @@ def ensure_graphics(renderer=''):
  def installed(p):
   r=subprocess.run(['dpkg-query','-W','-f=${Status}',p],capture_output=True,text=True)
   return 'ok installed' in r.stdout
- wanted=GRAPHICS_PACKAGES+(('libvulkan1','mesa-vulkan-drivers') if renderer=='Vulkan' else ())
+ wanted=GRAPHICS_PACKAGES+(('libvulkan1','mesa-vulkan-drivers') if renderer in ('DXVK','WineVulkan') else ())
  missing=[p for p in wanted if not installed(p)]
  if missing:say('Installing the 3D graphics libraries Studio draws with (one time): '+' '.join(missing));apt_install(*missing)
 def apt_install(*packages):
@@ -794,8 +794,8 @@ def main():
  if arg.startswith('--use-renderer='):
   want=arg.split('=',1)[1]
   if want=='Automatic':RENDERER_FILE.unlink(missing_ok=True);say('Studio will now choose its graphics mode itself');return
-  if want not in RENDERERS:raise RuntimeError('Graphics mode must be Automatic or one of: '+', '.join(RENDERERS))
-  RENDERER_FILE.write_text(want);say('Studio will now draw with %s graphics'%want);return
+  if want not in GRAPHICS:raise RuntimeError('Graphics mode must be Automatic or one of: '+', '.join(GRAPHICS))
+  RENDERER_FILE.write_text(want);say('Studio will now draw with '+GRAPHICS[want]);return
  if arg in ('--use-box64','--use-hangover'):
   RUNTIME_FILE.write_text(arg[6:]);say('Studio will now run with '+arg[6:]);return
  if arg.startswith('--use-wine'):
@@ -820,6 +820,11 @@ def main():
  migrated=ROOT/'.choice-v3'
  if not migrated.exists():
   RENDERER_FILE.unlink(missing_ok=True);migrated.touch()
+ # The graphics ladder changed from graphics APIs (Studio ignored them) to Direct3D back ends: start it over.
+ migrated=ROOT/'.choice-v4'
+ if not migrated.exists():
+  for f in (RENDERER_FILE,SETUP_FILE):f.unlink(missing_ok=True)
+  migrated.touch()
  place=None
  if arg and not arg.startswith('--'):
   place=Path(arg).resolve()
@@ -845,6 +850,7 @@ def try_every_way(place):
   setup=current_setup();renderer=setup['renderer']
   say('Studio setup %d of %d: %s'%(setup['step']+1,len(SETUPS),describe_setup(setup)))
   studio=install_studio();ensure_graphics(renderer);write_studio_settings(studio,renderer);setup_browser_login(wine,env,prefix);tune_prefix(wine,env,prefix);args=[*wine,str(studio/'RobloxStudioBeta.exe')]
+  env=prepare_graphics(renderer,prefix,env)
   if place:args.append('Z:'+str(place).replace('/','\\'))
   say('Launching real Roblox Studio. A process start alone does not prove the editor works.')
   say('Studio\'s built-in login does not work here: choose "Login via Browser", sign in in the Firefox window that opens,')
@@ -853,7 +859,7 @@ def try_every_way(place):
   if process_count()>PHANTOM_LIMIT-12:
    say('Note: %d Linux processes are already running. Android 12+ stops Boddy above %d; close other Boddy apps,'%(process_count(),PHANTOM_LIMIT))
    say('or turn off Android\'s child process limit (see "Boddy keeps reconnecting" in the Studio README).')
-  say('Roblox Studio is starting (%s, %s graphics); its window can take several minutes to appear on a phone.'%(name,renderer))
+  say('Roblox Studio is starting (%s, %s); its window can take several minutes to appear on a phone.'%(name,GRAPHICS[renderer]))
   began=time.time()
   try:code,notable=run_studio(args,studio,env)
   finally:restore_display()
@@ -880,15 +886,17 @@ def try_every_way(place):
   '\n'.join('  %s: %s'%t for t in tried)+
   '\n\nChoose "Copy log" and send the log; it shows why each one stopped. Roblox Tools > "Start a new game I can '
   'edit with an AI agent" still works without Studio.')
-# Studio's 3D view is drawn by the phone's processor (Mesa llvmpipe), so: the graphics mode with the fewest
-# translation layers first (Roblox's own OpenGL renderer straight to Mesa), then Vulkan (Mesa lavapipe),
-# then Direct3D 11, which Wine translates to OpenGL, at feature level 10 and then full.
-RENDERERS=('OpenGL','Vulkan','D3D11FL10','D3D11')
+# Studio always draws with Direct3D 11 (on a phone it ignored the FFlags preferring OpenGL or Vulkan), so
+# what can change is what turns Direct3D 11 into drawing on the phone's processor:
+#  DXVK        Direct3D 11 to Vulkan (as Proton and Vinegar use), on Mesa's software Vulkan, lavapipe
+#  WineVulkan  Wine's own Direct3D (wined3d) on its Vulkan back end, also lavapipe
+#  WineOpenGL  wined3d on OpenGL and Mesa llvmpipe: Studio crashed in it creating its 3D view
+GRAPHICS={'DXVK':'DXVK (DirectX on Vulkan)','WineVulkan':"Wine's DirectX on Vulkan",'WineOpenGL':"Wine's DirectX on OpenGL"}
 RENDERER_FILE=ROOT/'renderer'  # a graphics mode chosen in the menu; it replaces the ladder's
 # The ways to run Studio once Windows starts, fastest first; each crash moves the next start one step down.
-# Direct3D 11 first: it is the mode Studio reached sign-in with on a phone. All but the last hide AVX.
-SETUPS=(('D3D11',False,'fast'),('OpenGL',False,'fast'),('Vulkan',False,'fast'),('D3D11FL10',False,'fast'),
- ('D3D11',False,'safe'),('D3D11',True,'safe'))
+# All but the last hide AVX.
+SETUPS=(('DXVK',False,'fast'),('WineVulkan',False,'fast'),('WineOpenGL',False,'fast'),('DXVK',False,'safe'),
+ ('WineOpenGL',False,'safe'),('WineOpenGL',True,'safe'))
 SETUP_FILE=ROOT/'studio-setup'
 def current_setup():
  try:step=int(SETUP_FILE.read_text())
@@ -896,10 +904,60 @@ def current_setup():
  step=step if 0<=step<len(SETUPS) else 0
  renderer,avx,speed=SETUPS[step]
  chosen=os.getenv('BODDY_STUDIO_RENDERER') or (RENDERER_FILE.read_text().strip() if RENDERER_FILE.exists() else '')
- if chosen in RENDERERS:renderer=chosen
+ if chosen in GRAPHICS:renderer=chosen
  return {'step':step,'renderer':renderer,'avx':avx,'speed':speed}
 def describe_setup(s):
- return '%s graphics, %s emulation%s'%(s['renderer'],s['speed'],'' if s['avx'] else ', AVX hidden')
+ return '%s, %s emulation%s'%(GRAPHICS[s['renderer']],s['speed'],'' if s['avx'] else ', AVX hidden')
+DXVK_VERSION='2.7.1'
+DXVK_URL='https://github.com/doitsujin/dxvk/releases/download/v%s/dxvk-%s.tar.gz'%(DXVK_VERSION,DXVK_VERSION)
+DXVK_SIZE=10310666
+DXVK_SHA256='d85ce7c79f57ecd765aaa1b9e7007cb875e6fde9f6d331df799bce73d513ce87'
+DXVK_DLLS=('d3d11','dxgi','d3d10core')
+# lavapipe reports itself as a software renderer with little memory; Studio sizes textures from what the
+# card reports, so report a modest NVIDIA card with 2 GB. One frame queued at a time saves memory.
+DXVK_CONF="""# Written by Boddy's Roblox Studio launcher
+dxgi.customVendorId = 10de
+dxgi.customDeviceId = 1c81
+dxgi.customDeviceDesc = "NVIDIA GeForce GTX 1050"
+dxgi.maxDeviceMemory = 2048
+dxgi.maxFrameLatency = 1
+"""
+def install_dxvk():
+ d=ROOT/('dxvk-'+DXVK_VERSION)
+ if all((d/(n+'.dll')).is_file() for n in DXVK_DLLS):return d
+ say('Installing DXVK %s, which turns DirectX into Vulkan (one time)'%DXVK_VERSION)
+ archive=CACHE/('dxvk-%s.tar.gz'%DXVK_VERSION)
+ download(DXVK_URL,archive,DXVK_SIZE,sha256=DXVK_SHA256,progress=Progress('DXVK',DXVK_SIZE))
+ stage=ROOT/'dxvk-stage';shutil.rmtree(stage,ignore_errors=True);stage.mkdir()
+ with tarfile.open(archive) as t:
+  for n in DXVK_DLLS:
+   with t.extractfile('dxvk-%s/x64/%s.dll'%(DXVK_VERSION,n)) as src,(stage/(n+'.dll')).open('wb') as out:
+    shutil.copyfileobj(src,out)
+ shutil.rmtree(d,ignore_errors=True);stage.rename(d);archive.unlink(missing_ok=True)
+ return d
+def prepare_graphics(gfx,prefix,env):
+ """Puts the Direct3D 11 back end `gfx` in place; returns Studio's environment for it."""
+ env=dict(env)
+ over=[o for o in env.get('WINEDLLOVERRIDES','').split(';') if o and not o.startswith(('d3d11','dxgi','d3d10core'))]
+ if gfx in ('DXVK','WineVulkan'):
+  # Only lavapipe: Mesa's hardware Vulkan drivers in the same package cannot reach the phone's GPU from here.
+  lvp=sorted(Path('/usr/share/vulkan/icd.d').glob('lvp_icd*.json'))
+  if lvp:env.setdefault('VK_DRIVER_FILES',str(lvp[0]));env.setdefault('VK_ICD_FILENAMES',str(lvp[0]))
+ if gfx=='DXVK':
+  d=install_dxvk();sys32=prefix/'drive_c'/'windows'/'system32';sys32.mkdir(parents=True,exist_ok=True)
+  for n in DXVK_DLLS:
+   src,dst=d/(n+'.dll'),sys32/(n+'.dll')
+   if not dst.exists() or dst.read_bytes()!=src.read_bytes():shutil.copyfile(src,dst)
+  over.append('d3d11,dxgi,d3d10core=n,b')
+  conf=ROOT/'dxvk.conf';conf.write_text(DXVK_CONF)
+  env.update(DXVK_CONFIG_FILE=str(conf),DXVK_LOG_LEVEL='warn',DXVK_LOG_PATH='none',DXVK_HUD='0')
+ else:
+  # Wine's own: builtin even though DXVK's copies may sit in system32 from an earlier start.
+  over.append('d3d11,dxgi,d3d10core=b')
+  env['WINE_D3D_CONFIG']=('renderer=vulkan;' if gfx=='WineVulkan' else '')+'VideoMemorySize=2048'
+ env['WINEDLLOVERRIDES']=';'.join(over)
+ say('Studio graphics: %s'%GRAPHICS[gfx])
+ return env
 # Light settings for drawing on a phone's processor: every frame is drawn in software, so a 30 fps cap, the
 # lowest quality level and textures, and no shadows or post effects cut the work (and memory) the most.
 # Studio reads these from ClientSettings next to its program, like Roblox's player does.
@@ -918,9 +976,10 @@ def write_studio_settings(studio,renderer):
  except ValueError:flags={}  # not ours and not valid: replaced
  if not isinstance(flags,dict):flags={}
  if os.getenv('BODDY_STUDIO_FULL_GRAPHICS')!='1':flags.update(LIGHT_FLAGS)
- for r in RENDERERS:flags['FFlagDebugGraphicsPrefer'+r]=r==renderer
+ # Direct3D 11 is what Studio uses anyway; say so, so an earlier preference for another API is undone.
+ for r in ('OpenGL','Vulkan','D3D11FL10','D3D11'):flags['FFlagDebugGraphicsPrefer'+r]=r=='D3D11'
  path.parent.mkdir(exist_ok=True);path.write_text(json.dumps(flags,indent=1))
- say('Studio graphics: %s, light settings (30 fps, lowest quality)'%renderer)
+ say('Studio settings: light (30 fps, lowest quality)')
 # Box64 names an instruction it cannot run ("Unimplemented Opcode") only at BOX64_LOG=1, which also logs
 # every unaligned access it fixes and every child-process signal. Studio runs at that level and this
 # drops the noise, keeping the lines that say why it crashed.

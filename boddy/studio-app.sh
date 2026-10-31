@@ -106,13 +106,12 @@ case "$choice" in
         now=$(cat "$rf" 2>/dev/null); [ -n "$now" ] || now=Automatic
         mark() { [ "$now" = "$1" ] && echo "in use" || echo "$2"; }
         pick=$(zenity --list --title="$TITLE" --width=520 --height=360 \
-            --text="How Studio draws its 3D view. Automatic tries the next mode by itself when Studio crashes." \
+            --text="How Studio's DirectX 11 is drawn. Automatic tries the next one by itself when Studio crashes." \
             --column=Mode --column=Status \
             "Automatic" "$(mark Automatic 'recommended: changes by itself after a crash')" \
-            "OpenGL" "$(mark OpenGL 'fewest translation layers')" \
-            "Vulkan" "$(mark Vulkan 'second choice')" \
-            "D3D11FL10" "$(mark D3D11FL10 'DirectX 11, reduced')" \
-            "D3D11" "$(mark D3D11 'DirectX 11, the usual Windows mode')" 2>/dev/null) || exit 0
+            "DXVK" "$(mark DXVK 'DirectX on Vulkan, most complete')" \
+            "WineVulkan" "$(mark WineVulkan 'Wine'"'"'s DirectX on Vulkan')" \
+            "WineOpenGL" "$(mark WineOpenGL 'Wine'"'"'s DirectX on OpenGL')" 2>/dev/null) || exit 0
         [ -n "$pick" ] || exit 0
         if out=$("$STUDIO" --use-renderer="$pick" 2>&1); then
             zenity --info --width=400 --title="$TITLE" --text="Graphics mode set to $pick. Choose Open Studio to use it." 2>/dev/null
@@ -193,6 +192,7 @@ BODDY_STUDIO_SESSION=$$ setsid bash -c 'echo $$ >"$1"; "$2" "${@:4}"; echo $? >"
                 zenity --info --width=420 --title="$TITLE" --timeout=20 --text="Studio closed straight away, so Boddy is trying another way to run it. This can take a while; you don't need to do anything." 2>/dev/null & ;;
             "Trying "*) say "# ${line%% (*}..." ;;
             "Installing the 3D"*) say "# Installing 3D graphics libraries (one time)..." ;;
+            "Installing DXVK"*) say "# Installing DXVK (one time)..." ;;
             "Installing Box64"*) say 1 "# Installing the x86 translator (one time)..." ;;
             "Installing Wine"*) say 2 "# Installing the Windows compatibility layer..." ;;
             "Installing Hangover"*) say 2 "# Installing the Windows compatibility layer..." ;;
