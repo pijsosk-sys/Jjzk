@@ -82,6 +82,17 @@ is simply not used, so a Baritone that moves on, or that is missing, no longer m
 - It tried to place blocks inside itself. The ring of bookshelves stopped on whichever one the
   walk had parked on; it now steps aside first.
 - Pickaxe tiers were wrong: a wooden pickaxe counted as enough for iron ore.
+- The strip mine drove through whatever was in front of it, including the smithing table Overlord
+  had just put down. It then had to craft another, which needed iron, which started another
+  tunnel. On a server it would be somebody's chests. It turns aside for workstations, containers,
+  bookshelves, beds and banners now.
+- Placing a block walked to the empty cell it was going into, and the navigator's goal test is
+  "can I click that block from here", which an empty cell cannot answer. The ring of bookshelves
+  stalled wherever the walk parked and the watchdog gave up eight minutes later. It walks to the
+  ground the block will sit on instead: the enchanting run went from giving up at 486s to
+  finishing in 10.
+- A workstation was checked for on the tick its own click was sent, so it never counted as placed
+  and a second one went down, and a third.
 
 **Chat and HUD.** `.overlord start | stop | status | hud` (also `#overlord`, `.rex overlord`).
 `status` reports the stage, what it is doing and how many blocks it has broken. The HUD is a small
@@ -98,15 +109,15 @@ cat /tmp/g1/rexoverlord-results.txt
 
 | Scenario | What it has to end up with | Result |
 | --- | --- | --- |
-| `tools` | a stone pickaxe, from an empty inventory and three trees | pass, 23.6s |
-| `mine` | raw iron out of a vein, walked to and dug | pass, 23.3s |
-| `smelt` | iron ingots out of a furnace it placed and loaded | pass, 17.9s |
-| `irongear` | the full iron set crafted at a table | pass, 21.2s |
-| `diamondgear` | all six diamond pieces | pass, 8.9s |
-| `netherite` | all six pieces upgraded at a smithing table | pass, 6.0s |
-| `enchant` | the table placed, fifteen bookshelves round it, all six pieces enchanted | pass, 133.7s |
-| `eat` | food eaten before the hunger bar bites | pass, 176.4s |
-| `fight` | a zombie beaten off at night | pass, 1.6s |
+| `tools` | a stone pickaxe, from an empty inventory and three trees | pass, 24.1s |
+| `mine` | raw iron out of a vein, walked to and dug | pass, 25.9s |
+| `smelt` | iron ingots out of a furnace it placed and loaded | pass, 15.7s |
+| `irongear` | the full iron set crafted at a table | pass, 47.0s |
+| `diamondgear` | all six diamond pieces | pass, 9.4s |
+| `netherite` | all six pieces upgraded at a smithing table | pass, 5.8s |
+| `enchant` | the table placed, fifteen bookshelves round it, all six pieces enchanted | pass, 10.2s |
+| `eat` | food eaten before the hunger bar bites | pass, 41.5s |
+| `fight` | a zombie beaten off at night | pass, 3.6s |
 
 Nine for nine, in a real 1.21.11 client, on the jar in `out/`.
 
@@ -176,10 +187,10 @@ each shape built out of commands and each run checked by where the player actual
 
 | Scenario | What it has to do | Result |
 | --- | --- | --- |
-| `flat` | 60 blocks across open ground | pass, 10.4s |
+| `flat` | 60 blocks across open ground | pass, 10.5s |
 | `wall` | round an obsidian wall it is not allowed to break | pass, 13.4s |
 | `break` | out of a sealed stone box, through a block | pass, 4.6s |
-| `climb` | eight single steps up a staircase | pass, 9.7s |
+| `climb` | eight single steps up a staircase | pass, 10.3s |
 | `drop` | off a cliff onto lower ground | pass, 8.6s |
 | `screen` | a screen opens halfway: it must not move while it is open, and must still arrive | pass, 16.2s, moved 0 blocks while open |
 
