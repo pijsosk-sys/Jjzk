@@ -103,12 +103,13 @@ case "$choice" in
         exit 0 ;;
     "Graphics mode")
         rf=$HOME/.local/share/roblox-studio/renderer
-        now=$(cat "$rf" 2>/dev/null); [ -n "$now" ] || now=OpenGL
+        now=$(cat "$rf" 2>/dev/null); [ -n "$now" ] || now=Automatic
         mark() { [ "$now" = "$1" ] && echo "in use" || echo "$2"; }
-        pick=$(zenity --list --title="$TITLE" --width=520 --height=320 \
-            --text="How Studio draws its 3D view. Change this if Studio crashes when a game opens.\nBoddy also moves to the next one by itself after a crash." \
+        pick=$(zenity --list --title="$TITLE" --width=520 --height=360 \
+            --text="How Studio draws its 3D view. Automatic tries the next mode by itself when Studio crashes." \
             --column=Mode --column=Status \
-            "OpenGL" "$(mark OpenGL 'lightest on a phone, tried first')" \
+            "Automatic" "$(mark Automatic 'recommended: changes by itself after a crash')" \
+            "OpenGL" "$(mark OpenGL 'fewest translation layers')" \
             "Vulkan" "$(mark Vulkan 'second choice')" \
             "D3D11FL10" "$(mark D3D11FL10 'DirectX 11, reduced')" \
             "D3D11" "$(mark D3D11 'DirectX 11, the usual Windows mode')" 2>/dev/null) || exit 0
