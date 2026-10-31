@@ -39,6 +39,8 @@ public final class Sites {
    private String pendingKey = "";
    private class_2338 pendingStation;
    private int pendingTicks;
+   /** Spots a block was clicked into and never appeared in; they are not tried again. */
+   private final Set<class_2338> badSpots = new HashSet<>();
    public String status = "";
 
    public static String dimension(class_310 client) {
@@ -165,14 +167,24 @@ public final class Sites {
       // and then always said no, so nothing was ever remembered and it kept putting another one
       // down until the cobblestone ran out.
       if (this.pendingStation != null && this.pendingKey.equals(key)) {
-         if (++this.pendingTicks <= 40) {
+         if (block(client, this.pendingStation).equals(id)) {
+            this.stations.put(key, this.pendingStation);
+            this.pendingStation = null;
+            return false; // it is there; the next tick opens it
+         }
+         if (++this.pendingTicks <= 20) {
             this.status = "Waiting for the " + Ids.pretty(id) + " to appear at " + coords(this.pendingStation);
             return false;
          }
+         // The click went out and nothing came of it. Somewhere else, then: without this it put
+         // one down on the same refused spot over and over until the run timed out.
+         this.badSpots.add(this.pendingStation);
          this.pendingStation = null;
       }
       class_2338 spot = this.freeSpot(client);
       if (spot == null) {
+         // Every spot around here has been tried; move and look again.
+         this.badSpots.clear();
          this.status = "No clear ground to put a " + Ids.pretty(id) + " down";
          return false;
       }
@@ -211,7 +223,7 @@ public final class Sites {
       for (int[] offset : new int[][]{{2, 0}, {-2, 0}, {0, 2}, {0, -2}, {2, 2}, {-2, -2}, {1, 2}, {-1, -2}, {2, 1}, {-2, -1}}) {
          for (int dy : new int[]{0, -1, 1}) {
             class_2338 at = feet.method_10069(offset[0], dy, offset[1]);
-            if (air(client, at) && air(client, at.method_10084()) && !air(client, at.method_10074())) {
+            if (!this.badSpots.contains(at) && air(client, at) && air(client, at.method_10084()) && !air(client, at.method_10074())) {
                return at;
             }
          }
