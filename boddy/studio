@@ -737,16 +737,23 @@ def set_window_mode(wine,env,prefix):
  # Room for the window's title bar and Boddy's taskbar, so the whole desktop stays on screen.
  want='%dx%d'%(size[0]-8,size[1]-72) if size else ''
  marker=prefix/'.boddy-window-mode'
- if marker.exists() and marker.read_text()==want:return
+ # v2: the desktop got a taskbar and a black background (bump it when the registry settings change).
+ stamp='v2 '+want
+ if marker.exists() and marker.read_text()==stamp:return
  reg=CACHE/'window-mode.reg'
  reg.write_text('REGEDIT4\r\n\r\n[HKEY_CURRENT_USER\\Software\\Wine\\Explorer]\r\n'+
-  ('"Desktop"="%s"\r\n\r\n[HKEY_CURRENT_USER\\Software\\Wine\\Explorer\\Desktops]\r\n"%s"="%s"\r\n'%(DESKTOP_NAME,DESKTOP_NAME,want)
+  ('"Desktop"="%s"\r\n\r\n[HKEY_CURRENT_USER\\Software\\Wine\\Explorer\\Desktops]\r\n"%s"="%s"\r\n'%(DESKTOP_NAME,DESKTOP_NAME,want)+
+   # A Windows-style taskbar in the desktop: without one, a minimized or hidden Studio window could not be
+   # brought back, leaving only the desktop's background until Studio was restarted.
+   '\r\n[HKEY_CURRENT_USER\\Software\\Wine\\Explorer\\Desktops\\%s]\r\n"EnableShell"=dword:00000001\r\n'%DESKTOP_NAME+
+   # Black instead of the classic Windows blue around Studio's window.
+   '\r\n[HKEY_CURRENT_USER\\Control Panel\\Colors]\r\n"Background"="0 0 0"\r\n'
    if want else '"Desktop"=-\r\n'))
  command([*wine,'regedit','/S','Z:'+str(reg).replace('/','\\')],600,env)
  # explorer only reads it when the wineserver starts: end this one, so Studio starts a fresh one.
  server=Path(wine[-1]).parent/'wineserver'
  if server.exists():subprocess.run([*wine[:-1],str(server),'-k'],env=env,timeout=120)
- marker.write_text(want)
+ marker.write_text(stamp)
  say('Studio windows: '+('one Wine window of %s'%want if want else 'separate windows'))
 PHANTOM_LIMIT=32
 def process_count():
@@ -1005,9 +1012,22 @@ def install_dxvk():
     shutil.copyfileobj(src,out)
  shutil.rmtree(d,ignore_errors=True);stage.rename(d);archive.unlink(missing_ok=True)
  return d
+def fast_core_count():
+ """How many cores run at least 70% of the fastest core's top speed (a phone's big and prime
+ cores), or None when the speeds cannot be read."""
+ speeds=[]
+ for f in Path('/sys/devices/system/cpu').glob('cpu[0-9]*/cpufreq/cpuinfo_max_freq'):
+  try:speeds.append(int(f.read_text()))
+  except (OSError,ValueError):pass
+ if len(speeds)<2:return None
+ return sum(1 for v in speeds if v>=max(speeds)*0.7)
 def prepare_graphics(gfx,prefix,env):
  """Puts the Direct3D 11 back end `gfx` in place; returns Studio's environment for it."""
  env=dict(env)
+ # Mesa draws each frame in as many pieces as it has threads, one per core by default, and the frame is
+ # done when the last piece is: pieces on a phone's slow cores hold every frame up. One per fast core.
+ fast=fast_core_count()
+ if fast:env.setdefault('LP_NUM_THREADS',str(fast))
  over=[o for o in env.get('WINEDLLOVERRIDES','').split(';') if o and not o.startswith(('d3d11','dxgi','d3d10core'))]
  if gfx in ('DXVK','WineVulkan'):
   # Only lavapipe: Mesa's hardware Vulkan drivers in the same package cannot reach the phone's GPU from here.
@@ -1026,7 +1046,7 @@ def prepare_graphics(gfx,prefix,env):
   over.append('d3d11,dxgi,d3d10core=b')
   env['WINE_D3D_CONFIG']=('renderer=vulkan;' if gfx=='WineVulkan' else '')+'VideoMemorySize=2048'
  env['WINEDLLOVERRIDES']=';'.join(over)
- say('Studio graphics: %s'%GRAPHICS[gfx])
+ say('Studio graphics: %s%s'%(GRAPHICS[gfx],', %s drawing threads (fast cores)'%fast if fast else ''))
  return env
 # Light settings for drawing on a phone's processor: every frame is drawn in software, so a 24 fps cap, the
 # lowest quality level and textures, and no shadows or post effects cut the work (and memory) the most.
