@@ -24,7 +24,10 @@ import rex.overlord.Stock;
  * -Drexoverlord.scenarios=tools,mine picks a subset. Results land in rexoverlord-results.txt.
  */
 public final class OverlordDriver implements ClientModInitializer {
-   private record Scenario(String name, String goalText, int seconds, List<String> setup, Predicate<class_746> goal) {
+   private record Scenario(String name, String goalText, int seconds, List<String> setup, Predicate<class_746> goal, boolean needsMob) {
+      Scenario(String name, String goalText, int seconds, List<String> setup, Predicate<class_746> goal) {
+         this(name, goalText, seconds, setup, goal, false);
+      }
    }
 
    private static final boolean TRACE = Boolean.getBoolean("rexoverlord.trace");
@@ -42,6 +45,8 @@ public final class OverlordDriver implements ClientModInitializer {
    private net.minecraft.class_243 spawn;
    private net.minecraft.class_243 startedAt;
    private double moved;
+   /** A mob scenario that never had a mob in it proves nothing; this is how that is caught. */
+   private boolean sawMob;
 
    private static int have(class_746 player, String id) {
       return Stock.count(Stock.counts(player), id);
@@ -175,10 +180,10 @@ public final class OverlordDriver implements ClientModInitializer {
       all.add(new Scenario("fight", "a zombie beaten off", 180,
          with("give @a minecraft:iron_sword 1", "give @a minecraft:stone_pickaxe 1", "give @a minecraft:oak_planks 16",
               // Midnight, or the zombie burns up in the sun and the fight is never tested.
-              "time set midnight", "summon minecraft:zombie 2 -60 0 {PersistenceRequired:1b}"),
+              "time set midnight", "summon minecraft:zombie 4 -60 0 {PersistenceRequired:1b}"),
          player -> player.method_73183()
             .method_8333(player, player.method_5829().method_1014(8.0), entity -> entity instanceof net.minecraft.class_1588 && entity.method_5805())
-            .isEmpty()));
+            .isEmpty(), true));
 
       // These three need a generated world: test/runtime/make-world.sh normal, then WORLD=normal.
       all.add(new Scenario("wild", "a stone pickaxe out of real terrain", 900,
@@ -188,19 +193,19 @@ public final class OverlordDriver implements ClientModInitializer {
       all.add(new Scenario("mobnight", "a zombie six blocks away closed on and killed", 240,
          this.wild("time set midnight", "give @a minecraft:iron_sword 1", "give @a minecraft:stone_pickaxe 1",
             String.format(Locale.ROOT, "summon minecraft:zombie %.1f %.1f %.1f {PersistenceRequired:1b}",
-               this.spawn.field_1352 + 6.0, this.spawn.field_1351, this.spawn.field_1350)),
-         OverlordDriver::noHostiles));
+               this.spawn.field_1352 + 6.0, this.spawn.field_1351 + 1.0, this.spawn.field_1350)),
+         OverlordDriver::noHostiles, true));
 
       all.add(new Scenario("mobpack", "three zombies at once", 300,
          this.wild("time set midnight", "give @a minecraft:iron_sword 1", "give @a minecraft:diamond_chestplate 1",
             "give @a minecraft:stone_pickaxe 1",
             String.format(Locale.ROOT, "summon minecraft:zombie %.1f %.1f %.1f {PersistenceRequired:1b}",
-               this.spawn.field_1352 + 5.0, this.spawn.field_1351, this.spawn.field_1350),
+               this.spawn.field_1352 + 5.0, this.spawn.field_1351 + 1.0, this.spawn.field_1350),
             String.format(Locale.ROOT, "summon minecraft:zombie %.1f %.1f %.1f {PersistenceRequired:1b}",
-               this.spawn.field_1352 - 6.0, this.spawn.field_1351, this.spawn.field_1350 + 2.0),
+               this.spawn.field_1352 - 6.0, this.spawn.field_1351 + 1.0, this.spawn.field_1350 + 2.0),
             String.format(Locale.ROOT, "summon minecraft:zombie %.1f %.1f %.1f {PersistenceRequired:1b}",
-               this.spawn.field_1352 + 2.0, this.spawn.field_1351, this.spawn.field_1350 - 7.0)),
-         OverlordDriver::noHostiles));
+               this.spawn.field_1352 + 2.0, this.spawn.field_1351 + 1.0, this.spawn.field_1350 - 7.0)),
+         OverlordDriver::noHostiles, true));
 
       String only = System.getProperty("rexoverlord.scenarios", "").toLowerCase(Locale.ROOT);
       for (Scenario scenario : all) {
@@ -264,6 +269,7 @@ public final class OverlordDriver implements ClientModInitializer {
             this.ticks = 0;
             this.startedAt = null;
             this.moved = 0.0;
+            this.sawMob = false;
             this.phase = 2;
             this.wait = 60;
          }
@@ -294,6 +300,21 @@ public final class OverlordDriver implements ClientModInitializer {
                this.startedAt = client.field_1724.method_73189();
             }
             this.moved = Math.max(this.moved, client.field_1724.method_73189().method_1022(this.startedAt));
+            if (scenario.needsMob() && !this.sawMob) {
+               this.sawMob = !noHostiles(client.field_1724);
+               if (!this.sawMob) {
+                  // Give the summon a moment; a scenario that never sees one is not a pass.
+                  if (this.ticks < 200) {
+                     return;
+                  }
+                  this.lines.add(String.format(Locale.ROOT, "%-12s %-7s %6.1fs  goal: %s | no mob ever appeared",
+                     scenario.name(), "NO-MOB", this.ticks / 20.0, scenario.goalText()));
+                  RexOverlord.command("#overlord stop");
+                  this.phase = 1;
+                  this.wait = 40;
+                  return;
+               }
+            }
             boolean reached = scenario.goal().test(client.field_1724);
             boolean out = this.ticks > scenario.seconds() * 20;
             boolean gaveUp = engine != null && !engine.stopped.isEmpty();

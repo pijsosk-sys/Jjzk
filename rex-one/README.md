@@ -109,15 +109,15 @@ cat /tmp/g1/rexoverlord-results.txt
 
 | Scenario | What it has to end up with | Result |
 | --- | --- | --- |
-| `tools` | a stone pickaxe, from an empty inventory and three trees | pass, 24.1s |
-| `mine` | raw iron out of a vein, walked to and dug | pass, 25.9s |
-| `smelt` | iron ingots out of a furnace it placed and loaded | pass, 15.7s |
-| `irongear` | the full iron set crafted at a table | pass, 47.0s |
-| `diamondgear` | all six diamond pieces | pass, 9.4s |
+| `tools` | a stone pickaxe, from an empty inventory and three trees | pass, 25.2s |
+| `mine` | raw iron out of a vein, walked to and dug | pass, 25.2s |
+| `smelt` | iron ingots out of a furnace it placed and loaded | pass, 14.1s |
+| `irongear` | the full iron set crafted at a table | pass, 23.1s |
+| `diamondgear` | all six diamond pieces | pass, 8.9s |
 | `netherite` | all six pieces upgraded at a smithing table | pass, 5.8s |
-| `enchant` | the table placed, fifteen bookshelves round it, all six pieces enchanted | pass, 10.2s |
-| `eat` | food eaten before the hunger bar bites | pass, 41.5s |
-| `fight` | a zombie beaten off at night | pass, 3.6s |
+| `enchant` | the table placed, fifteen bookshelves round it, all six pieces enchanted | pass, 10.1s |
+| `eat` | food eaten before the hunger bar bites | pass, 40.5s |
+| `fight` | a zombie beaten off at night | pass, 3.0s |
 
 Nine for nine, in a real 1.21.11 client, on the jar in `out/`.
 
@@ -128,9 +128,13 @@ generated world on a fixed seed and `WORLD=normal` runs the scenarios in it:
 
 | Scenario | What it has to do | Result |
 | --- | --- | --- |
-| `wild` | a stone pickaxe from an empty inventory, on real spruce and real stone | pass, 90.9s |
-| `mobnight` | a zombie six blocks off at night, closed on and killed | pass, 43.8s, moved 11.6 blocks |
-| `mobpack` | three zombies at once | pass, 13.1s, moved 11.3 blocks |
+| `wild` | a stone pickaxe from an empty inventory, on real spruce and real stone | pass, 62.9s |
+| `mobnight` | a zombie six blocks off at night, closed on and killed | pass, 6.3s, moved 3.6 blocks |
+| `mobpack` | three zombies at once | pass, 22.3s, moved 10.3 blocks |
+
+Both mob scenarios refuse to pass unless a mob actually turned up: one of them reported a pass in
+a tenth of a second once, because the zombie had been summoned inside a hillside and suffocated,
+and a fight that never happened proves nothing.
 
 The mob pair is there because of a bug this found: the fight engaged anything inside a box three
 and a half blocks wide, which reaches further than a sword does, so it would stand in front of a
