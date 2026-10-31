@@ -8,10 +8,12 @@ Paste this into the new chat:
 ## What this project is
 
 **REX One** is a Minecraft **1.21.11 Fabric** client mod. Repo `pijsosk-sys/Jjzk`; everything is in
-`rex-one/`. The user plays on **DonutSMP**. Most of the work has gone into **Auto Build**, which builds
-`.schem`/`.litematic` schematics by itself. The user also asked for a cleaner UI and a safety check.
+`rex-one/`. The user plays on **DonutSMP**. Most of the work went into **Auto Build**, which builds
+`.schem`/`.litematic` schematics by itself; one.23 added **REX Pathfinder** (our own A*, drawn in the
+world, `.goto`) and rewrote **Overlord** (survival progression to enchanted netherite) without
+reflection or Baritone. The user also asked for a cleaner UI and a safety check.
 
-The current version is **1.0.0-one.22**. The jar is `rex-one/out/REX-One-1.21.11.jar`; send it to the user
+The current version is **1.0.0-one.23**. The jar is `rex-one/out/REX-One-1.21.11.jar`; send it to the user
 after every release.
 
 ## How to act (the user's expectations)
@@ -33,7 +35,8 @@ after every release.
 
 ## Git rules
 
-- Work and push **only** on branch `ccr-20343ee0-s6lunp`, using `git push -u origin ccr-20343ee0-s6lunp`.
+- Work and push **only** on the branch this chat is given. one.22 was `ccr-20343ee0-s6lunp`; one.23 is
+  `ccr-4de0b556-9g3o47`, using `git push -u origin ccr-4de0b556-9g3o47`.
 - **No pull requests** unless the user asks.
 - End every commit message with:
   ```
@@ -75,7 +78,19 @@ cd rex-one
 cp out/REX-One-1.21.11.jar /tmp/base.jar && ./build.sh /tmp/base.jar
 ```
 
-**Running a test:**
+**Running the Overlord and pathfinder tests:**
+
+```sh
+GAME_DIR=/tmp/o1 test/runtime/run-overlord.sh out/REX-One-1.21.11.jar -Drexoverlord.trace=true
+cat /tmp/o1/rexoverlord-results.txt          # nine progression scenarios
+GAME_DIR=/tmp/p1 test/runtime/run-path.sh out/REX-One-1.21.11.jar -Drexpath.trace=true
+cat /tmp/p1/rexpath-results.txt              # six pathfinder scenarios
+```
+
+Both take a few minutes and quit by themselves. `-D...scenarios=a,b` runs a subset. Never run more
+than two games at once.
+
+**Running an Auto Build test:**
 
 ```sh
 python3 test/make_builds.py /tmp/builds              # or make_house.py / make_farms.py
@@ -146,6 +161,7 @@ cat .runtime/game/rexsmoke-results.txt      # or $GAME_DIR/rexsmoke-results.txt
 | one.19 | No stutter when placing, correct HUD materials list, faster Fast preset |
 | one.20 | Start always starts (missing materials set aside), 3 new farms, grown plants count as built, doors, more natural movement |
 | one.21 | **Server preset** + lag-proofing: never clicks unconfirmed blocks, repairs wrong blocks, waits after setbacks, slows down when the server refuses blocks, breaks out when walled in |
+| one.23 | **REX Pathfinder**: our own A* (`src/rex/path/`), budgeted and incremental, best-so-far segments, route drawn in the world, stops while any screen is open, `.goto`; **Overlord rewritten** without reflection or Baritone (it died after 20 s on `GoalNear` before), nine in-game scenarios pass |
 | one.22 | **Security audit** (SECURITY.md, nothing malicious, Spotify HUD's PowerShell removed by `tools/Harden.java`); **new module menu** `OneMenuScreen` (categories, favourites, search, cards, settings panel); 7 new test builds (6 added to the library) and the fixes they found (pillaring, walled-in holes, watchdog, search budget) |
 
 ## Key code

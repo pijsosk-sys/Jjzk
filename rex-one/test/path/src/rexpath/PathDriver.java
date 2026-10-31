@@ -174,6 +174,9 @@ public final class PathDriver implements ClientModInitializer {
                System.out.println(String.format(Locale.ROOT, "[path-trace] %-8s %6.1fs %s", scenario.name(), this.ticks / 20.0, state));
             }
             this.last = state;
+            if (this.ticks == 60) {
+               this.shot(client, scenario.name() + "-walking"); // a picture of the route being walked
+            }
             class_2338 feet = client.field_1724.method_24515();
             double distance = Math.sqrt(feet.method_10262(new class_2338(scenario.goal()[0], scenario.goal()[1], scenario.goal()[2])));
             this.closest = Math.min(this.closest, distance);

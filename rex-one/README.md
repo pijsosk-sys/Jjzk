@@ -142,6 +142,10 @@ the step it is on is brighter and thicker, and the goal gets a full cube. Colour
 through-walls are settings. The drawing goes through the client's one world renderer, so it costs
 nothing extra in pipelines.
 
+![The route, drawn](screenshots/pathfinder-route.png)
+
+![The goal, at the top of a staircase](screenshots/pathfinder-goal.png)
+
 **Opening a screen stops it.** Any screen - chat, inventory, a chest, the menu - hands control
 straight back to you: no steering, no digging, nothing sent. Closing it carries on from the same
 cell. That is the `Pause On Screen` setting, on by default.
@@ -170,7 +174,17 @@ size and colours.
 **Tested in the real game** (`test/runtime/run-path.sh`, `test/path/src/rexpath/PathDriver.java`),
 each shape built out of commands and each run checked by where the player actually ended up:
 
-PATH_RESULTS_HERE
+| Scenario | What it has to do | Result |
+| --- | --- | --- |
+| `flat` | 60 blocks across open ground | pass, 10.4s |
+| `wall` | round an obsidian wall it is not allowed to break | pass, 13.4s |
+| `break` | out of a sealed stone box, through a block | pass, 4.6s |
+| `climb` | eight single steps up a staircase | pass, 9.7s |
+| `drop` | off a cliff onto lower ground | pass, 8.6s |
+| `screen` | a screen opens halfway: it must not move while it is open, and must still arrive | pass, 16.2s, moved 0 blocks while open |
+
+Six for six, in a real 1.21.11 client. Sixty blocks of open ground take ten seconds, which is
+sprinting pace, and the search for it costs a few thousand cells.
 
 ## New in one.22: safety audit, a new menu, and seven new test builds
 

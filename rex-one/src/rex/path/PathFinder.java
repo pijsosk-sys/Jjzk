@@ -40,6 +40,12 @@ public final class PathFinder {
    private static final int[][] CARDINALS = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
    private static final int[][] DIAGONALS = {{1, 1}, {1, -1}, {-1, 1}, {-1, -1}};
    private static final double DIAGONAL_COST = 1.4142135623730951;
+   /**
+    * Ties broken toward the cell that is further along. On open ground thousands of cells share a
+    * score to the last decimal, and without this the search spreads out over the plain instead of
+    * pushing on.
+    */
+   private static final double DEPTH_BONUS = 1.0E-4;
 
    private Terrain terrain;
    private Goal goal;
@@ -292,7 +298,7 @@ public final class PathFinder {
          this.cost[existing] = candidate;
          this.parent[existing] = from;
          this.move[existing] = kind;
-         this.estimate[existing] = candidate + this.goal.heuristic(x, y, z) * this.options.weight();
+         this.estimate[existing] = candidate * (1.0 - DEPTH_BONUS) + this.goal.heuristic(x, y, z) * this.options.weight();
          this.push(existing);
          return;
       }
@@ -300,7 +306,7 @@ public final class PathFinder {
       this.cost[node] = candidate;
       this.parent[node] = from;
       this.move[node] = kind;
-      this.estimate[node] = candidate + this.goal.heuristic(x, y, z) * this.options.weight();
+      this.estimate[node] = candidate * (1.0 - DEPTH_BONUS) + this.goal.heuristic(x, y, z) * this.options.weight();
       this.push(node);
    }
 

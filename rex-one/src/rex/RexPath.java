@@ -62,9 +62,10 @@ public final class RexPath extends Module {
    public final BooleanSetting showPath = new BooleanSetting("Show Path", true);
    public final BooleanSetting throughWalls = new BooleanSetting("Through Walls", true);
    public final BooleanSetting hud = new BooleanSetting("HUD", true);
-   public final EnumSetting<HudAnchor> anchor = new EnumSetting<>("Anchor", HudAnchor.BOTTOM_LEFT, HudAnchor.class);
+   // Overlord's panel sits top left and the build HUD top right, so this one goes bottom right.
+   public final EnumSetting<HudAnchor> anchor = new EnumSetting<>("Anchor", HudAnchor.BOTTOM_RIGHT, HudAnchor.class);
    public final NumberSetting offsetX = new NumberSetting("X", 0.0, 400.0, 6.0, 1.0);
-   public final NumberSetting offsetY = new NumberSetting("Y", 0.0, 400.0, 6.0, 1.0);
+   public final NumberSetting offsetY = new NumberSetting("Y", 0.0, 400.0, 34.0, 1.0);
    public final NumberSetting width = new NumberSetting("Width", 120.0, 400.0, 230.0, 2.0);
    public final ColorSetting pathColor = new ColorSetting("Path", 120, 200, 255, 190);
    public final ColorSetting nextColor = new ColorSetting("Next Step", 255, 235, 120, 230);
