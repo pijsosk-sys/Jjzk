@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "rexoverlordtest",
+  "version": "1.0.0",
+  "name": "REX One Overlord test",
+  "environment": "client",
+  "entrypoints": {
+    "client": ["rexoverlord.OverlordDriver"]
+  },
+  "depends": {
+    "fabric-lifecycle-events-v1": "*",
+    "krypton": "*"
+  }
+}

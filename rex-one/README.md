@@ -1,6 +1,6 @@
-# REX One: faster Auto Build, climbing, water, a new builder screen and a shader
+# REX One: Overlord that plays, faster Auto Build, a new builder screen and a shader
 
-Sources and tooling for REX One `1.0.0-one.22` (Minecraft 1.21.11, Fabric). The build takes the
+Sources and tooling for REX One `1.0.0-one.23` (Minecraft 1.21.11, Fabric). The build takes the
 released `1.0.0-one.13` jar, replaces or adds these classes, and adds the shader files:
 
 | Class | What changed |
@@ -16,9 +16,89 @@ released `1.0.0-one.13` jar, replaces or adds these classes, and adds the shader
 | `rex.BuildMemory` (new) | remembers the loaded build per server |
 | `rex.SchematicGhost` (new module) | ghost on/off (bindable) and layer view |
 | `rex.TuffShader` (new module) | the Tuff Shader |
+| `rex.RexOverlord`, `rex.OverlordInput`, `rex.overlord.*` (new) | the survival progression, rewritten without reflection or Baritone |
 
 Classes that shipped only as bytecode were decompiled first, and each was committed unchanged
 before being edited, so `git log -p` shows exactly what changed.
+
+## New in one.23: Overlord reworked, and it actually plays now
+
+**What was wrong.** Overlord is the survival-progression module: it is supposed to take a bare
+player to enchanted netherite armour, a sword and a pickaxe on its own. It did not. Run in the
+real game it got through wood and the first stone tools in about twenty seconds and then stopped
+dead with
+
+```
+Overlord CRAFT_STONE: Stopped: baritone.api.pathing.goals.GoalNear
+```
+
+Every move it made went through Java reflection by name - `Access.make("baritone.api.pathing.goals.GoalNear", x, y, z, 2)` - and Baritone's `GoalNear`
+does not take four integers. Nothing in the build could have caught that: a wrong name or a wrong
+argument list in a reflective call compiles happily and only shows up as a dead module in game.
+The old release note even said so: *"A Minecraft/Baritone runtime was not available, so the
+complete zero-to-netherite route and GUI/portal interactions remain untested in game."*
+
+**What it is now.** The whole engine was rewritten as ordinary typed source under
+`src/rex/overlord/`, compiled against the Minecraft jar like the rest of the client, with no
+reflection into the game or into Baritone anywhere. Walking is the Auto Build navigator
+(`BuilderNavigator`/`BuilderPathfinder`), the one the builder has been using and that the test
+harness has been exercising for six releases. Mining is new (`rex.overlord.Mine`): anything in a
+loaded chunk is walked to and broken, and when nothing is in sight it cuts its own staircase down
+to the right layer and strip-mines along it, scanning as it goes. Baritone can stay installed; it
+is simply not used, so a Baritone that moves on, or that is missing, no longer matters.
+
+| Class | What it does |
+| --- | --- |
+| `rex.overlord.Overlord` | the progression: reads the inventory every tick and takes one step toward the first thing missing |
+| `rex.overlord.Stage` | the seventeen stages, in English, for the HUD and chat |
+| `rex.overlord.Recipes` | the recipe table as grid cells, 2x2 versus 3x3, and the completion gate |
+| `rex.overlord.Work` | clicks into open windows, one per tick, with the expected result checked |
+| `rex.overlord.Mine` | ore scanning, staircases, strip mining |
+| `rex.overlord.Scan` | budgeted block search over loaded chunks, nearest 24 matches |
+| `rex.overlord.Dig` | breaking one block, with the right pickaxe |
+| `rex.overlord.Reach` | face picking by real ray cast, aiming, right-clicking |
+| `rex.overlord.Sites` | workstations, the nether portal, the enchanting ring |
+| `rex.overlord.Fight` | hitting back, and eating before the bar hurts |
+| `rex.overlord.Stock`, `Ids` | what is carried, and registry names as plain strings |
+| `rex.RexOverlord` | the module: settings, HUD, `.overlord start / stop / status / hud` |
+
+**Bugs the rewrite turned up, each found by running it:**
+- Faces were never reachable. The ray cast aimed at a point a hair *outside* the block face, so
+  every ray stopped short and missed; no block had a clickable face and nothing was ever broken.
+- Breaking used the wrong call. `method_2910` only *starts* a break; the one vanilla makes every
+  tick while the attack key is held is `method_2902`. Calling the first one every tick restarted
+  the break for ever.
+- Ore was looked for in the wrong place. The search box was centred on the target layer, not on
+  the player, so a vein two blocks from the feet went unseen while the tunnel set off for y=16.
+- It never picked anything up. Blocks are broken from three or four blocks away, which is outside
+  the pickup radius, so a whole vein could be mined into an empty inventory. Drops are now walked
+  over.
+- It tried to climb. A staircase cut upward has nothing to stand on; it would head for y=16
+  through open air and stand there. It only ever digs down now.
+- It argued with itself. Where the navigator thought it had arrived but no face of the block
+  could be seen, the two of them took turns for ever. The standing spot is given up instead.
+- It tried to place blocks inside itself. The ring of bookshelves stopped on whichever one the
+  walk had parked on; it now steps aside first.
+- Pickaxe tiers were wrong: a wooden pickaxe counted as enough for iron ore.
+
+**Chat and HUD.** `.overlord start | stop | status | hud` (also `#overlord`, `.rex overlord`).
+`status` reports the stage, what it is doing and how many blocks it has broken. The HUD is a small
+panel with the same three lines, anchored and coloured like the other REX panels.
+
+**Tested in the real game.** A new harness runs Overlord in a headless 1.21.11 client, one
+scenario at a time, and checks the inventory for the thing it was asked for:
+
+```sh
+GAME_DIR=/tmp/g1 test/runtime/run-overlord.sh out/REX-One-1.21.11.jar \
+  -Drexoverlord.scenarios=tools,mine,smelt -Drexoverlord.trace=true
+cat /tmp/g1/rexoverlord-results.txt
+```
+
+RESULTS_TABLE_HERE
+
+The long route past the portal - the nether, ancient debris, the upgrade template in a bastion
+chest - is not reachable in a flat test world, so those stages are still only exercised by the
+stages either side of them. That is the honest limit of what has been shown to work.
 
 ## New in one.22: safety audit, a new menu, and seven new test builds
 

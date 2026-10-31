@@ -4,10 +4,28 @@ Everything is on branch `ccr-20343ee0-s6lunp` of `pijsosk-sys/Jjzk`, in `rex-one
 new chat, tell it: *"Read rex-one/HANDOFF.md, rex-one/README.md and
 rex-one/HOW-I-RAN-MINECRAFT.md, then continue."*
 
-## What exists now (version 1.0.0-one.22)
+## What exists now (version 1.0.0-one.23)
 
 **Jar:** `rex-one/out/REX-One-1.21.11.jar`. Drop it into `mods/` in place of the old jar; it
-needs Fabric Loader 0.18.4+, Fabric API and Baritone, as before.
+needs Fabric Loader 0.18.4+ and Fabric API. Baritone is bundled inside the jar and nothing in
+one.23 needs it any more, so a missing or changed Baritone no longer breaks anything.
+
+**Overlord (one.23, rewritten):** `src/rex/overlord/` plus `src/rex/RexOverlord.java`.
+- The shipped module did not work: in game it stopped after about twenty seconds with
+  `Stopped: baritone.api.pathing.goals.GoalNear`, because every move went through reflection by
+  name and `GoalNear` does not take four ints. The whole engine is now typed source compiled
+  against the Minecraft jar, with no reflection into the game or into Baritone.
+- Walking is `BuilderNavigator`; mining is the new `rex.overlord.Mine` (scan loaded chunks, walk
+  to ore, otherwise cut a staircase down and strip-mine). Drops are walked over and collected.
+- `Overlord` is the ladder (inventory -> first missing thing -> one step), `Work` the window
+  clicks, `Sites` the workstations/portal/enchanting ring, `Fight` defence and eating, `Dig`,
+  `Reach`, `Scan`, `Stock`, `Ids`, `Recipes`, `Stage` the rest.
+- Chat: `.overlord start | stop | status | hud`. HUD: stage, what it is doing, blocks broken.
+- Tested in the real game with a new harness, `test/runtime/run-overlord.sh` plus
+  `test/overlord/src/rexoverlord/OverlordDriver.java`: nine scenarios, each checking the
+  inventory for what it asked for. Results in README.
+- Not reachable in a flat test world, so still unproven in game: the nether, ancient debris and
+  the bastion upgrade template.
 
 **Auto Build:**
 - **one.22:**

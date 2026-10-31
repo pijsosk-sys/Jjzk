@@ -5,7 +5,7 @@
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 BASE=${1:?usage: build.sh <base REX-One jar>}
-VERSION=1.0.0-one.22
+VERSION=1.0.0-one.23
 CACHE="$HERE/.cache"
 WORK="${REX_WORK:-$HERE/.work}"
 OUT="${REX_OUT:-$HERE/out/REX-One-1.21.11.jar}"
@@ -34,13 +34,28 @@ def owned(name):
     stem = name[:-6].split('$')[0]
     return stem in replaced
 
+# Entries this build removes outright rather than replaces. The old Overlord was a reflection
+# bridge into Baritone under com/roothack/overlord/; the rework is src/rex/overlord/ and the old
+# engine, its shipped copy of its own sources and its readme go out with it.
+DROP_PREFIXES = ('com/roothack/overlord/', 'overlord-source/')
+DROP_EXACT = {'OVERLORD-1.1-README.txt',
+              'rex-source/rex/RexOverlord.java', 'rex-source/rex/OverlordInput.java',
+              'rex-source/tests44/command/rex/RexOverlord.java', 'rex-source/PatchOverlord.java'}
+
+def dropped_outright(name):
+    return name.startswith(DROP_PREFIXES) or name in DROP_EXACT
+
 with zipfile.ZipFile(base) as zin, zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as zout:
     dropped = 0
+    removed = 0
     shipped = {'one-client-source/src/' + p.relative_to(src).as_posix() for p in src.rglob('*.java')}
     for item in zin.infolist():
         name = item.filename
         if name.endswith('.class') and owned(name):
             dropped += 1
+            continue
+        if dropped_outright(name):
+            removed += 1
             continue
         if name in shipped or name.startswith('assets/rex/post_effect/') or name.startswith('assets/rex/shaders/post/'):
             continue
@@ -87,7 +102,7 @@ with zipfile.ZipFile(base) as zin, zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATE
         info = zipfile.ZipInfo('one-client-source/src/' + path.relative_to(src).as_posix(), date_time=(2026, 10, 28, 0, 0, 0))
         info.compress_type = zipfile.ZIP_DEFLATED
         zout.writestr(info, path.read_bytes())
-print(f"replaced {dropped} classes with {len(built)} built ones -> {out}")
+print(f"replaced {dropped} classes with {len(built)} built ones, removed {removed} stale entries -> {out}")
 PY
 
 javac -nowarn -cp "$CACHE/asm.jar:$CACHE/asm-tree.jar" -d "$WORK/tools" "$HERE/tools/LinkCheck.java" "$HERE/tools/FixMixinAt.java" "$HERE/tools/Harden.java"
