@@ -974,8 +974,12 @@ def close_signin_browser():
 SIGNIN_FILE=ROOT/'signin-browser'
 BODDY_CTL='/opt/boddy/boddy-ctl'
 def signin_browser():
+ # The phone's own browser by default. Firefox in Boddy costs about three more Linux processes, and a
+ # session already sits near Android's limit of 32 for the app (a real one was at 29 with Studio alone),
+ # where going over makes Android close Boddy and Studio with it. The phone's browser costs none, and
+ # open_in_browser() still falls back to Firefox when the phone cannot be reached.
  b=os.getenv('BODDY_STUDIO_SIGNIN') or (SIGNIN_FILE.read_text().strip() if SIGNIN_FILE.exists() else '')
- return b if b in ('phone','firefox') else 'firefox'
+ return b if b in ('phone','firefox') else 'phone'
 def open_on_phone(url):
  """Opens the link in the phone's browser through the Boddy app; whether that worked."""
  if not os.access(BODDY_CTL,os.X_OK):return False

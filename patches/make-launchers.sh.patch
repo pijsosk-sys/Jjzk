@@ -1,0 +1,10 @@
+--- a/assets/boddy/make-launchers.sh
++++ b/assets/boddy/make-launchers.sh
+@@ -20,6 +20,7 @@
+ ln -sf /opt/boddy/mcbot /usr/local/bin/mcbot
+ ln -sf /opt/boddy/studio /usr/local/bin/roblox-studio
+ ln -sf /opt/boddy/roblox-studio-mcp /usr/local/bin/roblox-studio-mcp
++ln -sf /opt/boddy/roblox-publish /usr/local/bin/roblox-publish
+ 
+ launcher() { # id name exec icon
+     cat > "$APPS/boddy-$1.desktop" <<DESKTOP

@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+"""Publishes a place file to Roblox from Boddy, without Studio being signed in.
+
+Roblox Studio's own sign-in needs WebView2, which does not run under Wine, and the browser sign-in
+costs about three Linux processes Android may not have left. Open Cloud needs none of that: an API
+key made on the Creator Dashboard (in the phone's own browser) and an HTTPS request.
+
+  roblox-publish --setup                 ask for the key, the universe and the place, and save them
+  roblox-publish place.rbxl              publish it live
+  roblox-publish place.rbxl --save-only  upload it as a saved version (Studio sees it, players do not)
+  roblox-publish --check                 say whether the saved key still works
+
+The endpoint is POST apis.roblox.com/universes/v1/{universe}/places/{place}/versions?versionType=...
+(checked against the live API: that path answers 401 for a bad key, while the cloud/v2 path some
+documentation gives answers 404).
+
+The key is kept in ~/.config/roblox-publish/credentials, mode 0600, and never passed on the command
+line, where every other process on the system could read it out of /proc.
+"""
+import argparse, json, os, stat, sys, urllib.error, urllib.request
+from pathlib import Path
+
+API = 'https://apis.roblox.com/universes/v1/%s/places/%s/versions?versionType=%s'
+CONFIG = Path(os.getenv('XDG_CONFIG_HOME') or Path.home() / '.config') / 'roblox-publish'
+CREDS = CONFIG / 'credentials'
+TYPES = {'.rbxl': 'application/octet-stream', '.rbxlx': 'application/xml'}
+
+
+def load():
+    if not CREDS.exists():
+        sys.exit('No API key saved yet. Run:  roblox-publish --setup')
+    try:
+        saved = json.loads(CREDS.read_text())
+    except ValueError:
+        sys.exit('%s is not readable as JSON. Run --setup again.' % CREDS)
+    for key in ('api_key', 'universe_id', 'place_id'):
+        if not saved.get(key):
+            sys.exit('%s has no %s. Run --setup again.' % (CREDS, key))
+    return saved
+
+
+def save(api_key, universe_id, place_id):
+    CONFIG.mkdir(parents=True, exist_ok=True)
+    os.chmod(CONFIG, stat.S_IRWXU)
+    # Written with the mode set before any content, so the key is never briefly world-readable.
+    fd = os.open(CREDS, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, stat.S_IRUSR | stat.S_IWUSR)
+    with os.fdopen(fd, 'w') as f:
+        json.dump({'api_key': api_key, 'universe_id': universe_id, 'place_id': place_id}, f, indent=1)
+    print('Saved to %s (readable only by you).' % CREDS)
+
+
+def post(saved, data, content_type, version_type):
+    url = API % (saved['universe_id'], saved['place_id'], version_type)
+    req = urllib.request.Request(url, data, {'x-api-key': saved['api_key'], 'Content-Type': content_type},
+                                 method='POST')
+    try:
+        with urllib.request.urlopen(req, timeout=300) as r:
+            return r.status, r.read().decode('utf-8', 'replace')
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode('utf-8', 'replace')
+
+
+def explain(code, body):
+    if code == 401:
+        return ('Roblox rejected the API key. Check it was copied whole, and that it has not expired '
+                '(keys can be given an expiry when created).')
+    if code == 403:
+        return ('The key is valid but not allowed to do this. On the Creator Dashboard, open the key and '
+                'add the "universe-places" API system, give it the Write operation, and add this experience '
+                'under Access Permissions. An IP restriction on the key will also cause this: a phone\'s '
+                'address changes, so leave it as 0.0.0.0/0 unless you know otherwise.')
+    if code == 404:
+        return 'No such universe or place for this key. Check the Universe ID and the Place ID.'
+    if code == 400:
+        return 'Roblox did not accept the file. Check it is a place file saved by Studio (File > Save to File).'
+    if code == 429:
+        return 'Too many publishes for now. Wait a little and try again.'
+    return 'Roblox answered %d: %s' % (code, body[:400])
+
+
+def main():
+    p = argparse.ArgumentParser(description='Publish a place file to Roblox without signing Studio in.')
+    p.add_argument('file', nargs='?', help='the .rbxl or .rbxlx saved from Studio')
+    p.add_argument('--setup', action='store_true', help='save the API key, Universe ID and Place ID')
+    p.add_argument('--check', action='store_true', help='check the saved key still works')
+    p.add_argument('--save-only', action='store_true',
+                   help='upload as a saved version: Studio sees it, players keep the live one')
+    args = p.parse_args()
+
+    if args.setup:
+        print('Make a key at create.roblox.com/dashboard/credentials (open it in the phone\'s browser).')
+        print('Give it the universe-places system, the Write operation, and add your experience.')
+        print('The Universe ID and Place ID are on the experience\'s page on the Creator Dashboard.\n')
+        api_key = input('API key: ').strip()
+        universe_id = input('Universe ID: ').strip()
+        place_id = input('Place ID: ').strip()
+        if not (api_key and universe_id.isdigit() and place_id.isdigit()):
+            sys.exit('A key, and numeric Universe and Place IDs, are all needed.')
+        save(api_key, universe_id, place_id)
+        return 0
+
+    saved = load()
+
+    if args.check:
+        # An empty body is refused for its content, but only after the key and the ids are checked,
+        # so the answer still says whether those are right without publishing anything.
+        code, body = post(saved, b'', 'application/octet-stream', 'Saved')
+        if code in (200, 400):
+            print('The key works for universe %s, place %s.' % (saved['universe_id'], saved['place_id']))
+            return 0
+        print(explain(code, body), file=sys.stderr)
+        return 1
+
+    if not args.file:
+        p.print_help()
+        return 2
+    path = Path(args.file)
+    if not path.is_file():
+        sys.exit('No such file: %s' % path)
+    content_type = TYPES.get(path.suffix.lower())
+    if not content_type:
+        sys.exit('Publish a .rbxl or .rbxlx file saved from Studio (File > Save to File), not %s' % path.suffix)
+    data = path.read_bytes()
+    if not data:
+        sys.exit('%s is empty.' % path)
+
+    version_type = 'Saved' if args.save_only else 'Published'
+    print('Uploading %s (%.1f MB) as a %s version of place %s...'
+          % (path.name, len(data) / 1e6, version_type.lower(), saved['place_id']))
+    code, body = post(saved, data, content_type, version_type)
+    if code == 200:
+        try:
+            number = json.loads(body).get('versionNumber')
+        except ValueError:
+            number = None
+        print('Done. Version %s is now %s.' % (number if number is not None else '?',
+                                               'saved' if args.save_only else 'live'))
+        return 0
+    print(explain(code, body), file=sys.stderr)
+    return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())

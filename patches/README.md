@@ -8,16 +8,22 @@ against the copy shipped in `Boddy-studio-fix.apk`:
 3. `studio-dead-fflags.patch` — drop the FFlags Studio has no variable for ([below](#3-dead-fflags))
 4. `studio-build-preset.patch` — a Build preset for when Claude is the one building ([below](#4-studio-mode-claude-building-in-studio))
 5. `studio-apt-expired-lists.patch` — recover when apt refuses a package list for its date ([below](#5-apt-refusing-a-signed-list-for-its-date))
+6. `studio-signin-default.patch` — sign in through the phone's browser by default ([below](#6-publishing-without-signing-studio-in))
 
 and three outside the launcher, for Studio Mode:
 
 - `roblox-studio-mcp.patch` — five tools that each take a whole job in one round trip
 - `studio-app.sh.patch` — Build in the performance-preset menu
 - `studio-mode.sh.patch` — the agent instructions rewritten for the new tools
+- `make-launchers.sh.patch` — `roblox-publish` on PATH
+
+and one new file:
+
+- `roblox-publish` — upload a place to Roblox with no Studio sign-in ([below](#6-publishing-without-signing-studio-in))
 
 Each patch has its file beside it as a drop-in (`patches/studio`,
 `patches/roblox-studio-mcp`, `patches/studio-app.sh`, `patches/studio-mode.sh`).
-The five launcher patches apply in order and reproduce `patches/studio` byte for
+The six launcher patches apply in order and reproduce `patches/studio` byte for
 byte; each of the other three reproduces its own drop-in.
 
 ---
@@ -405,43 +411,121 @@ exercised with apt stubbed out, not reproduced end to end.
 
 ---
 
+# 6. Publishing without signing Studio in
+
+## The problem
+
+Studio runs, draws and edits, but it is signed out, and a Studio that cannot sign in cannot publish.
+Its built-in login needs WebView2, which does not run under Wine. The launcher's way around that is
+"Login via Browser", and on the 2026-11-01 run it was never reached:
+
+```
+=== sign-in steps since this launch ===
+none: no sign-in page was opened and no sign-in came back from a browser
+```
+
+For someone whose only machine is the phone, an offline Studio is an editor with no way out.
+
+## Two changes
+
+### Sign-in defaults to the phone's browser
+
+`signin_browser()` returned `firefox` unless told otherwise. Firefox inside Boddy costs about three
+more Linux processes, and the session monitor on that same run showed **29 of Android's 32** already
+in use with Studio alone — `open_in_firefox()` even stops to warn about it. Going over makes Android
+close Boddy, Studio included.
+
+The phone's own browser costs no Linux processes: the link goes out through `boddy-ctl phone-open`,
+Roblox sends the browser to a `roblox-studio-auth:` link, and the Boddy app's `StudioSignInActivity`
+hands it back. That is now the default. `open_in_browser()` still falls back to Firefox when the
+phone cannot be reached, so nothing is lost where it already worked.
+
+### `roblox-publish`: upload with no sign-in at all
+
+Open Cloud needs no Studio session — an API key and an HTTPS request.
+
+```
+roblox-publish --setup                 save the key, Universe ID and Place ID
+roblox-publish place.rbxl              publish it live
+roblox-publish place.rbxl --save-only  a saved version: Studio sees it, players keep the live one
+roblox-publish --check                 is the saved key still good
+```
+
+So the loop becomes: build in Studio signed out → **File → Save to File** → `roblox-publish` → live.
+Claude can run it too, through Studio Mode.
+
+**Which endpoint.** Documentation disagrees with itself here: the usage guides give
+`apis.roblox.com/universes/v1/{universe}/places/{place}/versions`, while a `llms.txt` page gives
+`apis.roblox.com/cloud/v2/...`. Settled by asking the live API with a deliberately bad key — v1
+answers `401 Invalid API Key`, so the route exists and only the key was wrong, and cloud/v2 answers
+`404`. The v1 path is the one used.
+
+**The key** is read from a prompt and written to `~/.config/roblox-publish/credentials` with mode
+`0600` inside a `0700` directory, the mode set at `os.open` time so it is never briefly readable by
+others. It is never passed as a command-line argument, where any process on the system could read it
+out of `/proc`.
+
+Each HTTP status gets the answer that actually fixes it: `403` names the `universe-places` system,
+the Write operation, the per-experience Access Permission and the IP restriction that a phone's
+changing address trips; `401` covers a truncated or expired key; `404` the wrong IDs.
+
+**What still needs the website once:** creating the experience, and making the key. Both work in the
+phone's own browser at `create.roblox.com`. After that, publishing never touches it again.
+
+## Verified
+
+The two endpoints probed live (401 vs 404); `--setup` writing `0600` inside `0700`; `--check`,
+a real upload attempt, an empty file, a wrong extension and a missing file each giving the right
+message and exit code; the default sign-in browser now `phone`, `BODDY_STUDIO_SIGNIN` still
+overriding it, and an unknown value falling back rather than breaking.
+
+## Not verified
+
+No publish with a real key — I have no Roblox account or experience, so every call here was rejected
+at the key. The success path (`200`, reading `versionNumber`) is written to the documented response
+shape and has not been seen. The phone-browser sign-in default is logic I tested, not a sign-in I
+completed.
+
+---
+
 # What a real launch confirmed
 
-From the 2026-11-01 log on an Adreno 750 phone, the GPU patch works as designed:
+From the 2026-11-01 log and screenshot on an Adreno 750 phone:
 
 ```
 GPU: Turnip Adreno (TM) 750 (Turnip 26.3.0-devel-20260824)
 Studio setup 1 of 8: DXVK on the phone's GPU (Adreno, experimental), fast emulation, AVX hidden
 Studio settings: GPU (30 fps, 3D view drawn at 720 thousand pixels; set a preset by hand to override)
-Studio graphics: DXVK on the phone's GPU (Adreno, experimental)
 ```
 
 `/dev/kgsl-3d0` opened, Turnip bound and `vulkaninfo` named the real device; the ladder started at
-step 1 of 8 (the GPU, which did not exist in the ladder before); and `GPU_FLAGS` applied instead of
-Potato's 15 fps / 90 thousand pixels. Wine 11.0 under Box64.
+step 1 of 8 (the GPU, which was not in the ladder before); `GPU_FLAGS` applied instead of Potato's
+15 fps / 90 thousand pixels; Wine 11.0 under Box64. The screenshot shows Studio fully drawn —
+viewport, Explorer, Properties, Toolbox — so the GPU path reaches a working editor.
 
-Still unknown from that log: the frame rate once the editor is up, because the launch stalled in apt
-before Studio drew anything, and nothing about sign-in (`no sign-in page was opened`).
+Still unmeasured: the frame rate in use. Still unseen: a completed sign-in, and a publish.
 
-Also worth noting from the session monitor: 29 of Android's 32 processes were in use, with three
-`bash`, three `studio-app.sh` and three `sleep` among them. Android 12+ stops the app above 32, so
-that is close. Turning on Developer options → Disable child process restrictions removes the ceiling.
+Also from the session monitor: 29 of Android's 32 processes in use, with three `bash`, three
+`studio-app.sh` and three `sleep` among them. Android 12+ stops the app above 32. Developer options
+→ Disable child process restrictions removes the ceiling.
 
 ---
 
 # Built APK
 
 `Boddy-studio-fix-patched.apk` — the uploaded `Boddy-studio-fix.apk` with every patch applied,
-md5 `ccfd98da791cc20fc4128081cd5745c6`. Four assets replaced: `studio`, `roblox-studio-mcp`,
-`studio-app.sh`, `studio-mode.sh`.
+md5 `406eed61f1814d6fd0ee8273e6e312f6`. 601 entries: five assets replaced (`studio`,
+`roblox-studio-mcp`, `studio-app.sh`, `studio-mode.sh`, `make-launchers.sh`) and one added
+(`roblox-publish`).
 
-Rebuilt from the APK, not from source. All 600 entries keep their original compression
+Rebuilt from the APK, not from source. All original entries keep their compression
 (`resources.arsc` stays STORED), the old `META-INF` signatures are stripped, then `zipalign -p -f 4`
 and `apksigner sign`. v2 and v3 verify.
 
 `Installer.copyScripts()` in `classes.dex` is called from `BoddyService.startDesktop`
 unconditionally: it lists the `boddy` asset directory and overwrites each file in `/opt/boddy/`, with
-no version gate. So reinstalling does replace all four on the next desktop start.
+no version gate — and because it lists the directory rather than a fixed set of names, the added
+`roblox-publish` is copied out too.
 
 **It is signed with a new key**, so Android will not install it over an existing Boddy. Uninstalling
 first wipes the app's data, which holds the Debian rootfs, the Wine prefix and any Studio projects.
