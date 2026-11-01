@@ -105,14 +105,19 @@ case "$choice" in
         rf=$HOME/.local/share/roblox-studio/renderer
         now=$(cat "$rf" 2>/dev/null); [ -n "$now" ] || now=Automatic
         mark() { [ "$now" = "$1" ] && echo "in use" || echo "$2"; }
-        pick=$(zenity --list --title="$TITLE" --width=520 --height=360 \
+        # The GPU mode needs Qualcomm's GPU device; say so up front on phones without it.
+        if [ -e /dev/kgsl-3d0 ]; then gpu='uses the phone'"'"'s Adreno GPU; falls back by itself'
+        else gpu='no Adreno GPU found here: would draw on the processor'; fi
+        pick=$(zenity --list --title="$TITLE" --width=560 --height=380 \
             --text="How Studio's DirectX 11 is drawn. Automatic tries the next one by itself when Studio crashes." \
             --column=Mode --column=Status \
             "Automatic" "$(mark Automatic 'recommended: changes by itself after a crash')" \
             "DXVK" "$(mark DXVK 'DirectX on Vulkan, most complete')" \
             "WineVulkan" "$(mark WineVulkan 'Wine'"'"'s DirectX on Vulkan')" \
-            "WineOpenGL" "$(mark WineOpenGL 'Wine'"'"'s DirectX on OpenGL')" 2>/dev/null) || exit 0
+            "WineOpenGL" "$(mark WineOpenGL 'Wine'"'"'s DirectX on OpenGL')" \
+            "GPU (Adreno, experimental)" "$(mark GPU "$gpu")" 2>/dev/null) || exit 0
         [ -n "$pick" ] || exit 0
+        [ "$pick" = "GPU (Adreno, experimental)" ] && pick=GPU
         if out=$("$STUDIO" --use-renderer="$pick" 2>&1); then
             zenity --info --width=400 --title="$TITLE" --text="Graphics mode set to $pick. Choose Open Studio to use it." 2>/dev/null
         else

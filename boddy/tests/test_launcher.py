@@ -8,6 +8,7 @@ from launcher_module import load
 STUDIO=sys.argv.pop(1) if len(sys.argv)>1 else os.path.join(os.path.dirname(__file__),'..','studio')
 os.environ['HOME']=tempfile.mkdtemp(prefix='boddy-test-home-')
 L=load(STUDIO)
+PATH=os.environ['PATH']
 
 class Launch:
  """try_every_way() with stand-ins: every launch 'runs' Studio, which exits with `codes` in turn."""
@@ -78,5 +79,54 @@ class Box64Speed(unittest.TestCase):
   try:L.main()
   finally:L.try_every_way=orig
   self.assertEqual(seen,[0]);self.assertTrue((L.ROOT/'.choice-v8').exists())
+
+TURNIP_ARCHIVE=os.getenv('BODDY_TEST_TURNIP')  # the downloaded Turnip archive, so no test needs the internet
+class GpuMode(unittest.TestCase):
+ def setUp(self):
+  reset();self.kgsl=os.path.join(tempfile.mkdtemp(),'kgsl-3d0');L.KGSL_DEVICE=self.kgsl
+  self.bin=tempfile.mkdtemp();os.environ['PATH']=self.bin+':'+PATH  # a stand-in vulkaninfo goes first
+  L.ensure_graphics=lambda *a:None
+  if TURNIP_ARCHIVE:
+   import shutil;L.CACHE.mkdir(parents=True,exist_ok=True);shutil.copyfile(TURNIP_ARCHIVE,L.CACHE/os.path.basename(L.TURNIP_URL))
+  L.RENDERER_FILE.write_text('GPU')
+ def vulkaninfo(self,script):
+  p=os.path.join(self.bin,'vulkaninfo');open(p,'w').write('#!/bin/sh\n'+script);os.chmod(p,0o755)
+ def test_no_kgsl_device_falls_back_to_lavapipe(self):
+  run=Launch([0]);run.go();env=run.envs[0]
+  self.assertEqual(run.setups[0]['renderer'],'GPU')  # the choice stays; this launch draws on the processor
+  self.assertNotIn('turnip',env.get('VK_ICD_FILENAMES',''));self.assertNotIn('MESA_VK_WSI_DEBUG',env)
+  self.assertIn('d3d11,dxgi,d3d10core=n,b',env['WINEDLLOVERRIDES'])
+  self.assertTrue(any('not using the GPU' in s and 'kgsl-3d0 is missing' in s for s in run.said),run.said)
+ @unittest.skipUnless(TURNIP_ARCHIVE,'set BODDY_TEST_TURNIP to the Turnip archive')
+ def test_gpu_used_when_device_and_driver_work(self):
+  open(self.kgsl,'w').close()
+  self.vulkaninfo('echo "	deviceName         = Turnip Adreno (TM) 740"')
+  run=Launch([0]);run.go();env=run.envs[0]
+  icd=env['VK_ICD_FILENAMES'];self.assertIn('turnip-'+L.TURNIP_VERSION,icd);self.assertEqual(env['VK_DRIVER_FILES'],icd)
+  lib=json.load(open(icd))['ICD']['library_path'];self.assertTrue(os.path.isfile(lib))
+  self.assertEqual(open(lib,'rb').read(4),b'\x7fELF')
+  self.assertEqual(env['MESA_VK_WSI_DEBUG'],'sw');self.assertIn('d3d11,dxgi,d3d10core=n,b',env['WINEDLLOVERRIDES'])
+  self.assertTrue(any(s.startswith('GPU: Turnip Adreno') for s in run.said))
+ @unittest.skipUnless(TURNIP_ARCHIVE,'set BODDY_TEST_TURNIP to the Turnip archive')
+ def test_driver_that_does_not_start_falls_back(self):
+  open(self.kgsl,'w').close()
+  self.vulkaninfo('echo "ERROR: vkCreateInstance failed: VK_ERROR_INCOMPATIBLE_DRIVER" >&2; exit 1')
+  run=Launch([0]);run.go();env=run.envs[0]
+  self.assertNotIn('turnip',env.get('VK_ICD_FILENAMES',''))
+  self.assertTrue(any('GPU driver did not start' in s and 'INCOMPATIBLE_DRIVER' in s for s in run.said),run.said)
+ @unittest.skipUnless(TURNIP_ARCHIVE,'set BODDY_TEST_TURNIP to the Turnip archive')
+ def test_crash_on_gpu_falls_back_without_using_up_a_setup(self):
+  open(self.kgsl,'w').close();self.vulkaninfo('echo "deviceName = Turnip Adreno (TM) 650"')
+  err=Launch([-11]).go()
+  self.assertIn("on the phone's GPU",err);self.assertIn('lavapipe',err)
+  self.assertTrue(L.GPU_FAILED_FILE.exists());self.assertFalse(L.SETUP_FILE.exists())  # still the first setup
+  run=Launch([0]);run.go();env=run.envs[0]
+  self.assertEqual(run.setups[0]['renderer'],'DXVK');self.assertEqual(run.setups[0]['speed'],'fast')
+  self.assertNotIn('turnip',env.get('VK_ICD_FILENAMES',''))
+  self.assertTrue(any('crashed on the GPU last time' in s for s in run.said))
+ def test_choosing_gpu_again_retries_it(self):
+  L.GPU_FAILED_FILE.write_text('x');sys.argv=['studio','--use-renderer=GPU'];L.main()
+  self.assertFalse(L.GPU_FAILED_FILE.exists());self.assertEqual(L.RENDERER_FILE.read_text(),'GPU')
+  self.assertEqual(L.current_setup()['renderer'],'GPU')
 
 if __name__=='__main__':unittest.main(verbosity=2)

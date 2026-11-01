@@ -299,7 +299,9 @@ def ensure_graphics(renderer=''):
  def installed(p):
   r=subprocess.run(['dpkg-query','-W','-f=${Status}',p],capture_output=True,text=True)
   return 'ok installed' in r.stdout
- wanted=GRAPHICS_PACKAGES+(('libvulkan1','mesa-vulkan-drivers') if renderer in ('DXVK','WineVulkan') else ())
+ wanted=GRAPHICS_PACKAGES+(('libvulkan1','mesa-vulkan-drivers') if renderer in ('DXVK','WineVulkan','GPU') else ())
+ # The GPU driver (Turnip) needs these next to what lavapipe does; vulkaninfo checks it loads before Studio starts.
+ if renderer=='GPU':wanted+=TURNIP_PACKAGES
  missing=[p for p in wanted if not installed(p)]
  if missing:say('Installing the 3D graphics libraries Studio draws with (one time): '+' '.join(missing));apt_install(*missing)
 def apt_install(*packages):
@@ -546,6 +548,8 @@ def diagnose():
  say('SVE in the kernel: %s (Mesa is told to use a generic CPU either way)'%('yes' if 'sve' in features else 'no'))
  say('Making changed file pages executable: '+execmod_probe())
  say('Wine version wanted: '+(wine_major() or 'newest'))
+ say('Adreno GPU for the GPU graphics mode: '+(kgsl_device() or '%s is there'%KGSL_DEVICE)+(
+  '; Studio crashed on it last time' if GPU_FAILED_FILE.exists() else ''))
  # Wine maps its DLLs from disk as executable. If Android refuses that, no Wine can ever work here.
  try:
   import mmap as _m
@@ -909,9 +913,12 @@ def main():
  if arg=='--diagnose':diagnose();return
  if arg.startswith('--use-renderer='):
   want=arg.split('=',1)[1]
+  GPU_FAILED_FILE.unlink(missing_ok=True)  # choosing a mode again means trying the GPU again too
   if want=='Automatic':RENDERER_FILE.unlink(missing_ok=True);say('Studio will now choose its graphics mode itself');return
   if want not in GRAPHICS:raise RuntimeError('Graphics mode must be Automatic or one of: '+', '.join(GRAPHICS))
-  RENDERER_FILE.write_text(want);say('Studio will now draw with '+GRAPHICS[want]);return
+  RENDERER_FILE.write_text(want);say('Studio will now draw with '+GRAPHICS[want])
+  if want=='GPU' and kgsl_device():say('Note: %s, so Studio will draw on the processor until it is there.'%kgsl_device())
+  return
  if arg.startswith('--use-windows='):
   want=arg.split('=',1)[1]
   if want not in ('desktop','separate'):raise RuntimeError('Window mode must be desktop or separate')
@@ -987,10 +994,17 @@ def try_every_way(place):
    say('%s did not work: %s'%(name,e));tried.append((name,str(e).strip().splitlines()[0] if str(e).strip() else type(e).__name__))
    continue
   save_combination(rt,major)
-  setup=current_setup();renderer=setup['renderer']
+  setup=current_setup();renderer=setup['renderer'];icd=None
+  if renderer=='GPU':
+   # The GPU mode needs the phone's Adreno GPU and a driver that reaches it; without them Studio draws on the
+   # processor (DXVK on lavapipe) this time, as it did before the GPU mode existed.
+   ensure_graphics(renderer);icd,why=gpu_driver()
+   if not icd:say('Warning: not using the GPU: %s. Drawing on the processor instead.'%why);setup['renderer']=renderer='DXVK'
+  elif (RENDERER_FILE.read_text().strip() if RENDERER_FILE.exists() else '')=='GPU':
+   say('Warning: Studio crashed on the GPU last time, so it draws on the processor. Choose the GPU graphics mode again to retry it.')
   say('Studio setup %d of %d: %s'%(setup['step']+1,len(SETUPS),describe_setup(setup)))
   studio=install_studio();ensure_graphics(renderer);write_studio_settings(studio,renderer);setup_browser_login(wine,env,prefix);tune_prefix(wine,env,prefix);install_mcp_plugin(prefix);args=[*wine,str(studio/'RobloxStudioBeta.exe')]
-  env=prepare_graphics(renderer,prefix,env)
+  env=prepare_graphics(renderer,prefix,env,icd)
   if place:args.append('Z:'+str(place).replace('/','\\'))
   say('Launching real Roblox Studio. A process start alone does not prove the editor works.')
   say('Studio\'s built-in login does not work here: choose "Login via Browser", sign in in the Firefox window that opens,')
@@ -1026,6 +1040,12 @@ def try_every_way(place):
   if dump:why='Studio crashed: %s in %s'%dump
   elif exception:why='Studio crashed: '+exception[len('Exception: '):]
   details='\n\nWhat failed:\n'+'\n'.join('  '+l[:200] for l in notable[:6]) if notable else ''
+  if renderer=='GPU':
+   # The GPU driver is the newest part, so it goes first; the emulation setup stays for the next start.
+   GPU_FAILED_FILE.write_text(why)
+   raise RuntimeError('Roblox Studio crashed after %d s on the phone\'s GPU: %s.\n\nNext time Boddy draws on the processor '
+    '(DXVK on lavapipe) instead, which is slower but works on more phones: choose Open Studio again. To try the GPU '
+    'again later, choose it in Graphics mode.%s'%(ran,why,details))
   if setup['step']+1<len(SETUPS):
    SETUP_FILE.write_text(str(setup['step']+1));nxt=current_setup()
    raise RuntimeError('Roblox Studio crashed after %d s: %s. It was using %s.\n\nNext time Boddy will use %s, '
@@ -1043,7 +1063,10 @@ def try_every_way(place):
 #  DXVK        Direct3D 11 to Vulkan (as Proton and Vinegar use), on Mesa's software Vulkan, lavapipe
 #  WineVulkan  Wine's own Direct3D (wined3d) on its Vulkan back end, also lavapipe
 #  WineOpenGL  wined3d on OpenGL and Mesa llvmpipe: Studio crashed in it creating its 3D view
-GRAPHICS={'DXVK':'DXVK (DirectX on Vulkan)','WineVulkan':"Wine's DirectX on Vulkan",'WineOpenGL':"Wine's DirectX on OpenGL"}
+#  GPU         DXVK on the phone's own GPU (Adreno) through Mesa's Turnip driver: experimental, only when chosen in
+#              the menu. Falls back to DXVK on lavapipe by itself when the GPU cannot be reached or Studio crashes.
+GRAPHICS={'DXVK':'DXVK (DirectX on Vulkan)','WineVulkan':"Wine's DirectX on Vulkan",'WineOpenGL':"Wine's DirectX on OpenGL",
+ 'GPU':"DXVK on the phone's GPU (Adreno, experimental)"}
 RENDERER_FILE=ROOT/'renderer'  # a graphics mode chosen in the menu; it replaces the ladder's
 # The ways to run Studio once Windows starts, fastest first; each crash moves the next start one step down.
 # The first is the fastest emulation; a crash there goes on to the same with memory barriers, then as before.
@@ -1058,6 +1081,8 @@ def current_setup():
  renderer,avx,speed=SETUPS[step]
  chosen=os.getenv('BODDY_STUDIO_RENDERER') or (RENDERER_FILE.read_text().strip() if RENDERER_FILE.exists() else '')
  if chosen in GRAPHICS:renderer=chosen
+ # The GPU mode goes back to drawing on the processor (DXVK on lavapipe) when Studio crashed on it last time.
+ if renderer=='GPU' and GPU_FAILED_FILE.exists():renderer='DXVK'
  return {'step':step,'renderer':renderer,'avx':avx,'speed':speed}
 SPEED_NAMES={'fast':'fast','strongmem':'fast with memory barriers','safe':'safe'}
 def describe_setup(s):
@@ -1091,6 +1116,56 @@ def install_dxvk():
     shutil.copyfileobj(src,out)
  shutil.rmtree(d,ignore_errors=True);stage.rename(d);archive.unlink(missing_ok=True)
  return d
+# The phone's own GPU. Debian's Turnip (in mesa-vulkan-drivers) only talks to the Linux msm driver; an Android
+# kernel offers the GPU as /dev/kgsl-3d0 (Qualcomm's KGSL driver), which needs a Turnip built with its KGSL
+# back end. This build is for Debian 13 ARM64 (glibc) containers on Android, from mesa-for-android-container.
+TURNIP_VERSION='26.3.0-devel-20260824'
+TURNIP_URL=('https://github.com/lfdevs/mesa-for-android-container/releases/download/turnip-%s/'
+ 'turnip_%s_debian_trixie_arm64.tar.gz')%(TURNIP_VERSION,TURNIP_VERSION)
+TURNIP_SIZE=3535602
+TURNIP_SHA256='53be97370271e3f651b58b200c044bd4dc331a9aefde40d81b2faef44c0e3b01'
+TURNIP_LIB='usr/lib/aarch64-linux-gnu/libvulkan_freedreno.so'
+TURNIP_PACKAGES=('libwayland-client0','libx11-xcb1','libxcb-randr0','libxcb-shm0','libxcb-xfixes0','libzstd1','libexpat1','vulkan-tools')
+KGSL_DEVICE='/dev/kgsl-3d0'
+GPU_FAILED_FILE=ROOT/'gpu-failed'  # Studio crashed in the GPU mode: the next starts draw on the processor
+def kgsl_device():
+ """Why the GPU cannot be used from here, or None when its device is there to use."""
+ if not os.path.exists(KGSL_DEVICE):return 'this phone has no Adreno GPU device for apps (%s is missing)'%KGSL_DEVICE
+ if not os.access(KGSL_DEVICE,os.R_OK|os.W_OK):return 'Android does not let Boddy open %s'%KGSL_DEVICE
+ return None
+def install_turnip():
+ """Unpacks Turnip into ROOT and writes its own Vulkan driver file (ICD) pointing at it, so it neither
+ replaces nor is mixed up with Debian's freedreno driver. Returns the ICD file."""
+ d=ROOT/('turnip-'+TURNIP_VERSION);icd=d/'turnip_icd.json'
+ if icd.is_file() and (d/'libvulkan_freedreno.so').is_file():return icd
+ say('Installing Turnip %s, the Vulkan driver for Adreno GPUs (one time)'%TURNIP_VERSION)
+ archive=CACHE/Path(TURNIP_URL).name
+ download(TURNIP_URL,archive,TURNIP_SIZE,sha256=TURNIP_SHA256,progress=Progress('Turnip',TURNIP_SIZE))
+ stage=ROOT/'turnip-stage';shutil.rmtree(stage,ignore_errors=True);stage.mkdir()
+ with tarfile.open(archive) as t:
+  with t.extractfile('./'+TURNIP_LIB) as src,(stage/'libvulkan_freedreno.so').open('wb') as out:shutil.copyfileobj(src,out)
+ (stage/'libvulkan_freedreno.so').chmod(0o755)
+ (stage/'turnip_icd.json').write_text(json.dumps({'file_format_version':'1.0.1','ICD':{
+  'library_path':str(d/'libvulkan_freedreno.so'),'library_arch':'64','api_version':'1.4.0'}},indent=1))
+ shutil.rmtree(d,ignore_errors=True);stage.rename(d);archive.unlink(missing_ok=True)
+ return icd
+def gpu_driver():
+ """(Turnip's ICD file, None) when Studio can draw on the GPU, or (None, why not)."""
+ why=kgsl_device()
+ if why:return None,why
+ try:icd=install_turnip()
+ except Exception as e:return None,'could not install the GPU driver: %s'%str(e).splitlines()[0]
+ # vulkaninfo is a native ARM64 program (no emulation), so this takes seconds and shows the GPU really answers.
+ if shutil.which('vulkaninfo'):
+  try:r=subprocess.run(['vulkaninfo','--summary'],env=dict(os.environ,VK_ICD_FILENAMES=str(icd),VK_DRIVER_FILES=str(icd)),
+   capture_output=True,text=True,errors='replace',timeout=60)
+  except subprocess.TimeoutExpired:return None,'the GPU driver did not answer within a minute'
+  name=re.search(r'deviceName\s*=\s*(.+)',r.stdout)
+  if r.returncode or not name or 'llvmpipe' in name.group(1):
+   last=[l for l in (r.stderr or r.stdout).splitlines() if l.strip()]
+   return None,'the GPU driver did not start%s'%(': '+last[-1].strip()[:160] if last else '')
+  say('GPU: %s (Turnip %s)'%(name.group(1).strip(),TURNIP_VERSION))
+ return icd,None
 def fast_core_count():
  """How many cores run at least 70% of the fastest core's top speed (a phone's big and prime
  cores), or None when the speeds cannot be read."""
@@ -1100,19 +1175,24 @@ def fast_core_count():
   except (OSError,ValueError):pass
  if len(speeds)<2:return None
  return sum(1 for v in speeds if v>=max(speeds)*0.7)
-def prepare_graphics(gfx,prefix,env):
- """Puts the Direct3D 11 back end `gfx` in place; returns Studio's environment for it."""
+def prepare_graphics(gfx,prefix,env,icd=None):
+ """Puts the Direct3D 11 back end `gfx` in place; returns Studio's environment for it. `icd` is the GPU
+ driver's Vulkan driver file for the GPU mode (see gpu_driver)."""
  env=dict(env)
  # Mesa draws each frame in as many pieces as it has threads, one per core by default, and the frame is
  # done when the last piece is: pieces on a phone's slow cores hold every frame up. One per fast core.
  fast=fast_core_count()
  if fast:env.setdefault('LP_NUM_THREADS',str(fast))
  over=[o for o in env.get('WINEDLLOVERRIDES','').split(';') if o and not o.startswith(('d3d11','dxgi','d3d10core'))]
- if gfx in ('DXVK','WineVulkan'):
+ if gfx=='GPU':
+  # Only Turnip, so Vulkan cannot pick lavapipe instead. Boddy's VNC screen has no DRI3, which Mesa's X11
+  # presentation of a GPU's frames normally uses: copy each finished frame into the window instead.
+  env.update(VK_DRIVER_FILES=str(icd),VK_ICD_FILENAMES=str(icd));env.setdefault('MESA_VK_WSI_DEBUG','sw')
+ elif gfx in ('DXVK','WineVulkan'):
   # Only lavapipe: Mesa's hardware Vulkan drivers in the same package cannot reach the phone's GPU from here.
   lvp=sorted(Path('/usr/share/vulkan/icd.d').glob('lvp_icd*.json'))
   if lvp:env.setdefault('VK_DRIVER_FILES',str(lvp[0]));env.setdefault('VK_ICD_FILENAMES',str(lvp[0]))
- if gfx=='DXVK':
+ if gfx in ('DXVK','GPU'):
   d=install_dxvk();sys32=prefix/'drive_c'/'windows'/'system32';sys32.mkdir(parents=True,exist_ok=True)
   for n in DXVK_DLLS:
    src,dst=d/(n+'.dll'),sys32/(n+'.dll')
@@ -1308,7 +1388,8 @@ def cleanup():
  earlier launcher installed several after a crash), backups, half-finished downloads, Hangover."""
  keep={prefix_dir().name}
  doomed=[p for p in ROOT.glob('prefix*') if p.is_dir() and p.name not in keep]
- doomed+=[p for p in ROOT.glob('Studio-backup-*')]+[p for p in ROOT.glob('stage-*')]+[ROOT/'wine-x64-stage',ROOT/'dxvk-stage']
+ doomed+=[p for p in ROOT.glob('Studio-backup-*')]+[p for p in ROOT.glob('stage-*')]+[ROOT/'wine-x64-stage',ROOT/'dxvk-stage',ROOT/'turnip-stage']
+ doomed+=[p for p in ROOT.glob('turnip-*') if p.is_dir() and p.name not in ('turnip-'+TURNIP_VERSION,'turnip-stage')]
  doomed+=[p for p in CACHE.glob('*') if p.is_file() and p.suffix in ('.part','.deb','.zip','.tar','.gz','.xz')]
  doomed=[p for p in doomed if p.exists()]
  freed=0
