@@ -679,6 +679,9 @@ FIREFOX_PREFS={
  'browser.shell.checkDefaultBrowser':False,'browser.aboutwelcome.enabled':False,
  'datareporting.policy.dataSubmissionEnabled':False,'datareporting.healthreport.uploadEnabled':False,'toolkit.telemetry.enabled':False,
  'network.protocol-handler.external.roblox-studio-auth':True,
+ # Little memory for one sign-in page: Studio holds most of the phone's, and Android closes Boddy when it runs out.
+ 'browser.cache.memory.capacity':16384,'browser.cache.disk.enable':False,'image.mem.surfacecache.max_size_kb':32768,
+ 'browser.sessionhistory.max_entries':3,'browser.sessionstore.max_tabs_undo':0,'javascript.options.mem.gc_incremental_slice_ms':5,
  # Only the sign-in page is needed while Studio runs: no fetching of pages, names or connections ahead of time
  # (link prefetch, DNS prefetch, the network predictor, speculative connections from the address bar).
  'network.prefetch-next':False,'network.dns.disablePrefetch':True,'network.predictor.enabled':False,
@@ -959,6 +962,17 @@ def resume_desktop():
 PHANTOM_LIMIT=32
 def process_count():
  return sum(1 for n in os.listdir('/proc') if n.isdigit())
+def memory_summary(top=5):
+ """The processes using the most memory: 'name 1234MB, ...' (resident memory, from /proc)."""
+ used=collections.Counter()
+ for n in os.listdir('/proc'):
+  if not n.isdigit():continue
+  try:
+   status=open('/proc/%s/status'%n).read()
+   m=re.search(r'^VmRSS:\s+(\d+) kB',status,re.M)
+   if m:used[re.search(r'^Name:\s*(.*)$',status,re.M).group(1)]+=int(m.group(1))//1024
+  except (OSError,AttributeError):pass
+ return ', '.join('%s %dMB'%(k,v) for k,v in used.most_common(top))
 def process_summary(top=8):
  """'N of 32 (name x count, ...)': how many processes run and which, to see what to close under Android's limit."""
  names=collections.Counter()
@@ -976,6 +990,7 @@ def mem_available_mb():
  except OSError:pass
  return -1
 MOST_PROCESSES=[0]  # the most processes the session monitor saw at once
+LEAST_MEMORY=[1<<30]  # the least available memory it saw, in MB
 def start_monitor(stop):
  # Android can stop Boddy without warning (more than 32 processes, or low memory). Boddy then restarts the
  # desktop and this launcher dies with it, so record the state every 15 s; the last line shows what it was.
@@ -991,10 +1006,12 @@ def start_monitor(stop):
     'processes = Linux processes of the Boddy app (Android 12+ stops apps above %d); mem = available memory.\n'%PHANTOM_LIMIT)
    warned=False;last=None
    while True:
-    n=process_count();MOST_PROCESSES[0]=max(MOST_PROCESSES[0],n)
+    n=process_count();MOST_PROCESSES[0]=max(MOST_PROCESSES[0],n);LEAST_MEMORY[0]=min(LEAST_MEMORY[0],mem_available_mb())
     f.write('%s processes=%d mem=%dMB step: %s\n'%(time.strftime('%H:%M:%S'),n,mem_available_mb(),last_said[:120]))
     # Which processes, when their number changed: what to close (or not start) to stay under the limit.
     if n!=last:f.write('         running: %s\n'%process_summary(12));last=n
+    # What holds the memory (Android closes Boddy when the phone runs out), every minute.
+    if not int(time.time())//10%6:f.write('         memory: %s\n'%memory_summary())
     f.flush();os.fsync(f.fileno())
     if n>=PHANTOM_LIMIT-4 and not warned:
      warned=True
@@ -1164,6 +1181,7 @@ def try_every_way(place):
    except Exception as e:say('Warning: could not install %s: %s'%(' '.join(missing),str(e).splitlines()[0]))
   restore_display=fit_display();set_window_mode(wine,env,prefix)
   say('Processes before Studio starts: '+process_summary())
+  say('Memory: %d MB available; most used by %s'%(mem_available_mb(),memory_summary()))
   # Vulkan presents nothing on a 16-bit screen (Boddy's "Screen colours"), so Studio's 3D view would stay black.
   try:depth=Path('/tmp/boddy-vnc-depth').read_text().strip()
   except OSError:depth=''
@@ -1181,6 +1199,7 @@ def try_every_way(place):
   ran=time.time()-began
   say('Studio process exited with code %d after %d s'%(code,ran))
   say('Processes at the end: %s; most while it ran: %d'%(process_summary(),MOST_PROCESSES[0]))
+  say('Memory at the end: %d MB available; least while it ran: %d MB'%(mem_available_mb(),LEAST_MEMORY[0]))
   if not code:DIAGNOSE_FILE.unlink(missing_ok=True);sys.exit(0)
   # Windows started, so this Wine works: a crash once Studio runs comes from how it is run (its CPU
   # features, emulation speed or 3D drawing), so the next start uses the next setup rather than another Wine.
@@ -1255,13 +1274,17 @@ DXVK_SIZE=10310666
 DXVK_SHA256='d85ce7c79f57ecd765aaa1b9e7007cb875e6fde9f6d331df799bce73d513ce87'
 DXVK_DLLS=('d3d11','dxgi','d3d10core')
 # lavapipe reports itself as a software renderer with little memory; Studio sizes textures from what the
-# card reports, so report a modest NVIDIA card with 2 GB. One frame queued at a time saves memory.
+# card reports, so report a modest NVIDIA card. Its memory comes from the performance preset (VIDEO_MB): with
+# software drawing that "video memory" is the phone's own, and 2 GB of it, as before, left too little for the
+# sign-in browser. One frame queued at a time saves memory; one shader compiler thread leaves the processor to
+# Studio (DXVK started one per core).
 DXVK_CONF="""# Written by Boddy's Roblox Studio launcher
 dxgi.customVendorId = 10de
 dxgi.customDeviceId = 1c81
 dxgi.customDeviceDesc = "NVIDIA GeForce GTX 1050"
-dxgi.maxDeviceMemory = 2048
+dxgi.maxDeviceMemory = %d
 dxgi.maxFrameLatency = 1
+dxvk.numCompilerThreads = 1
 # Boddy's screen is a VNC framebuffer with no refresh to wait for; Studio caps its own frame rate.
 dxgi.syncInterval = 0
 """
@@ -1360,12 +1383,12 @@ def prepare_graphics(gfx,prefix,env,icd=None):
    src,dst=d/(n+'.dll'),sys32/(n+'.dll')
    if not dst.exists() or dst.read_bytes()!=src.read_bytes():shutil.copyfile(src,dst)
   over.append('d3d11,dxgi,d3d10core=n,b')
-  conf=ROOT/'dxvk.conf';conf.write_text(DXVK_CONF)
+  conf=ROOT/'dxvk.conf';conf.write_text(DXVK_CONF%VIDEO_MB[preset()])
   env.update(DXVK_CONFIG_FILE=str(conf),DXVK_LOG_LEVEL='warn',DXVK_LOG_PATH='none',DXVK_HUD='0')
  else:
   # Wine's own: builtin even though DXVK's copies may sit in system32 from an earlier start.
   over.append('d3d11,dxgi,d3d10core=b')
-  env['WINE_D3D_CONFIG']=('renderer=vulkan;' if gfx=='WineVulkan' else '')+'VideoMemorySize=2048'
+  env['WINE_D3D_CONFIG']=('renderer=vulkan;' if gfx=='WineVulkan' else '')+'VideoMemorySize=%d'%VIDEO_MB[preset()]
  env['WINEDLLOVERRIDES']=';'.join(over)
  say('Studio graphics: %s%s'%(GRAPHICS[gfx],', %s drawing threads (fast cores)'%fast if fast else ''))
  return env
@@ -1387,14 +1410,17 @@ LIGHT_FLAGS={'DFIntTaskSchedulerTargetFps':24,'DFIntDebugFRMQualityLevelOverride
 # Performance presets (the Studio menu's "Performance preset"): the frame rate Studio aims for and how many
 # thousand pixels it draws the 3D view at before scaling it up. Low is the light settings above; Lower and Potato
 # give up smoothness and sharpness for less work per second on slow phones (Potato draws about 37% of Low's
-# pixels, at 15 fps).
+# pixels, at 15 fps). Potato is the default: on a phone Studio is short of processor and memory first.
 PRESETS={'Low':{'DFIntTaskSchedulerTargetFps':24,'DFIntDebugDynamicRenderKiloPixels':240},
  'Lower':{'DFIntTaskSchedulerTargetFps':20,'DFIntDebugDynamicRenderKiloPixels':160},
  'Potato':{'DFIntTaskSchedulerTargetFps':15,'DFIntDebugDynamicRenderKiloPixels':90}}
+# The video memory Studio is told it has (DXVK and Wine's DirectX), in MB: with software drawing it is the
+# phone's memory, so lighter presets give Studio a smaller texture budget.
+VIDEO_MB={'Low':1024,'Lower':768,'Potato':512}
 PRESET_FILE=ROOT/'preset'
 def preset():
  p=os.getenv('BODDY_STUDIO_PRESET') or (PRESET_FILE.read_text().strip() if PRESET_FILE.exists() else '')
- return p if p in PRESETS else 'Low'
+ return p if p in PRESETS else 'Potato'
 def write_studio_settings(studio,renderer):
  path=studio/'ClientSettings'/'ClientAppSettings.json'
  try:flags=json.loads(path.read_text()) if path.exists() else {}

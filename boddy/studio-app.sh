@@ -178,14 +178,14 @@ case "$choice" in
     "Performance preset")
         # How much Studio draws: its frame rate and the resolution of its 3D view (write_studio_settings).
         pf=$HOME/.local/share/roblox-studio/preset
-        now=$(cat "$pf" 2>/dev/null); [ -n "$now" ] || now=Low
+        now=$(cat "$pf" 2>/dev/null); [ -n "$now" ] || now=Potato
         mark() { [ "$now" = "$1" ] && echo "in use: $2" || echo "$2"; }
         pick=$(zenity --list --title="$TITLE" --width=520 --height=280 \
-            --text="Less to draw makes Studio respond faster on a phone, with a softer, less smooth 3D view." \
+            --text="Less to draw and less memory make Studio respond faster on a phone and leave room for signing in, with a softer, less smooth 3D view. Try Low if Studio complains about graphics memory." \
             --column=Preset --column=Status \
-            "Low" "$(mark Low '24 fps, 3D view at 240k pixels (default)')" \
-            "Lower" "$(mark Lower '20 fps, 3D view at 160k pixels')" \
-            "Potato" "$(mark Potato '15 fps, 3D view at 90k pixels')" 2>/dev/null) || exit 0
+            "Potato" "$(mark Potato '15 fps, 3D view at 90k pixels, 512 MB video memory (default)')" \
+            "Lower" "$(mark Lower '20 fps, 3D view at 160k pixels, 768 MB video memory')" \
+            "Low" "$(mark Low '24 fps, 3D view at 240k pixels, 1 GB video memory')" 2>/dev/null) || exit 0
         [ -n "$pick" ] || exit 0
         if out=$("$STUDIO" --use-preset="$pick" 2>&1); then
             zenity --info --width=400 --title="$TITLE" --text="Performance preset set to $pick. Choose Open Studio to use it." 2>/dev/null

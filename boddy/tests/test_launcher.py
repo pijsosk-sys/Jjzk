@@ -106,11 +106,24 @@ class Presets(unittest.TestCase):
  def setUp(self):reset()
  def flags(self):
   return json.load(open(L.ROOT/'Studio'/'ClientSettings'/'ClientAppSettings.json'))
- def test_default_is_low_as_before(self):
+ def test_default_is_potato(self):
   run=Launch([0]);run.go();f=self.flags()
-  self.assertEqual((f['DFIntTaskSchedulerTargetFps'],f['DFIntDebugDynamicRenderKiloPixels']),(24,240))
+  self.assertEqual((f['DFIntTaskSchedulerTargetFps'],f['DFIntDebugDynamicRenderKiloPixels']),(15,90))
   self.assertIn('FFlagDisablePostFx',f)  # the other light settings stay
-  self.assertTrue(any('Low preset (24 fps' in s for s in run.said))
+  self.assertTrue(any('Potato preset (15 fps' in s for s in run.said))
+ def test_video_memory_follows_preset(self):
+  for name,mb in {'Potato':512,'Lower':768,'Low':1024}.items():
+   L.PRESET_FILE.write_text(name);run=Launch([0]);run.go()
+   conf=(L.ROOT/'dxvk.conf').read_text()
+   self.assertIn('dxgi.maxDeviceMemory = %d\n'%mb,conf,name);self.assertIn('dxvk.numCompilerThreads = 1',conf)
+   self.assertTrue(run.envs[0]['DXVK_CONFIG_FILE'].endswith('dxvk.conf'))
+  L.PRESET_FILE.write_text('Potato');L.RENDERER_FILE.write_text('WineOpenGL');run=Launch([0]);run.go()
+  self.assertIn('VideoMemorySize=512',run.envs[0]['WINE_D3D_CONFIG'])
+ def test_memory_logged(self):
+  run=Launch([0]);run.go()
+  self.assertTrue(any(s.startswith('Memory: ') and 'MB' in s for s in run.said))
+  self.assertTrue(any(s.startswith('Memory at the end: ') for s in run.said))
+  self.assertRegex(L.memory_summary(),r'^\S.* \d+MB')
  def test_each_preset_reaches_studio(self):
   for name,(fps,kpx) in {'Lower':(20,160),'Potato':(15,90),'Low':(24,240)}.items():
    sys.argv=['studio','--use-preset='+name];L.main()

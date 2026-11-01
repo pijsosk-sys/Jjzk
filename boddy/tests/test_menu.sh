@@ -32,7 +32,7 @@ for p in Lower Potato Low; do
     menu "Performance preset" "$p"
     check "Performance preset: picking $p saves it" '[ "$(cat "$HOME/$DATA/preset" 2>/dev/null)" = $p ] && grep -q "preset set to $p" "$HOME/zenity.log"'
 done
-check "Performance preset lists Low, Lower and Potato" 'grep -q "Low.*Lower.*Potato" "$HOME/zenity.log"'
+check "Performance preset lists Potato (default), Lower and Low" 'grep -q "Potato.*default.*Lower.*Low" "$HOME/zenity.log"'
 menu "" "Performance preset"
 check "main menu offers Performance preset" 'grep -q "Performance preset" "$HOME/zenity.log"'
 # Open Studio with a stand-in launcher: the shell studio-app.sh starts becomes the launcher (exec), which
