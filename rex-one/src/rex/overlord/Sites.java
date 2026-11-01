@@ -64,6 +64,18 @@ public final class Sites {
       return Ids.of(client.field_1687.method_8320(pos));
    }
 
+   private static final java.util.Map<String, net.minecraft.class_2248> RESOLVED = new java.util.HashMap<>();
+
+   /**
+    * Is the block at this spot the one named? Comparing registry names reads the name out of the
+    * registry and builds a String for every block looked at, and looking for a workstation walks
+    * over a thousand of them; the block itself is one reference compare.
+    */
+   public static boolean is(class_310 client, class_2338 pos, String id) {
+      net.minecraft.class_2248 wanted = RESOLVED.computeIfAbsent(id, Ids::block);
+      return wanted != null && client.field_1687.method_8320(pos).method_26204() == wanted;
+   }
+
    public static boolean air(class_310 client, class_2338 pos) {
       return client.field_1687.method_8320(pos).method_45474();
    }
@@ -129,7 +141,7 @@ public final class Sites {
          return true;
       }
       class_2338 pos = this.stations.get(key);
-      return pos != null && block(client, pos).equals(id);
+      return pos != null && is(client, pos, id);
    }
 
    /**
@@ -148,7 +160,7 @@ public final class Sites {
       }
       String key = dimension(client) + id;
       class_2338 known = this.stations.get(key);
-      if (known != null && !block(client, known).equals(id)) {
+      if (known != null && !is(client, known, id)) {
          this.stations.remove(key);
          known = null;
       }
@@ -167,7 +179,7 @@ public final class Sites {
       // and then always said no, so nothing was ever remembered and it kept putting another one
       // down until the cobblestone ran out.
       if (this.pendingStation != null && this.pendingKey.equals(key)) {
-         if (block(client, this.pendingStation).equals(id)) {
+         if (is(client, this.pendingStation, id)) {
             this.stations.put(key, this.pendingStation);
             this.pendingStation = null;
             return false; // it is there; the next tick opens it
@@ -204,7 +216,7 @@ public final class Sites {
          for (int dx = -range; dx <= range; dx++) {
             for (int dz = -range; dz <= range; dz++) {
                class_2338 at = feet.method_10069(dx, dy, dz);
-               if (block(client, at).equals(id)) {
+               if (is(client, at, id)) {
                   double distance = feet.method_10262(at);
                   if (distance < bestDistance) {
                      bestDistance = distance;
@@ -252,7 +264,7 @@ public final class Sites {
          this.frameDimension = dimension(client);
       }
       class_2338 known = this.portals.get(dimension(client));
-      if (known != null && block(client, known).equals("nether_portal")) {
+      if (known != null && is(client, known, "nether_portal")) {
          navigator.moveTo(client, known);
          this.status = "Walking into the portal at " + coords(known);
          return false;
@@ -278,7 +290,7 @@ public final class Sites {
          this.frame = candidate;
       }
       for (class_2338 pos : framePositions(this.frame)) {
-         if (!block(client, pos).equals("obsidian")) {
+         if (!is(client, pos, "obsidian")) {
             if (!brain.ensure("obsidian", 1, 0)) {
                return false;
             }
@@ -287,7 +299,7 @@ public final class Sites {
          }
       }
       class_2338 inside = this.frame.method_10069(1, 1, 0);
-      if (!block(client, inside).equals("nether_portal")) {
+      if (!is(client, inside, "nether_portal")) {
          if (!brain.ensure("flint_and_steel", 1, 0)) {
             return false;
          }
@@ -344,7 +356,7 @@ public final class Sites {
          return false;
       }
       if (this.chest != null) {
-         if (++this.chestTicks > 600 || !block(client, this.chest).endsWith("chest")) {
+         if (++this.chestTicks > 600 || !(is(client, this.chest, "chest") || is(client, this.chest, "trapped_chest"))) {
             this.visitedChests.add(this.chest);
             this.chest = null;
          } else {
@@ -384,7 +396,7 @@ public final class Sites {
          }
          this.enchantSite = candidate;
       }
-      if (!block(client, this.enchantSite).equals("enchanting_table")) {
+      if (!is(client, this.enchantSite, "enchanting_table")) {
          if (!brain.ensure("enchanting_table", 1, 0)) {
             return false;
          }
@@ -398,7 +410,7 @@ public final class Sites {
                continue;
             }
             class_2338 shelf = this.enchantSite.method_10069(dx, 0, dz);
-            if (!block(client, shelf).equals("bookshelf")) {
+            if (!is(client, shelf, "bookshelf")) {
                if (!brain.ensure("bookshelf", 1, 0)) {
                   return false;
                }

@@ -42,6 +42,10 @@ public final class Overlord {
    );
 
    private final BuilderNavigator navigator = new BuilderNavigator();
+   {
+      // Overlord replans far more often than the builder does, so it buys shorter searches.
+      this.navigator.searchBudget(900, 1600);
+   }
    /** Long hops go through REX's own pathfinder; the navigator handles the last few blocks. */
    private final rex.path.Traveller traveller = new rex.path.Traveller();
    private final Work work = new Work();
@@ -118,6 +122,48 @@ public final class Overlord {
       return this.mine.broken;
    }
 
+   /** What Overlord costs the client, in microseconds a tick: a rolling average and the worst. */
+   public long micros() {
+      return (long)this.averageNanos / 1000L;
+   }
+
+   public long worstMicros() {
+      return this.worstNanos / 1000L;
+   }
+
+   public void resetCost() {
+      this.averageNanos = 0.0;
+      this.worstNanos = 0L;
+      this.worstPart = "-";
+      this.worstPartNanos = 0L;
+      this.warmUp = 0L;
+   }
+
+   private double averageNanos;
+   private long worstNanos;
+   /** Which part of a tick the worst spike was in, so a stutter can be traced to something. */
+   private String worstPart = "-";
+   private long worstPartNanos;
+   private long warmUp;
+
+   public String worstPart() {
+      return this.worstPart + " " + this.worstPartNanos / 1000L + "us";
+   }
+
+   /** Times one part of the tick and keeps the worst, which is the one worth looking at. */
+   private <T> T timed(String part, java.util.function.Supplier<T> work) {
+      long started = System.nanoTime();
+      try {
+         return work.get();
+      } finally {
+         long took = System.nanoTime() - started;
+         if (this.warmUp > 40L && took > this.worstPartNanos) {
+            this.worstPartNanos = took;
+            this.worstPart = part;
+         }
+      }
+   }
+
    /** What Overlord is working on this tick: a block to break, to place, or a mob. */
    @Environment(EnvType.CLIENT)
    public record Focus(class_2338 block, class_1297 mob, Kind kind) {
@@ -191,13 +237,29 @@ public final class Overlord {
    }
 
    /** How Overlord walks: it may break through, it never bridges, and a screen stops it. */
+   // See Mine.TRAVEL: Overlord puts its own windows up, so it does not wait for screens to close.
    private static final rex.path.Traveller.Tuning TRAVEL = new rex.path.Traveller.Tuning(
-      new rex.path.PathFinder.Options(true, false, true, 4, 1.6, 60000, 192), true, 12, 2500L, 3000, true
+      new rex.path.PathFinder.Options(true, false, true, 4, 1.6, 60000, 192), false, 12, 2500L, 3000, true
    );
 
    // ---------------------------------------------------------------- the tick
 
    public void tick(class_310 client) {
+      long started = System.nanoTime();
+      try {
+         this.run(client);
+      } finally {
+         long took = System.nanoTime() - started;
+         this.warmUp++;
+         this.averageNanos += (took - this.averageNanos) * 0.02;
+         // The first couple of seconds are the JIT warming up, not a stutter anyone sees.
+         if (this.warmUp > 40L && took > this.worstNanos) {
+            this.worstNanos = took;
+         }
+      }
+   }
+
+   private void run(class_310 client) {
       this.client = client;
       this.ticks++;
       if (!this.running) {
@@ -251,7 +313,7 @@ public final class Overlord {
       this.mining = false;
       this.travelled = false;
 
-      if (this.fight.tick(client, this.navigator, this.stock, this.ticks)) {
+      if (this.timed("fight", () -> this.fight.tick(client, this.navigator, this.stock, this.ticks))) {
          this.mine.reset(client);
          // The fight walks with the navigator, so the pathfinder must let go of the input.
          this.traveller.release();
@@ -262,7 +324,7 @@ public final class Overlord {
 
       // Anything broken lands on the floor out of arm's reach, so it has to be walked over. Without
       // this the miner broke a whole vein and carried on with an empty bag.
-      if (this.collect()) {
+      if (this.timed("collect", this::collect)) {
          return;
       }
 
@@ -282,14 +344,20 @@ public final class Overlord {
       }
 
       try {
-         this.plan(player);
+         this.timed("plan", () -> {
+            this.plan(player);
+            return null;
+         });
       } catch (IllegalStateException refused) {
          this.give(refused.getMessage());
          return;
       }
 
       if (this.mining && !this.acted) {
-         this.mine.tick(client, this.navigator, this.ticks, this.stock);
+         this.timed("mine", () -> {
+            this.mine.tick(client, this.navigator, this.ticks, this.stock);
+            return null;
+         });
          this.status = this.mine.status;
       } else if (!this.mining) {
          this.mine.reset(client);
@@ -333,13 +401,24 @@ public final class Overlord {
          return false; // close enough that the game picks it up by itself
       }
       this.mine.reset(this.client);
-      BuilderNavigator.Result walk = this.navigator.standAt(this.client, this.pickup.method_24515());
-      if (walk == BuilderNavigator.Result.NO_PATH || walk == BuilderNavigator.Result.STUCK) {
+      this.navigator.release();
+      // Through the pathfinder, not the navigator: walking onto a drop is a short hop, but the
+      // navigator pays for it with one unbudgeted six-thousand-cell search, which is a visible
+      // freeze in the middle of a tick.
+      class_2338 at = this.pickup.method_24515();
+      rex.path.Goal goal = new rex.path.Goal.Block(at.method_10263(), at.method_10264(), at.method_10260());
+      if (!goal.equals(this.traveller.goal())) {
+         this.traveller.go(this.client, goal);
+      }
+      rex.path.Traveller.Result walk = this.traveller.tick(this.client, TRAVEL, this.ticks);
+      if (walk == rex.path.Traveller.Result.UNREACHABLE || walk == rex.path.Traveller.Result.ARRIVED) {
          this.ignoredDrops.add(this.pickup.method_5628());
          this.pickup = null;
+         this.traveller.stop(this.client);
          return false;
       }
       this.acted = true;
+      this.travelled = true;
       this.status = "Picking up " + Ids.pretty(Ids.of(((class_1542)this.pickup).method_6983()));
       return true;
    }
@@ -369,6 +448,10 @@ public final class Overlord {
    // ---------------------------------------------------------------- the ladder
 
    private void plan(class_746 player) {
+      if (this.wearArmour()) {
+         this.acted = true;
+         return;
+      }
       if (Fight.starving(player, this.stock) && Sites.inNether(this.client) == false) {
          this.stage = Stage.WOOD;
          this.status = "Hungry with nothing to eat: hunting";
@@ -762,23 +845,58 @@ public final class Overlord {
       this.status = "Hunting a cow";
    }
 
+   /** Armour by slot, best first. The helmet slot is first, matching the screen handler. */
+   private static final List<List<String>> ARMOUR = List.of(
+      List.of("netherite_helmet", "diamond_helmet", "iron_helmet", "chainmail_helmet", "golden_helmet", "leather_helmet", "turtle_helmet"),
+      List.of("netherite_chestplate", "diamond_chestplate", "iron_chestplate", "chainmail_chestplate", "golden_chestplate", "leather_chestplate"),
+      List.of("netherite_leggings", "diamond_leggings", "iron_leggings", "chainmail_leggings", "golden_leggings", "leather_leggings"),
+      List.of("netherite_boots", "diamond_boots", "iron_boots", "chainmail_boots", "golden_boots", "leather_boots")
+   );
+
+   /**
+    * Wears the best armour it is carrying. Overlord used to put armour on only at the very end,
+    * which meant it fought everything on the way there in its shirt: three zombies killed it in
+    * under eight seconds with a full iron set sitting in the bag.
+    *
+    * @return true when it moved something this tick
+    */
+   private boolean wearArmour() {
+      class_746 player = this.client.field_1724;
+      if (this.client.field_1755 != null || this.work.busy()) {
+         return false;
+      }
+      for (int piece = 0; piece < ARMOUR.size(); piece++) {
+         List<String> order = ARMOUR.get(piece);
+         int slot = 5 + piece;
+         String worn = Ids.of(player.field_7498.method_7611(slot).method_7677());
+         int wornRank = order.indexOf(worn);
+         if (wornRank == 0) {
+            continue; // already the best there is
+         }
+         int limit = wornRank < 0 ? order.size() : wornRank;
+         for (int rank = 0; rank < limit; rank++) {
+            int index = Stock.find(player, order.get(rank));
+            if (index < 0) {
+               continue;
+            }
+            // An empty slot takes the piece straight away; a full one is emptied first, which
+            // keeps the cursor out of it entirely.
+            int from = worn.equals("air") ? Stock.handlerSlot(index) : slot;
+            this.client.field_1761.method_2906(player.field_7498.field_7763, from, 0, class_1713.field_7794, player);
+            this.status = "Putting on " + Ids.pretty(order.get(rank));
+            this.delay = 2;
+            return true;
+         }
+      }
+      return false;
+   }
+
    /** Puts the finished armour on and holds the sword. */
    private void equip() {
-      class_746 player = this.client.field_1724;
       Work.close(this.client);
-      for (int i = 0; i < 4; i++) {
-         String id = "netherite_" + Recipes.GEAR.get(i);
-         int armourSlot = 5 + i;
-         if (Ids.of(player.field_7498.method_7611(armourSlot).method_7677()).equals(id)) {
-            continue;
-         }
-         int index = Stock.find(player, id);
-         if (index >= 0) {
-            this.client.field_1761
-               .method_2906(player.field_7498.field_7763, Stock.handlerSlot(index), 0, class_1713.field_7794, player);
-            this.acted = true;
-            return;
-         }
+      if (this.wearArmour()) {
+         this.acted = true;
+         return;
       }
       Stock.select(this.client, "netherite_sword");
    }

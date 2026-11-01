@@ -63,6 +63,19 @@ public final class BuilderNavigator {
       this.placeable = check;
    }
 
+   /**
+    * How many cells one route search may look at. The builder wants the big numbers: it searches
+    * rarely and a route it cannot find costs it a block. Overlord searches far more often, and
+    * one six-thousand-cell search inside a tick is a visible freeze, so it asks for less.
+    */
+   private int nearBudget = 2500;
+   private int farBudget = 6000;
+
+   public void searchBudget(int near, int far) {
+      this.nearBudget = near;
+      this.farBudget = far;
+   }
+
    public void walkReach(double reach) {
       if (reach != this.walkReach) {
          this.walkReach = reach;
@@ -215,11 +228,11 @@ public final class BuilderNavigator {
                   return BuilderNavigator.Result.NO_PATH;
                }
                // Spots within the closer walking reach are near when they exist: a short look first.
-               this.route = BuilderPathfinder.find(feet, cell(destination), terrain, arrived, stand || this.fullReach ? 6000 : 2500, 96, maxDrop);
+               this.route = BuilderPathfinder.find(feet, cell(destination), terrain, arrived, stand || this.fullReach ? this.farBudget : this.nearBudget, 96, maxDrop);
                this.index = 0;
                if (this.route.isEmpty() && !stand && !this.fullReach && this.walkReach < 4.25) {
                   this.fullReach = true;
-                  this.route = BuilderPathfinder.find(feet, cell(destination), terrain, arrived, 6000, 96, maxDrop);
+                  this.route = BuilderPathfinder.find(feet, cell(destination), terrain, arrived, this.farBudget, 96, maxDrop);
                }
                if (this.route.isEmpty() && !stand && this.goal(client, feet, destination)) {
                   // With the full reach the spot the player stands on already works: an empty route

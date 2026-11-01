@@ -4,6 +4,7 @@ import it.unimi.dsi.fastutil.longs.Long2ByteOpenHashMap;
 import java.util.Set;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
+import net.minecraft.class_2248;
 import net.minecraft.class_2338;
 import net.minecraft.class_2350;
 import net.minecraft.class_265;
@@ -32,12 +33,30 @@ public final class Terrain {
    /** Not loaded: the search must not guess what is there. */
    public static final byte VOID = 6;
 
-   private static final Set<String> HARMFUL = Set.of(
+   /**
+    * Resolved to the blocks themselves, once. Comparing registry names costs a reverse lookup and
+    * a String for every cell the search touches, and a search touches tens of thousands.
+    */
+   private static final Set<class_2248> HARMFUL = blocks(
       "lava", "fire", "soul_fire", "campfire", "soul_campfire", "magma_block", "cactus", "sweet_berry_bush",
-      "powder_snow", "wither_rose", "lit_campfire", "end_portal", "nether_portal"
+      "powder_snow", "wither_rose", "end_portal", "nether_portal"
    );
    /** Blocks that are solid but that a path should rather not touch. */
-   private static final Set<String> AVOID = Set.of("bedrock", "barrier", "obsidian", "crying_obsidian", "ancient_debris", "reinforced_deepslate");
+   private static final Set<class_2248> AVOID = blocks(
+      "bedrock", "barrier", "obsidian", "crying_obsidian", "ancient_debris", "reinforced_deepslate"
+   );
+   private static final class_2248 LAVA = Ids.block("lava");
+
+   private static Set<class_2248> blocks(String... ids) {
+      Set<class_2248> out = new java.util.HashSet<>();
+      for (String id : ids) {
+         class_2248 block = Ids.block(id);
+         if (block != null) {
+            out.add(block);
+         }
+      }
+      return out;
+   }
 
    private final Long2ByteOpenHashMap cache = new Long2ByteOpenHashMap();
    private class_638 world;
@@ -94,12 +113,12 @@ public final class Terrain {
          return VOID;
       }
       class_2680 state = this.world.method_8320(this.cursor);
-      String id = Ids.of(state);
-      if (HARMFUL.contains(id)) {
+      class_2248 block = state.method_26204();
+      if (HARMFUL.contains(block)) {
          return HARM;
       }
       if (!state.method_26227().method_15769()) {
-         return id.contains("lava") ? HARM : WATER;
+         return block == LAVA ? HARM : WATER;
       }
       class_265 shape = state.method_26220(this.world, this.cursor);
       if (shape.method_1110()) {
@@ -145,11 +164,11 @@ public final class Terrain {
          return false;
       }
       this.cursor.method_10103(x, y, z);
-      String id = Ids.of(this.world.method_8320(this.cursor));
-      if (AVOID.contains(id)) {
+      class_2680 state = this.world.method_8320(this.cursor);
+      if (AVOID.contains(state.method_26204())) {
          return false;
       }
-      return this.world.method_8320(this.cursor).method_26214(this.world, this.cursor) >= 0.0F;
+      return state.method_26214(this.world, this.cursor) >= 0.0F;
    }
 
    /**

@@ -38,15 +38,38 @@ public final class Mine {
    private static boolean keep(String block) {
       return KEEP.contains(block) || block.endsWith("_shulker_box") || block.endsWith("_bed") || block.endsWith("_banner");
    }
-   /** Cells the scanner may look at each tick. */
+   /**
+    * Cells the scanner may look at each tick, and the time it may take doing it. Twenty-four
+    * thousand a tick with a registry lookup and a String for each one was most of what Overlord
+    * cost the client: a couple of milliseconds every tick and spikes past forty.
+    */
    private static final int BUDGET = 24000;
+   private static final long NANOS = 1_500_000L;
+   /** Ticks between passes when nothing has changed. */
+   private static final int RESCAN_GAP = 10;
 
    private final Scan scan = new Scan();
    private final Dig dig = new Dig();
+   /**
+    * Walking to ore goes through the pathfinder, not the builder navigator. The navigator searches
+    * up to six thousand cells in one call, unbudgeted, which is a fifty millisecond freeze in the
+    * middle of a tick; the pathfinder spreads the same search over several ticks and can break
+    * through or climb on the way.
+    */
+   private final rex.path.Traveller traveller = new rex.path.Traveller();
+   // Not paused by an open screen: Overlord opens its own crafting table and furnace windows, so
+   // a walk that waits for every screen to close waits for one Overlord itself put up.
+   private static final rex.path.Traveller.Tuning TRAVEL = new rex.path.Traveller.Tuning(
+      new rex.path.PathFinder.Options(true, false, true, 4, 1.6, 40000, 96), false, 10, 1500L, 2500, true
+   );
    private Set<String> blocks = Set.of();
+   private Set<net.minecraft.class_2248> wantedBlocks = Set.of();
+   private long lastScan;
+   private class_2338 scannedFrom = class_2338.field_10980;
    private Integer layer;
    private int radius = 40;
    private class_2338 current;
+   private int arrivals;
    private final Set<class_2338> rejected = new HashSet<>();
    private int heading;
    private int headingTries;
@@ -59,6 +82,14 @@ public final class Mine {
    public void want(Set<String> blocks, Integer layer) {
       if (!blocks.equals(this.blocks)) {
          this.blocks = blocks;
+         java.util.Set<net.minecraft.class_2248> resolved = new HashSet<>();
+         for (String id : blocks) {
+            net.minecraft.class_2248 block = Ids.block(id);
+            if (block != null) {
+               resolved.add(block);
+            }
+         }
+         this.wantedBlocks = resolved;
          this.current = null;
          this.rejected.clear();
          this.broken = 0;
@@ -69,6 +100,7 @@ public final class Mine {
 
    public void reset(class_310 client) {
       this.dig.stop(client);
+      this.traveller.stop(client);
       this.current = null;
       this.rejected.clear();
       this.blocks = Set.of();
@@ -87,13 +119,20 @@ public final class Mine {
     * Always a band around the player, never one around the target layer. Scanning only the layer
     * meant a vein two blocks from the feet went unseen while the tunnel set off for y=16.
     */
-   private void rescan(class_746 player) {
+   private void rescan(class_746 player, long tick) {
       int here = player.method_24515().method_10264();
-      this.scan.restart(player.method_24515(), this.blocks, this.radius, Math.max(-64, here - 24), Math.min(320, here + 16));
+      this.lastScan = tick;
+      this.scannedFrom = player.method_24515();
+      this.scan.restartBlocks(this.wantedBlocks, player.method_24515(), this.radius, Math.max(-64, here - 24), Math.min(320, here + 16));
+   }
+
+   /** Another pass is only worth making when something has changed or enough time has passed. */
+   private boolean worthRescanning(class_746 player, long tick) {
+      return tick - this.lastScan >= RESCAN_GAP || player.method_24515().method_19455(this.scannedFrom) > 8;
    }
 
    private boolean wanted(class_310 client, class_2338 pos) {
-      return this.blocks.contains(Ids.of(client.field_1687.method_8320(pos)));
+      return this.wantedBlocks.contains(client.field_1687.method_8320(pos).method_26204());
    }
 
    public void tick(class_310 client, BuilderNavigator navigator, long tick, java.util.Map<String, Integer> stock) {
@@ -101,9 +140,9 @@ public final class Mine {
       if (this.blocks.isEmpty() || player == null) {
          return;
       }
-      this.scan.step(client, BUDGET);
-      if (!this.scan.running()) {
-         this.rescan(player);
+      this.scan.step(client, BUDGET, NANOS);
+      if (!this.scan.running() && this.worthRescanning(player, tick)) {
+         this.rescan(player, tick);
       }
 
       if (this.current != null && !this.wanted(client, this.current)) {
@@ -113,6 +152,7 @@ public final class Mine {
          for (class_2338 candidate : this.scan.results()) {
             if (!this.rejected.contains(candidate) && this.wanted(client, candidate) && Dig.canBreak(stock, Ids.of(client.field_1687.method_8320(candidate)))) {
                this.current = candidate;
+               this.arrivals = 0;
                break;
             }
          }
@@ -124,33 +164,77 @@ public final class Mine {
             this.broken++;
             this.current = null;
             this.rejected.clear();
+            this.lastScan = 0L; // the world changed where it matters: look again now
             navigator.worldChanged();
             this.status = "Broke it; looking for the next one";
             return;
          }
          if (result == Dig.Result.BREAKING) {
             navigator.release();
+            this.traveller.release();
             this.status = this.dig.status;
             return;
          }
          this.dig.stop(client);
-         BuilderNavigator.Result walk = navigator.moveTo(client, this.current);
-         if (walk == BuilderNavigator.Result.NO_PATH || walk == BuilderNavigator.Result.STUCK) {
+         // Close by, the builder navigator is both cheaper and better aimed: its goal is "can I
+         // click that block from here", which is exactly the question. It is only over distance
+         // that its one unbudgeted search turns into a freeze, and that is where the pathfinder
+         // takes over.
+         if (player.method_24515().method_19455(this.current) <= 14) {
+            this.traveller.release();
+            BuilderNavigator.Result near = navigator.moveTo(client, this.current);
+            if (near == BuilderNavigator.Result.NO_PATH || near == BuilderNavigator.Result.STUCK) {
+               this.rejected.add(this.current);
+               this.current = null;
+               this.status = "No way to that one; trying another";
+               return;
+            }
+            if (near == BuilderNavigator.Result.ARRIVED) {
+               navigator.rejectCurrent(client);
+            }
+            this.status = "Walking to " + this.current.method_10263() + " " + this.current.method_10264() + " " + this.current.method_10260();
+            return;
+         }
+         navigator.release();
+         if (client.field_1755 != null) {
+            Work.close(client);
+            this.status = "Closing a window before walking";
+            return;
+         }
+         rex.path.Goal goal = new rex.path.Goal.Near(
+            this.current.method_10263(), this.current.method_10264() + 1, this.current.method_10260(), 2.5
+         );
+         if (!goal.equals(this.traveller.goal())) {
+            this.traveller.go(client, goal);
+         }
+         rex.path.Traveller.Result walk = this.traveller.tick(client, TRAVEL, tick);
+         if (walk == rex.path.Traveller.Result.UNREACHABLE) {
             this.rejected.add(this.current);
             this.current = null;
+            this.traveller.stop(client);
             this.status = "No way to that one; trying another";
             return;
          }
-         if (walk == BuilderNavigator.Result.ARRIVED) {
-            // Standing in the spot the navigator picked, with no face of the block in sight: take
-            // another spot rather than stand here breaking nothing.
-            navigator.rejectCurrent(client);
+         if (walk == rex.path.Traveller.Result.ARRIVED) {
+            // There now. The dig runs first next tick and usually just works; only when standing
+            // here has not helped three times is the block given up on.
+            this.traveller.stop(client);
+            if (++this.arrivals > 3) {
+               this.rejected.add(this.current);
+               this.current = null;
+               this.status = "Cannot get at that one; trying another";
+            } else {
+               this.status = "At the block; lining up";
+            }
+            return;
          }
          this.status = "Walking to " + Ids.pretty(Ids.of(client.field_1687.method_8320(this.current)))
-            + " " + this.current.method_10263() + " " + this.current.method_10264() + " " + this.current.method_10260();
+            + " " + this.current.method_10263() + " " + this.current.method_10264() + " " + this.current.method_10260()
+            + ": " + this.traveller.status;
          return;
       }
 
+      this.traveller.release();
       this.tunnel(client, navigator, tick, stock);
    }
 

@@ -204,7 +204,8 @@ public final class RexOverlord extends Module {
       String[] rows = {
          "Stage", this.engine.stage.label(),
          "Doing", this.engine.status,
-         "Broken", String.valueOf(this.engine.mined())
+         "Broken", String.valueOf(this.engine.mined()),
+         "Cost", this.engine.micros() + " us/tick, worst " + this.engine.worstMicros()
       };
       int height = line + 6 + rows.length / 2 * step + 3;
       int[] origin = HudPanel.origin((HudAnchor)this.anchor.get(), this.offsetX.getInt(), this.offsetY.getInt(), panelWidth, height);

@@ -36,6 +36,14 @@ public final class Fight {
    /** Swords, best first. */
    private static final List<String> SWORDS = List.of("netherite_sword", "diamond_sword", "iron_sword", "stone_sword", "wooden_sword", "golden_sword");
 
+   /** Its own movement input: circling, backing off and jumping for a critical all need one. */
+   private final Steering steering = new Steering();
+   private class_746 owner;
+   private net.minecraft.class_744 saved;
+   private int strafeFlip;
+   private int strafe = 1;
+   private net.minecraft.class_243 closing;
+
    private boolean eating;
    private class_1297 threat;
    private int threatTicks;
@@ -53,6 +61,26 @@ public final class Fight {
          client.field_1690.field_1904.method_23481(false);
       }
       this.eating = false;
+      this.letGo();
+   }
+
+   private void letGo() {
+      if (this.owner != null && this.owner.field_3913 == this.steering && this.saved != null) {
+         this.owner.field_3913 = this.saved;
+      }
+      this.owner = null;
+      this.saved = null;
+      this.steering.stop();
+   }
+
+   private void hold(class_746 player) {
+      if (this.owner != player) {
+         this.letGo();
+         this.owner = player;
+         this.saved = player.field_3913;
+         player.field_3913 = this.steering;
+      }
+      this.steering.stop();
    }
 
    /** True when this tick belongs to eating or fighting rather than to the progression. */
@@ -68,6 +96,7 @@ public final class Fight {
       this.threat = this.pick(client, player, tick);
       if (this.threat == null) {
          this.threatTicks = 0;
+         this.letGo();
          this.status = "Clear";
          return false;
       }
@@ -83,15 +112,20 @@ public final class Fight {
       }
       String name = this.threat.method_5477().getString();
       if (distance > ATTACK) {
-         // Walk up to it. Standing still just out of reach, swinging at nothing, was the old
-         // behaviour: the box test said "within range" while the server said "too far".
-         BuilderNavigator.Result walk = navigator.moveTo(client, this.threat.method_24515());
-         if (walk == BuilderNavigator.Result.NO_PATH || walk == BuilderNavigator.Result.STUCK) {
-            this.ignored.put(this.threat.method_5628(), tick + 400L);
-            this.threat = null;
-            this.status = "No way to reach " + name;
-            return false;
-         }
+         // Straight at it, steered by hand. Standing still just out of reach, swinging at
+         // nothing, was the old behaviour: the box test said "within range" while the server said
+         // "too far". A route search is not wanted here either - a mob seven blocks away is in
+         // sight, and asking the navigator for a path to it cost sixty milliseconds in a tick.
+         navigator.release();
+         this.hold(player);
+         float[] toward = BuilderLook.anglesTo(player, this.threat.method_23317(), this.threat.method_23320() - 0.2, this.threat.method_23321());
+         BuilderLook.toward(player, toward[0], toward[1]);
+         this.steering.ahead = 1.0F;
+         this.steering.sprint = distance > 4.0;
+         // Hop over the step or the fence it is standing behind, rather than lean on it.
+         this.steering.jump = this.closing != null && player.method_73189().method_1025(this.closing) < 0.02 && player.method_24828();
+         this.closing = player.method_73189();
+         this.steering.method_3129();
          this.status = "Closing on " + name + " (" + String.format(java.util.Locale.ROOT, "%.1f", distance) + " blocks)";
          return true;
       }
@@ -105,16 +139,77 @@ public final class Fight {
             break;
          }
       }
+      this.hold(player);
       float[] look = BuilderLook.anglesTo(player, this.threat.method_23317(), this.threat.method_23320() - 0.2, this.threat.method_23321());
-      this.status = "Fighting " + name;
-      if (!BuilderLook.toward(player, look[0], look[1])) {
+      boolean aimed = BuilderLook.toward(player, look[0], look[1]);
+
+      boolean creeper = this.threat instanceof net.minecraft.class_1548;
+      boolean hurt = player.method_6032() <= 7.0F;
+      double want = creeper ? 2.9 : 2.1;
+      boolean charged = player.method_7261(0.0F) >= 0.95F;
+
+      // Circle it rather than stand in front of it, and change hands every so often so it is not
+      // a straight line a skeleton can lead. Standing still trading blows is how the old one died.
+      if (++this.strafeFlip > 26) {
+         this.strafeFlip = 0;
+         this.strafe = -this.strafe;
+      }
+      this.steering.side = this.strafe * (creeper || hurt ? 0.6F : 1.0F);
+      // Back off from a creeper between swings, and whenever hurt; otherwise close to sword range.
+      double gap = distance - want;
+      this.steering.ahead = (float)Math.max(-1.0, Math.min(1.0, hurt ? -1.0 : gap * 0.8));
+      if (creeper && charged) {
+         this.steering.ahead = 0.4F;
+      }
+      // A swing while falling is a critical: half as many swings for the same zombie.
+      this.steering.jump = !creeper && !hurt && charged && player.method_24828() && distance < 3.0;
+      this.steering.sprint = false;
+      this.steering.method_3129();
+
+      this.status = (hurt ? "Backing off from " : creeper ? "Keeping clear of " : "Fighting ") + name;
+      if (!aimed) {
          return true;
       }
-      if (player.method_7261(0.0F) >= 0.95F) {
+      // Hit on the way down, which is what makes it a critical.
+      if (charged && distance <= (creeper ? 3.2 : 3.0) && (creeper || player.method_18798().field_1351 < -0.08 || !player.method_24828())) {
          client.field_1761.method_2918(player, this.threat);
          player.method_6104(class_1268.field_5808);
       }
       return true;
+   }
+
+   @Environment(EnvType.CLIENT)
+   private static final class Steering extends net.minecraft.class_744 {
+      float ahead;
+      float side;
+      boolean jump;
+      boolean sprint;
+
+      void stop() {
+         this.ahead = 0.0F;
+         this.side = 0.0F;
+         this.jump = false;
+         this.sprint = false;
+      }
+
+      private boolean moving() {
+         return this.ahead != 0.0F || this.side != 0.0F;
+      }
+
+      @Override
+      public void method_3129() {
+         this.field_54155 = new net.minecraft.class_10185(
+            this.ahead > 0.3F, this.ahead < -0.3F, this.side > 0.3F, this.side < -0.3F, this.jump, false, this.sprint
+         );
+         this.field_55868 = this.moving() ? new net.minecraft.class_241(this.side, this.ahead) : net.minecraft.class_241.field_1340;
+      }
+
+      @Override
+      public void method_64054() {
+         if (this.moving()) {
+            super.method_64054();
+         }
+      }
    }
 
    /** The nearest hostile worth dealing with, sticking to the one already being fought. */

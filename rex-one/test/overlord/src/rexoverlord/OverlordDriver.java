@@ -117,6 +117,17 @@ public final class OverlordDriver implements ClientModInitializer {
       return commands;
    }
 
+   /** Like wild(), but without the resistance that makes a fight meaningless. */
+   private List<String> fair(String... extra) {
+      List<String> commands = new ArrayList<>(List.of(
+         "gamemode survival @a", "clear @a", "effect clear @a", "weather clear",
+         "gamerule doMobSpawning false", "gamerule keepInventory true",
+         String.format(Locale.ROOT, "tp @a %.1f %.1f %.1f", this.spawn.field_1352, this.spawn.field_1351, this.spawn.field_1350)
+      ));
+      commands.addAll(List.of(extra));
+      return commands;
+   }
+
    private static List<String> with(String... extra) {
       List<String> commands = base();
       commands.addAll(List.of(extra));
@@ -207,6 +218,19 @@ public final class OverlordDriver implements ClientModInitializer {
                this.spawn.field_1352 + 2.0, this.spawn.field_1351 + 1.0, this.spawn.field_1350 - 7.0)),
          OverlordDriver::noHostiles, true));
 
+      // No resistance on this one: the point is how much health is left afterwards.
+      all.add(new Scenario("mobfair", "three zombies with nothing to soften them", 300,
+         this.fair("time set midnight", "give @a minecraft:iron_sword 1", "give @a minecraft:iron_chestplate 1",
+            "give @a minecraft:iron_helmet 1", "give @a minecraft:iron_leggings 1", "give @a minecraft:iron_boots 1",
+            "give @a minecraft:cooked_beef 16",
+            String.format(Locale.ROOT, "summon minecraft:zombie %.1f %.1f %.1f {PersistenceRequired:1b}",
+               this.spawn.field_1352 + 5.0, this.spawn.field_1351 + 1.0, this.spawn.field_1350),
+            String.format(Locale.ROOT, "summon minecraft:zombie %.1f %.1f %.1f {PersistenceRequired:1b}",
+               this.spawn.field_1352 - 5.0, this.spawn.field_1351 + 1.0, this.spawn.field_1350 + 2.0),
+            String.format(Locale.ROOT, "summon minecraft:zombie %.1f %.1f %.1f {PersistenceRequired:1b}",
+               this.spawn.field_1352 + 2.0, this.spawn.field_1351 + 1.0, this.spawn.field_1350 - 6.0)),
+         OverlordDriver::noHostiles, true));
+
       String only = System.getProperty("rexoverlord.scenarios", "").toLowerCase(Locale.ROOT);
       for (Scenario scenario : all) {
          if (only.isEmpty() || List.of(only.split(",")).contains(scenario.name())) {
@@ -275,6 +299,9 @@ public final class OverlordDriver implements ClientModInitializer {
          }
          case 2 -> {
             RexOverlord.command("#overlord start");
+            if (RexOverlord.instance != null) {
+               RexOverlord.instance.engine().resetCost();
+            }
             this.phase = 3;
             this.wait = 10;
          }
@@ -322,9 +349,11 @@ public final class OverlordDriver implements ClientModInitializer {
                String verdict = reached ? "PASS" : gaveUp ? "GAVE-UP" : "TIMEOUT";
                this.lines.add(String.format(
                   Locale.ROOT,
-                  "%-12s %-7s %6.1fs  goal: %s | stage: %s | moved %.1f | last: %s%s",
+                  "%-12s %-7s %6.1fs  goal: %s | stage: %s | moved %.1f | cost %d/%d us (%s) | health %.1f | last: %s%s",
                   scenario.name(), verdict, this.ticks / 20.0, scenario.goalText(),
-                  engine == null ? "?" : engine.stage.name(), this.moved, this.worstStatus,
+                  engine == null ? "?" : engine.stage.name(), this.moved,
+                  engine == null ? 0L : engine.micros(), engine == null ? 0L : engine.worstMicros(),
+                  engine == null ? "-" : engine.worstPart(), client.field_1724.method_6032(), this.worstStatus,
                   gaveUp ? " | gave up: " + engine.stopped : ""
                ));
                this.lines.add("             stages seen: " + this.stages.keySet());
