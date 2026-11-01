@@ -17,10 +17,13 @@ documentation gives answers 404).
 The key is kept in ~/.config/roblox-publish/credentials, mode 0600, and never passed on the command
 line, where every other process on the system could read it out of /proc.
 """
-import argparse, json, os, stat, sys, urllib.error, urllib.request
+import argparse, json, os, re, stat, sys, urllib.error, urllib.request
 from pathlib import Path
 
 API = 'https://apis.roblox.com/universes/v1/%s/places/%s/versions?versionType=%s'
+# Public and unauthenticated: a place's id is enough to find the universe it belongs to, so --setup
+# only has to ask for the one number, and that one is readable straight out of a place's own URL.
+UNIVERSE_OF = 'https://apis.roblox.com/universes/v1/places/%s/universe'
 CONFIG = Path(os.getenv('XDG_CONFIG_HOME') or Path.home() / '.config') / 'roblox-publish'
 CREDS = CONFIG / 'credentials'
 TYPES = {'.rbxl': 'application/octet-stream', '.rbxlx': 'application/xml'}
@@ -37,6 +40,38 @@ def load():
         if not saved.get(key):
             sys.exit('%s has no %s. Run --setup again.' % (CREDS, key))
     return saved
+
+
+def universe_of(place_id):
+    """The universe a place belongs to, or None. Needs no API key."""
+    try:
+        with urllib.request.urlopen(UNIVERSE_OF % place_id, timeout=30) as r:
+            found = json.loads(r.read()).get('universeId')
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+    return str(found) if found else None
+
+
+def place_id_from(text):
+    """The place id out of whatever was pasted: a bare number, a roblox.com/games/<id> link, or a
+    create.roblox.com .../places/<id>/... dashboard link."""
+    text = text.strip()
+    if text.isdigit():
+        return text
+    for pattern in (r'/places/(\d+)', r'roblox\.com/games/(\d+)'):
+        found = re.search(pattern, text)
+        if found:
+            return found.group(1)
+    # A dashboard link without /places/ carries the EXPERIENCE's number, not a place's. Taking the
+    # first long number out of it would quietly store the wrong id, so refuse it and say which page has
+    # the right one.
+    if re.search(r'/experiences/\d+', text):
+        print('That link is the experience page, which does not carry the place number. On it, press '
+              '"View on Roblox" and paste that address instead (roblox.com/games/<number>/...), or open '
+              'the menu > Places > your place.', file=sys.stderr)
+        return None
+    found = re.search(r'(\d{6,})', text)
+    return found.group(1) if found else None
 
 
 def save(api_key, universe_id, place_id):
@@ -89,13 +124,23 @@ def main():
 
     if args.setup:
         print('Make a key at create.roblox.com/dashboard/credentials (open it in the phone\'s browser).')
-        print('Give it the universe-places system, the Write operation, and add your experience.')
-        print('The Universe ID and Place ID are on the experience\'s page on the Creator Dashboard.\n')
+        print('Give it the universe-places system, the Write operation, and add your experience.\n')
+        print('For the place: on the Creator Dashboard open your experience and press "View on Roblox".')
+        print('That address is roblox.com/games/<number>/... and the number is all this needs.')
+        print('A dashboard .../places/<number>/... link, or the bare number, work too.\n')
         api_key = input('API key: ').strip()
-        universe_id = input('Universe ID: ').strip()
-        place_id = input('Place ID: ').strip()
-        if not (api_key and universe_id.isdigit() and place_id.isdigit()):
-            sys.exit('A key, and numeric Universe and Place IDs, are all needed.')
+        place_id = place_id_from(input('Place link or ID: '))
+        if not api_key or not place_id:
+            sys.exit('A key and a place link or id are both needed.')
+        print('Looking up which experience place %s belongs to...' % place_id)
+        universe_id = universe_of(place_id)
+        if not universe_id:
+            print('Could not look that up. It is on the dashboard URL as .../experiences/<number>/...')
+            universe_id = input('Universe ID: ').strip()
+            if not universe_id.isdigit():
+                sys.exit('A numeric Universe ID is needed.')
+        else:
+            print('Found experience %s.' % universe_id)
         save(api_key, universe_id, place_id)
         return 0
 

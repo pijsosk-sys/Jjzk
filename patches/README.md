@@ -445,7 +445,7 @@ phone cannot be reached, so nothing is lost where it already worked.
 Open Cloud needs no Studio session — an API key and an HTTPS request.
 
 ```
-roblox-publish --setup                 save the key, Universe ID and Place ID
+roblox-publish --setup                 save the key and the place (one link is enough)
 roblox-publish place.rbxl              publish it live
 roblox-publish place.rbxl --save-only  a saved version: Studio sees it, players keep the live one
 roblox-publish --check                 is the saved key still good
@@ -468,6 +468,13 @@ out of `/proc`.
 Each HTTP status gets the answer that actually fixes it: `403` names the `universe-places` system,
 the Write operation, the per-experience Access Permission and the IP restriction that a phone's
 changing address trips; `401` covers a truncated or expired key; `404` the wrong IDs.
+
+**One number, not two.** `apis.roblox.com/universes/v1/places/{placeId}/universe` is public and needs
+no key (checked: place `1818` answers `{"universeId":13058}`), so `--setup` asks only for the place and
+looks the experience up itself. It takes a bare id, a `roblox.com/games/<id>/...` link, or a dashboard
+`.../places/<id>/...` link. A dashboard link *without* `/places/` is the experience page and carries
+the experience's number instead — taking the first long number out of it would quietly store the
+wrong id, so that case is refused with a note saying to press "View on Roblox" and paste that address.
 
 **What still needs the website once:** creating the experience, and making the key. Both work in the
 phone's own browser at `create.roblox.com`. After that, publishing never touches it again.
@@ -514,7 +521,7 @@ Also from the session monitor: 29 of Android's 32 processes in use, with three `
 # Built APK
 
 `Boddy-studio-fix-patched.apk` — the uploaded `Boddy-studio-fix.apk` with every patch applied,
-md5 `406eed61f1814d6fd0ee8273e6e312f6`. 601 entries: five assets replaced (`studio`,
+md5 `8cc5270c9d5c247e588bc0bad74abd53`. 601 entries: five assets replaced (`studio`,
 `roblox-studio-mcp`, `studio-app.sh`, `studio-mode.sh`, `make-launchers.sh`) and one added
 (`roblox-publish`).
 
