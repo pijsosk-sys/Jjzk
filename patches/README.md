@@ -476,6 +476,12 @@ looks the experience up itself. It takes a bare id, a `roblox.com/games/<id>/...
 the experience's number instead — taking the first long number out of it would quietly store the
 wrong id, so that case is refused with a note saying to press "View on Roblox" and paste that address.
 
+**Publishing to a place nobody loads.** A universe can hold several places, and the one players start
+in is its `rootPlaceId`. Publish to any other and the upload succeeds, the dashboard shows the place
+updated, and the game is unchanged — a silent and very confusing failure.
+`games.roblox.com/v1/games?universeIds={id}` gives the root place and needs no key, so `--setup`,
+`--check` and every publish compare against it and warn when they differ.
+
 **What still needs the website once:** creating the experience, and making the key. Both work in the
 phone's own browser at `create.roblox.com`. After that, publishing never touches it again.
 
@@ -521,7 +527,7 @@ Also from the session monitor: 29 of Android's 32 processes in use, with three `
 # Built APK
 
 `Boddy-studio-fix-patched.apk` — the uploaded `Boddy-studio-fix.apk` with every patch applied,
-md5 `8cc5270c9d5c247e588bc0bad74abd53`. 601 entries: five assets replaced (`studio`,
+md5 `8853df147bf0ab04a42ad9b48ef5dc83`. 601 entries: five assets replaced (`studio`,
 `roblox-studio-mcp`, `studio-app.sh`, `studio-mode.sh`, `make-launchers.sh`) and one added
 (`roblox-publish`).
 

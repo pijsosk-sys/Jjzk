@@ -24,6 +24,10 @@ API = 'https://apis.roblox.com/universes/v1/%s/places/%s/versions?versionType=%s
 # Public and unauthenticated: a place's id is enough to find the universe it belongs to, so --setup
 # only has to ask for the one number, and that one is readable straight out of a place's own URL.
 UNIVERSE_OF = 'https://apis.roblox.com/universes/v1/places/%s/universe'
+# Also public: which place an experience actually loads when someone presses Play. A universe can hold
+# several places, and publishing to one that is not this one changes a place nobody joins -- the upload
+# succeeds, the dashboard shows it updated, and the game still looks the same.
+GAME_INFO = 'https://games.roblox.com/v1/games?universeIds=%s'
 CONFIG = Path(os.getenv('XDG_CONFIG_HOME') or Path.home() / '.config') / 'roblox-publish'
 CREDS = CONFIG / 'credentials'
 TYPES = {'.rbxl': 'application/octet-stream', '.rbxlx': 'application/xml'}
@@ -50,6 +54,28 @@ def universe_of(place_id):
     except (urllib.error.URLError, OSError, ValueError):
         return None
     return str(found) if found else None
+
+
+def root_place_of(universe_id):
+    """The place an experience starts players in, or None. Needs no API key."""
+    try:
+        with urllib.request.urlopen(GAME_INFO % universe_id, timeout=30) as r:
+            rows = json.loads(r.read()).get('data') or []
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+    return str(rows[0]['rootPlaceId']) if rows and rows[0].get('rootPlaceId') else None
+
+
+def warn_if_not_start_place(saved):
+    """Says so when the configured place is not the one the experience starts players in. Publishing
+    then works and changes nothing anyone sees, which is a confusing way to lose an afternoon."""
+    root = root_place_of(saved['universe_id'])
+    if not root or root == str(saved['place_id']):
+        return
+    print('Warning: experience %s starts players in place %s, but this is set up to publish to place %s.\n'
+          '         The upload will succeed and the game will not change. Run --setup again with the '
+          'start place,\n         or move the content there, unless you meant to publish a side place.'
+          % (saved['universe_id'], root, saved['place_id']), file=sys.stderr)
 
 
 def place_id_from(text):
@@ -142,6 +168,7 @@ def main():
         else:
             print('Found experience %s.' % universe_id)
         save(api_key, universe_id, place_id)
+        warn_if_not_start_place({'universe_id': universe_id, 'place_id': place_id})
         return 0
 
     saved = load()
@@ -152,6 +179,7 @@ def main():
         code, body = post(saved, b'', 'application/octet-stream', 'Saved')
         if code in (200, 400):
             print('The key works for universe %s, place %s.' % (saved['universe_id'], saved['place_id']))
+            warn_if_not_start_place(saved)
             return 0
         print(explain(code, body), file=sys.stderr)
         return 1
@@ -169,6 +197,7 @@ def main():
     if not data:
         sys.exit('%s is empty.' % path)
 
+    warn_if_not_start_place(saved)
     version_type = 'Saved' if args.save_only else 'Published'
     print('Uploading %s (%.1f MB) as a %s version of place %s...'
           % (path.name, len(data) / 1e6, version_type.lower(), saved['place_id']))
