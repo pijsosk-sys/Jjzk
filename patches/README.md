@@ -171,3 +171,41 @@ Not checked: any of it on an actual Adreno phone. There is no GPU in this
 container, so the framerate gain is reasoned from what the code does, not
 measured. The `GPU_FLAGS` numbers are a starting point in one place, not tuned
 against a device.
+
+
+---
+
+# Built APK
+
+`Boddy-studio-fix-patched.apk` — the uploaded `Boddy-studio-fix.apk` with both
+patches applied, md5 `ef8fe2c20d99f5287706830d70ac6871`.
+
+Rebuilt from the APK, not from source: the only changed file is the asset
+`assets/boddy/studio`. All 600 entries keep their original compression
+(`resources.arsc` stays STORED), the old `META-INF` signatures are stripped,
+then `zipalign -p -f 4` and `apksigner sign`. v1, v2 and v3 all verify.
+
+`Installer.copyScripts()` in `classes.dex` is called from
+`BoddyService.startDesktop` unconditionally: it lists the `boddy` asset
+directory and overwrites each file in `/opt/boddy/`, with no version gate. So
+reinstalling does replace the launcher on the next desktop start.
+
+**It is signed with a new key**, so Android will not install it over an
+existing Boddy. Uninstalling first wipes the app's data, which holds the Debian
+rootfs, the Wine prefix and any Studio projects. Signing the aligned APK with
+the original `BODDY-TE` keystore instead makes it an ordinary update.
+
+To test without reinstalling anything: `studio-app.sh` reads
+`STUDIO=${BODDY_STUDIO:-/opt/boddy/studio}`, so put `patches/studio` on the
+phone and run
+
+```bash
+install -m755 ~/Phone/Download/studio-patched /opt/boddy/studio-patched
+BODDY_STUDIO=/opt/boddy/studio-patched /opt/boddy/studio-app.sh
+```
+
+`copyScripts()` only overwrites files that exist as assets, so that copy
+survives restarts.
+
+Not verified: the repack, alignment, signatures and asset contents are checked
+here; installing and launching it on a phone is not.
