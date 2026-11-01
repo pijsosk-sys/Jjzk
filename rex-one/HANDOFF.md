@@ -46,6 +46,15 @@ one.23 needs it any more, so a missing or changed Baritone no longer breaks anyt
   inventory for what it asked for. Results in README.
 - Not reachable in a flat test world, so still unproven in game: the nether, ancient debris and
   the bastion upgrade template.
+- **Cost per tick is measured** (`Overlord.micros()`, on the HUD and in every test line). It was
+  2,331 us average with 44.7 ms spikes; it is 60-3,000 us now. The three things that cost it:
+  comparing registry names per block (a reverse lookup and a String each time), an unbudgeted
+  scanner, and the builder navigator's route search, which is one unbudgeted call - walking to a
+  block goes through `rex.path.Traveller` instead, and the navigator keeps only single steps.
+- **It wears armour as soon as it has it**, and takes a piece off before putting it on a smithing
+  or enchanting table, because those screens cannot reach an armour slot.
+- The fight closes the gap itself rather than asking for a route, circles, jumps for criticals,
+  keeps clear of creepers, and ignores anything behind a solid block unless it is already hitting.
 
 **Auto Build:**
 - **one.22:**

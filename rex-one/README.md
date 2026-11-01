@@ -94,6 +94,38 @@ is simply not used, so a Baritone that moves on, or that is missing, no longer m
 - A workstation was checked for on the tick its own click was sent, so it never counted as placed
   and a second one went down, and a third.
 
+**What it costs the client.** It was reported as lag and it was lag: 2,331 microseconds a tick on
+average, with spikes to 44.7 ms, on a tick that is 50 ms long. The cost is on the HUD now and in
+every test line, so it cannot drift back unnoticed.
+
+Where it went, and what each one was:
+- The ore scanner compared registry names. That is a reverse registry lookup and a fresh String
+  for every cell of every pass, tens of thousands of cells a second. So did the pathfinder's
+  terrain model and the workstation search. All three compare the block itself now.
+- The scanner had a cell budget but no clock, and started a fresh pass whether or not anything had
+  changed. It has both now.
+- The builder navigator's route search is one unbudgeted call that asks the world about every cell
+  as it goes: in generated terrain that measured 71 ms inside a single tick. Walking to a block
+  goes through the pathfinder now, which spreads the search over ticks against a cached world; the
+  navigator keeps only the single step along a corridor the miner has just cut.
+
+Average is now 60 to 3,000 microseconds depending on what it is doing, and Overlord's own parts
+add up to about 20 ms at worst. Spikes larger than that still show up in a headless test
+container; they are not in any part this code measures and look like the JVM collecting garbage
+under software rendering.
+
+**It fights properly now.** Three zombies with nothing to soften them used to kill it in 7.7
+seconds, because it never wore the armour it was carrying: armour went on at the very end of the
+whole progression and not a moment before. It wears the best it has as soon as it has it. It also
+circles rather than standing in front of what it is hitting, jumps so its swings land as
+criticals, keeps its distance from creepers, backs off when it is hurt, and draws the best sword
+it owns first. The same three zombies: dead in 7.2 seconds with 14 of 20 health left.
+
+It also leaves alone what it cannot get at. A zombie in a cave under the floor is inside the seven
+blocks that count as near, and the old code walked at it for ever - close to three blocks, drop
+into melee, get pushed back out by knockback, close again. That one bug ate whole fifteen-minute
+runs. Anything behind a solid block is ignored unless it is close enough to actually be hitting.
+
 **Chat and HUD.** `.overlord start | stop | status | hud` (also `#overlord`, `.rex overlord`).
 `status` reports the stage, what it is doing and how many blocks it has broken. The HUD is a small
 panel with the same three lines, anchored and coloured like the other REX panels.
@@ -109,15 +141,15 @@ cat /tmp/g1/rexoverlord-results.txt
 
 | Scenario | What it has to end up with | Result |
 | --- | --- | --- |
-| `tools` | a stone pickaxe, from an empty inventory and three trees | pass, 25.2s |
-| `mine` | raw iron out of a vein, walked to and dug | pass, 25.2s |
-| `smelt` | iron ingots out of a furnace it placed and loaded | pass, 14.1s |
-| `irongear` | the full iron set crafted at a table | pass, 23.1s |
-| `diamondgear` | all six diamond pieces | pass, 8.9s |
-| `netherite` | all six pieces upgraded at a smithing table | pass, 5.8s |
-| `enchant` | the table placed, fifteen bookshelves round it, all six pieces enchanted | pass, 10.1s |
-| `eat` | food eaten before the hunger bar bites | pass, 40.5s |
-| `fight` | a zombie beaten off at night | pass, 3.0s |
+| `tools` | a stone pickaxe, from an empty inventory and three trees | pass, 33.7s |
+| `mine` | raw iron out of a vein, walked to and dug | pass, 43.5s |
+| `smelt` | iron ingots out of a furnace it placed and loaded | pass, 14.3s |
+| `irongear` | the full iron set crafted at a table | pass, 14.2s |
+| `diamondgear` | all six diamond pieces | pass, 8.8s |
+| `netherite` | all six pieces upgraded at a smithing table | pass, 8.2s |
+| `enchant` | the table placed, fifteen bookshelves round it, all six pieces enchanted | pass, 12.3s |
+| `eat` | food eaten before the hunger bar bites | pass, 41.7s |
+| `fight` | a zombie beaten off at night | pass, 1.3s |
 
 Nine for nine, in a real 1.21.11 client, on the jar in `out/`.
 
@@ -128,15 +160,25 @@ generated world on a fixed seed and `WORLD=normal` runs the scenarios in it:
 
 | Scenario | What it has to do | Result |
 | --- | --- | --- |
-| `wild` | a stone pickaxe from an empty inventory, on real spruce and real stone | pass, 62.9s |
-| `mobnight` | a zombie six blocks off at night, closed on and killed | pass, 6.3s, moved 3.6 blocks |
-| `mobpack` | three zombies at once | pass, 22.3s, moved 10.3 blocks |
+| `wild` | a stone pickaxe from an empty inventory, on real spruce and real stone | pass, 130.7s |
+| `mobnight` | a zombie six blocks off at night, closed on and killed | pass, 2.3s, moved 3.4 blocks |
+| `mobpack` | three zombies at once | pass, 28.7s, moved 6.1 blocks |
+| `mobfair` | three zombies with no resistance effect to soften them | pass, 7.2s, 14 of 20 health left |
 
-Both mob scenarios refuse to pass unless a mob actually turned up: one of them reported a pass in
+The mob scenarios refuse to pass unless a mob actually turned up: one of them reported a pass in
 a tenth of a second once, because the zombie had been summoned inside a hillside and suffocated,
 and a fight that never happened proves nothing.
 
-The mob pair is there because of a bug this found: the fight engaged anything inside a box three
+`wild` is the long one and the honest one: from nothing, in a forest, with whatever the seed put
+there. It took three separate bugs to make it reliable, each caught by having the test record the
+last few things Overlord said before it gave up - a stall looks the same from outside whatever
+caused it, one phrase repeated. It aimed for the cell above a log, and near the top of a spruce
+there is no standing room above a log; it wrote off for good any block it had once failed to
+reach, so in a wood full of logs it eventually had nothing left to choose; and it had no clock on
+getting to a block at all. Six runs in a row pass now. When it genuinely cannot get going it says
+so and stops rather than standing there.
+
+The mob scenarios are there because of a bug this found: the fight engaged anything inside a box three
 and a half blocks wide, which reaches further than a sword does, so it would stand in front of a
 zombie swinging at nothing - not moving, not hitting. The sword's own reach now decides whether to
 swing or to close the gap.
