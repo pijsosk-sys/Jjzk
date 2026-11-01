@@ -219,9 +219,10 @@ zenity --progress --title="$TITLE" --width=440 --auto-close --percentage=0 \
     --text="Starting..." <"$work/progress" 2>/dev/null &
 zenity_pid=$!
 
-# The launcher runs in its own process group so Cancel can stop it together with its downloads.
-BODDY_STUDIO_SESSION=$$ setsid bash -c 'echo $$ >"$1"; "$2" "${@:4}"; echo $? >"$3"' _ \
-    "$work/pid" "$STUDIO" "$work/status" "${args[@]}" 2>&1 |
+# The launcher runs in its own process group so Cancel can stop it together with its downloads. The shell
+# that starts it becomes it (exec: one process fewer while Studio runs); it writes its exit code itself.
+BODDY_STUDIO_SESSION=$$ BODDY_STUDIO_STATUS="$work/status" setsid bash -c 'echo $$ >"$1"; exec "$2" "${@:3}"' _ \
+    "$work/pid" "$STUDIO" "${args[@]}" 2>&1 |
 (
     # Only this reader holds the progress pipe, so the window sees end-of-input if the launcher stops early.
     # zenity may already be closed (Studio started, or Cancel); keep reading so the launcher never blocks.

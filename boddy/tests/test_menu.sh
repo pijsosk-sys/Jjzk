@@ -35,4 +35,23 @@ done
 check "Performance preset lists Low, Lower and Potato" 'grep -q "Low.*Lower.*Potato" "$HOME/zenity.log"'
 menu "" "Performance preset"
 check "main menu offers Performance preset" 'grep -q "Performance preset" "$HOME/zenity.log"'
+# Open Studio with a stand-in launcher: the shell studio-app.sh starts becomes the launcher (exec), which
+# writes its own exit status.
+stub=$(mktemp)
+cat >"$stub" <<'S'
+#!/bin/bash
+echo "pid $$" >"$HOME/stub.pid"; echo "Launching real Roblox Studio"; sleep 1
+echo "${STUB_CODE:-0}" >"$BODDY_STUDIO_STATUS"; exit "${STUB_CODE:-0}"
+S
+chmod +x "$stub"
+launch() {  # exit code the stand-in gives
+    export HOME=$(mktemp -d) PICK="" DISPLAY=:99 STUB_CODE=$1
+    mkdir -p "$HOME/.config/boddy" "$HOME/bin" && touch "$HOME/.config/boddy/studio-intro-shown" "$HOME/.config/boddy/studio-signin-tip-shown"
+    printf '#!/bin/bash\nprintf "%%s\\n" "$*" >>"$HOME/zenity.log"\ncat >/dev/null\nexit 0\n' >"$HOME/bin/zenity"; chmod +x "$HOME/bin/zenity"
+    PATH="$HOME/bin:$PATH" BODDY_STUDIO="$stub" bash "$BODDY/studio-app.sh" "Open Studio" </dev/null >"$HOME/out.log" 2>&1
+}
+launch 0
+check "Open Studio: launcher runs, no error shown" '[ -s "$HOME/stub.pid" ] && ! grep -q -- "--error" "$HOME/zenity.log"'
+launch 3
+check "Open Studio: a failed launch shows its exit code" 'grep -q "exit code 3" "$HOME/zenity.log"'
 echo "$fails failed"; exit $((fails>0))

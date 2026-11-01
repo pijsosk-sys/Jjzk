@@ -7,7 +7,9 @@ helper=0
 case "${1:-}" in --open-url|roblox-studio-auth:*) helper=1 ;; esac
 LOG="$HOME/.cache/roblox-studio/$([ $helper = 1 ] && echo helper || echo launcher)-$(date +%Y%m%d-%H%M%S)-$$.log"
 [ $helper = 1 ] || ln -sfn "$LOG" "$HOME/.cache/roblox-studio/latest.log"
-python3 - "$@" <<'BODDY_PY' 2>&1 | tee "$LOG"
+# This script, tee and Python were three processes for all of Studio's run, under Android's limit of 32 per
+# app: Python now writes the log itself (start_log) and takes this script's place.
+BODDY_LOG="$LOG" BODDY_HELPER=$helper exec python3 - "$@" <<'BODDY_PY'
 #!/usr/bin/env python3
 """Boddy Linux compatibility launcher. Does not modify Roblox binaries."""
 import os,sys,json,re,struct,hashlib,zipfile,tarfile,shutil,subprocess,time,threading,collections,concurrent.futures,urllib.request,urllib.error,urllib.parse,ssl,fcntl,signal,resource
@@ -657,6 +659,7 @@ def setup_browser_login(wine,env,prefix):
   command([*wine,'reg','add','HKCU\\Software\\Wine\\WineBrowser','/v','Browsers','/t','REG_SZ','/d',BROWSERS,'/f'],600,env)
   marker.write_text(BROWSERS)
 BROWSERS='/opt/boddy/studio --open-url,firefox-esr,xdg-open,firefox'
+FIREFOX_PROCESSES=3  # with FIREFOX_PREFS: Firefox, one page process, and this launcher waiting on it
 FIREFOX_PREFS={
  # Same as Boddy's system Firefox: the content sandbox needs kernel features proot lacks.
  'security.sandbox.content.level':0,
@@ -664,6 +667,8 @@ FIREFOX_PREFS={
  'fission.autostart':False,'dom.ipc.processCount':1,'dom.ipc.processCount.webIsolated':1,'dom.ipc.processPrelaunch.enabled':False,
  # Android 12+ kills an app's Linux processes beyond 32 in total, so keep Firefox to a main and one content process.
  'network.process.enabled':False,'media.rdd-process.enabled':False,'media.utility-process.enabled':False,
+ 'layers.gpu-process.enabled':False,'media.gmp-provider.enabled':False,'media.eme.enabled':False,
+ 'browser.tabs.remote.separateFileUriProcess':False,
  'extensions.webextensions.remote':False,'dom.ipc.forkserver.enable':False,
  'browser.tabs.remote.separatePrivilegedContentProcess':False,'browser.tabs.remote.separatePrivilegedMozillaWebContentProcess':False,
  'browser.tabs.unloadOnLowMemory':True,'browser.sessionhistory.max_total_viewers':0,
@@ -727,6 +732,17 @@ def open_in_browser(url):
  if not re.fullmatch(r'https?://[\x21-\x7e]+',url) or len(url)>16384:raise ValueError('Refusing to open link: '+url[:200])
  firefox=shutil.which('firefox-esr') or shutil.which('firefox')
  if not firefox:raise RuntimeError('Firefox is not installed; install firefox-esr from Install Apps')
+ # Firefox adds about 3 processes. Studio and the desktop can leave too little room under Android's limit of
+ # 32, and going over makes Android close all of Boddy, Studio included: say so first.
+ n=process_count()
+ if n+FIREFOX_PROCESSES>PHANTOM_LIMIT and shutil.which('zenity'):
+  if subprocess.run(['zenity','--question','--width=480','--title=Roblox Studio sign-in','--ok-label=Sign in anyway',
+   '--cancel-label=Not now','--text=Signing in opens Firefox, which needs about %d more processes. %d of the 32 '
+   'Android allows are in use, so Android may close Boddy, Studio included.\n\nTo remove that limit (Android 14 or '
+   'newer): Settings > About phone > tap Build number 7 times, then Settings > System > Developer options > turn on '
+   '"Disable child process restrictions". Then choose Login via Browser again.'%(FIREFOX_PROCESSES,n)],
+   env=browser_env()).returncode:
+   raise RuntimeError('Sign-in not started: too many processes for Android (%d of %d)'%(n,PHANTOM_LIMIT))
  profile=ROOT/'firefox-profile';profile.mkdir(parents=True,exist_ok=True)
  (profile/'user.js').write_text(''.join('user_pref(%s, %s);\n'%(json.dumps(k),json.dumps(v)) for k,v in FIREFOX_PREFS.items()))
  log=CACHE/'firefox.log';nofile=int(os.getenv('BODDY_NOFILE_SOFT') or 0)
@@ -794,6 +810,7 @@ def screen_size():
  except Exception:return None
  m=re.search(r'current (\d+) x (\d+)',out)
  return (int(m.group(1)),int(m.group(2))) if m else None
+WINE_DRIVERS_OFF=('winebus','wineusb','winebth')
 DESKTOP_BACKGROUND='0 0 0'  # black instead of the classic Windows blue around Studio's window
 def set_window_mode(wine,env,prefix):
  """Puts Studio in a Wine virtual desktop that fills the screen above Boddy's taskbar, or takes it out,
@@ -835,6 +852,11 @@ def apply_desktop_settings(wine,env,prefix,want=None):
  # The desktop's colour (Windows' "Background" system colour), with no wallpaper or pattern drawn over it.
  lines+=['[HKEY_CURRENT_USER\\Control Panel\\Colors]','"Background"="%s"'%DESKTOP_BACKGROUND,'',
   '[HKEY_CURRENT_USER\\Control Panel\\Desktop]','"Wallpaper"=""','"Pattern"="(None)"','']
+ # Wine's USB, Bluetooth and gamepad drivers cannot work in Boddy (no udev or USB devices) and only cost a
+ # driver process (winedevice.exe) under Android's limit of 32; mouse and keyboard do not go through them.
+ # tune_prefix() set this once, but like the background it was lost when the wineserver was ended unsaved.
+ for service in WINE_DRIVERS_OFF:
+  lines+=['[HKEY_LOCAL_MACHINE\\System\\CurrentControlSet\\Services\\%s]'%service,'"Start"=dword:00000004','']
  reg=CACHE/'window-mode.reg';reg.write_text('\r\n'.join(lines)+'\r\n')
  command([*wine,'regedit','/S','Z:'+str(reg).replace('/','\\')],600,env)
  server=wineserver(wine)
@@ -899,33 +921,41 @@ def keep_studio_above_taskbar(stop):
  if window_mode()!='desktop':return None
  t=threading.Thread(target=run,daemon=True);t.start();return t
 # While Studio runs it covers the desktop, which still drew its icons and wallpaper and watched for files,
-# notifications and power events behind it: work for nothing. Those are paused (SIGSTOP: no processor time,
-# and the session does not start them again as it would after a kill) and resumed when Studio ends. The
-# taskbar and the window manager keep running.
+# notifications and power events behind it: work for nothing, and processes under Android's limit of 32 (a
+# paused process still counts). They are ended while Studio runs and started again when it ends; the session
+# does not restart them by itself. The taskbar and the window manager keep running.
 DESKTOP_EXTRAS=('xfdesktop','xfce4-notifyd','tumblerd','xfce4-screensaver','light-locker','xfce4-power-manager','update-notifier')
-PAUSED_FILE=ROOT/'desktop-paused'  # their process ids, to resume them even if this launcher was stopped
+DBUS_STARTED=('xfce4-notifyd','tumblerd')  # D-Bus starts these again when something needs them
+PAUSED_FILE=ROOT/'desktop-paused'  # what was ended, to start it again even if this launcher was stopped
 def pause_desktop():
- """Pauses the desktop programs Studio hides; returns a function that resumes them."""
+ """Ends the desktop programs Studio hides; returns a function that starts them again."""
  if os.getenv('BODDY_STUDIO_KEEP_DESKTOP')=='1':return resume_desktop
- names={n[:15] for n in DESKTOP_EXTRAS}  # /proc/N/comm holds the first 15 characters of a name
- paused=[]
+ names={n[:15]:n for n in DESKTOP_EXTRAS}  # /proc/N/comm holds the first 15 characters of a name
+ ended=set()
  for n in os.listdir('/proc'):
   if not n.isdigit():continue
   try:comm=open('/proc/%s/comm'%n).read().strip()
   except OSError:continue
   if comm in names:
-   try:os.kill(int(n),signal.SIGSTOP);paused.append((n,comm))
+   try:os.kill(int(n),signal.SIGTERM);ended.add(names[comm])
    except OSError:pass
- if paused:
-  PAUSED_FILE.write_text(' '.join(p for p,_ in paused))
-  say('Paused while Studio runs (hidden behind it anyway): '+', '.join(sorted({c for _,c in paused})))
+ if ended:
+  PAUSED_FILE.write_text(' '.join(sorted(ended)))
+  say('Closed while Studio runs (hidden behind it anyway): '+', '.join(sorted(ended)))
  return resume_desktop
 def resume_desktop():
  if not PAUSED_FILE.exists():return
- for p in PAUSED_FILE.read_text().split():
-  try:os.kill(int(p),signal.SIGCONT)
-  except (OSError,ValueError):pass
- PAUSED_FILE.unlink(missing_ok=True);say('Desktop resumed')
+ names=PAUSED_FILE.read_text().split();PAUSED_FILE.unlink(missing_ok=True)
+ running=set()
+ for n in os.listdir('/proc'):
+  try:
+   # An ended process its parent has not collected yet ("Z") is not running.
+   if n.isdigit() and open('/proc/%s/stat'%n).read().rsplit(')',1)[1].split()[0]!='Z':running.add(open('/proc/%s/comm'%n).read().strip())
+  except (OSError,IndexError):pass
+ for name in names:
+  if name in DBUS_STARTED or name[:15] in running or not shutil.which(name):continue
+  subprocess.Popen([name],env=browser_env(),stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+ say('Desktop started again')
 PHANTOM_LIMIT=32
 def process_count():
  return sum(1 for n in os.listdir('/proc') if n.isdigit())
@@ -1589,15 +1619,48 @@ def start_windows():
   if not existed:raise RuntimeError(startup_reason(code,out)+'\n'+startup_help(out))
   say('Windows did not start in the existing setup; trying once more with a fresh one (the old one is kept as a backup)')
   prefix.rename(ROOT/('prefix-backup-'+str(time.time_ns())));existed=False
+def start_log():
+ """Copies everything this launcher and the programs it runs write into the log (BODDY_LOG), as `tee` did,
+ from a thread instead of two more processes. Returns finish(exit code), which ends it as the shell did:
+ the log's path, a copy in Downloads, and the exit code in BODDY_STUDIO_STATUS for studio-app.sh."""
+ path=os.getenv('BODDY_LOG');helper=os.getenv('BODDY_HELPER')=='1'
+ out=os.dup(1)
+ log=open(path,'ab',buffering=0) if path else None
+ if log:
+  r,w=os.pipe();os.dup2(w,1);os.dup2(w,2);os.close(w)
+  def pump():
+   while True:
+    try:b=os.read(r,65536)
+    except OSError:break
+    if not b:break
+    try:os.write(out,b)
+    except OSError:pass  # nobody reads the screen side any more (the progress window ended): keep logging
+    log.write(b)
+  thread=threading.Thread(target=pump,daemon=True);thread.start()
+ def finish(code):
+  status=os.getenv('BODDY_STUDIO_STATUS')
+  if status:
+   try:Path(status).write_text('%d\n'%code)
+   except OSError:pass
+  if not log:return
+  sys.stdout.flush();sys.stderr.flush()
+  os.dup2(out,1);os.dup2(out,2)
+  # Wine's background processes can keep the log's pipe open after Studio: wait a little, not for them.
+  thread.join(5)
+  def tell(line):
+   try:os.write(out,(line+'\n').encode())
+   except OSError:pass
+  tell('Launcher log: '+path)
+  downloads=Path.home()/'Phone/Download'
+  if downloads.is_dir() and not helper:
+   try:shutil.copyfile(path,downloads/'Boddy-Studio-launch.log');tell('Log copied to Downloads/Boddy-Studio-launch.log')
+   except OSError:pass
+ return finish
 if __name__=='__main__':
+ finish=start_log();code=0
  try:main()
- except Exception as e:say('LAUNCH FAILED: '+str(e));sys.exit(1)
+ except SystemExit as e:code=e.code if isinstance(e.code,int) else (0 if e.code is None else 1)
+ except Exception as e:say('LAUNCH FAILED: '+str(e));code=1
+ finish(code);sys.exit(code)
 
 BODDY_PY
-status=${PIPESTATUS[0]}
-echo "Launcher log: $LOG"
-if [ -d "$HOME/Phone/Download" ] && [ $helper = 0 ]; then
- cp "$LOG" "$HOME/Phone/Download/Boddy-Studio-launch.log" || true
- echo "Log copied to Downloads/Boddy-Studio-launch.log"
-fi
-exit "$status"

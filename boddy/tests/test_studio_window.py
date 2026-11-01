@@ -3,7 +3,7 @@
 handling while Studio runs:
   - Studio's Wine desktop window covering the taskbar is moved back above it (keep_studio_above_taskbar),
   - the sign-in browser that opened behind Studio is brought in front of it (bring_to_front),
-  - the desktop behind Studio is paused and resumed (pause_desktop / resume_desktop).
+  - the desktop behind Studio is closed and started again (pause_desktop / resume_desktop).
 A Wine notepad in the RobloxStudio desktop stands in for Studio, a zenity window for Firefox.
 Usage: HOME=$(mktemp -d) DISPLAY=:1 dbus-launch python3 test_studio_window.py /path/to/studio"""
 import os,sys,subprocess,time,threading
@@ -80,16 +80,24 @@ swin=[int(v) for v in L.xdo('search','--onlyvisible','--name','^%s - '%L.DESKTOP
 check('it stays above Studio when Studio is tapped',bool(bwin) and bool(swin) and order.index(bwin[0])>order.index(swin[0]))
 browser.kill()
 
-# The desktop behind Studio is paused, then resumed.
-resume=L.pause_desktop()
-check('xfdesktop paused while Studio runs',state(desk.pid)=='T')
-check('the taskbar keeps running',state(panel.pid)!='T')
-resume()
-check('xfdesktop resumed afterwards',state(desk.pid)!='T' and not L.PAUSED_FILE.exists())
-L.pause_desktop()  # a launcher stopped by Android before Studio ended...
-L.resume_desktop()  # ...is made good by the next launcher start
-check('a desktop left paused is resumed by the next start',state(desk.pid)!='T')
+# The desktop behind Studio is closed, then started again.
+def running(name):
+ """Whether a live process (not an ended one waiting to be reaped) has this name."""
+ for n in os.listdir('/proc'):
+  try:
+   if n.isdigit() and open('/proc/%s/comm'%n).read().strip()==name and state(int(n))!='Z':return True
+  except OSError:pass
+ return False
+resume=L.pause_desktop();time.sleep(2)
+check('xfdesktop closed while Studio runs (a process slot freed)',not running('xfdesktop'))
+check('the taskbar keeps running',state(panel.pid)!='T' and running('xfce4-panel'))
+resume();time.sleep(3)
+check('xfdesktop started again afterwards',running('xfdesktop') and not L.PAUSED_FILE.exists())
+L.pause_desktop();time.sleep(2)  # a launcher stopped by Android before Studio ended...
+L.resume_desktop();time.sleep(3)  # ...is made good by the next launcher start
+check('a desktop left closed is started again by the next start',running('xfdesktop'))
 
 stop.set();subprocess.run(['wineserver','-k'],env=env,**quiet)
 for p in (desk,panel,wm):p.kill()
+subprocess.run(['pkill','-x','xfdesktop'])
 print('%d failed'%fails);sys.exit(1 if fails else 0)
