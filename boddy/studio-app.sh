@@ -91,8 +91,8 @@ fi
 
 # The action can be given as an argument (e.g. from a desktop shortcut): studio-app.sh "Open Studio"
 choice=${1:-}
-[ -n "$choice" ] || choice=$(zenity --list --title="$TITLE" --width=420 --height=300 --column=Action \
-    "Open Studio" "Open a place file" "Graphics mode" "Window mode" "Free up space" "Diagnostics" "Wine version" "Compatibility mode" "Screen colours" "Reset Studio" 2>/dev/null) || exit 0
+[ -n "$choice" ] || choice=$(zenity --list --title="$TITLE" --width=420 --height=400 --column=Action \
+    "Open Studio" "Open a place file" "Performance preset" "Graphics mode" "Window mode" "Free up space" "Diagnostics" "Wine version" "Compatibility mode" "Screen colours" "Reset Studio" 2>/dev/null) || exit 0
 case "$choice" in
     "Open Studio") args=() ;;
     "Open a place file")
@@ -174,6 +174,24 @@ case "$choice" in
             *) exit 0 ;;
         esac
         zenity --info --width=400 --title="$TITLE" --text="Compatibility mode set to $pick. Choose Open Studio to use it." 2>/dev/null
+        exit 0 ;;
+    "Performance preset")
+        # How much Studio draws: its frame rate and the resolution of its 3D view (write_studio_settings).
+        pf=$HOME/.local/share/roblox-studio/preset
+        now=$(cat "$pf" 2>/dev/null); [ -n "$now" ] || now=Low
+        mark() { [ "$now" = "$1" ] && echo "in use: $2" || echo "$2"; }
+        pick=$(zenity --list --title="$TITLE" --width=520 --height=280 \
+            --text="Less to draw makes Studio respond faster on a phone, with a softer, less smooth 3D view." \
+            --column=Preset --column=Status \
+            "Low" "$(mark Low '24 fps, 3D view at 240k pixels (default)')" \
+            "Lower" "$(mark Lower '20 fps, 3D view at 160k pixels')" \
+            "Potato" "$(mark Potato '15 fps, 3D view at 90k pixels')" 2>/dev/null) || exit 0
+        [ -n "$pick" ] || exit 0
+        if out=$("$STUDIO" --use-preset="$pick" 2>&1); then
+            zenity --info --width=400 --title="$TITLE" --text="Performance preset set to $pick. Choose Open Studio to use it." 2>/dev/null
+        else
+            zenity --error --width=460 --title="$TITLE" --text="$(printf '%s' "$out" | escape)" 2>/dev/null
+        fi
         exit 0 ;;
     "Screen colours")
         # The whole desktop's colour depth (start-desktop.sh reads it when the desktop starts).

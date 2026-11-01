@@ -102,6 +102,29 @@ class BackgroundLoad(unittest.TestCase):
   self.assertRegex(lines[2],r'^[0-9:]+ processes=\d+ mem=');self.assertTrue(lines[3].lstrip().startswith('running: '))
   self.assertGreater(L.MOST_PROCESSES[0],0)
 
+class Presets(unittest.TestCase):
+ def setUp(self):reset()
+ def flags(self):
+  return json.load(open(L.ROOT/'Studio'/'ClientSettings'/'ClientAppSettings.json'))
+ def test_default_is_low_as_before(self):
+  run=Launch([0]);run.go();f=self.flags()
+  self.assertEqual((f['DFIntTaskSchedulerTargetFps'],f['DFIntDebugDynamicRenderKiloPixels']),(24,240))
+  self.assertIn('FFlagDisablePostFx',f)  # the other light settings stay
+  self.assertTrue(any('Low preset (24 fps' in s for s in run.said))
+ def test_each_preset_reaches_studio(self):
+  for name,(fps,kpx) in {'Lower':(20,160),'Potato':(15,90),'Low':(24,240)}.items():
+   sys.argv=['studio','--use-preset='+name];L.main()
+   Launch([0]).go();f=self.flags()
+   self.assertEqual((f['DFIntTaskSchedulerTargetFps'],f['DFIntDebugDynamicRenderKiloPixels']),(fps,kpx),name)
+ def test_bad_preset_refused(self):
+  sys.argv=['studio','--use-preset=Ultra']
+  with self.assertRaises(RuntimeError):L.main()
+ def test_full_graphics_still_wins(self):
+  L.PRESET_FILE.write_text('Potato');os.environ['BODDY_STUDIO_FULL_GRAPHICS']='1'
+  (L.ROOT/'Studio'/'ClientSettings').mkdir(parents=True,exist_ok=True)
+  (L.ROOT/'Studio'/'ClientSettings'/'ClientAppSettings.json').write_text('{}')
+  Launch([0]).go();self.assertNotIn('DFIntTaskSchedulerTargetFps',self.flags())
+
 class ScreenDepth(unittest.TestCase):
  def setUp(self):reset()
  def tearDown(self):

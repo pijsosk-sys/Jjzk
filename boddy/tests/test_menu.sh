@@ -28,4 +28,11 @@ check "Screen colours warns that 16-bit leaves Studio's 3D view black" 'grep -q 
 check "picking 16-bit saves it for start-desktop.sh" '[ "$(cat "$HOME/.config/boddy/vnc-depth")" = 16 ]'
 menu "Screen colours" "24-bit"
 check "picking 24-bit saves it" '[ "$(cat "$HOME/.config/boddy/vnc-depth")" = 24 ]'
+for p in Lower Potato Low; do
+    menu "Performance preset" "$p"
+    check "Performance preset: picking $p saves it" '[ "$(cat "$HOME/$DATA/preset" 2>/dev/null)" = $p ] && grep -q "preset set to $p" "$HOME/zenity.log"'
+done
+check "Performance preset lists Low, Lower and Potato" 'grep -q "Low.*Lower.*Potato" "$HOME/zenity.log"'
+menu "" "Performance preset"
+check "main menu offers Performance preset" 'grep -q "Performance preset" "$HOME/zenity.log"'
 echo "$fails failed"; exit $((fails>0))

@@ -937,6 +937,12 @@ def main():
   RENDERER_FILE.write_text(want);say('Studio will now draw with '+GRAPHICS[want])
   if want=='GPU' and kgsl_device():say('Note: %s, so Studio will draw on the processor until it is there.'%kgsl_device())
   return
+ if arg.startswith('--use-preset='):
+  want=arg.split('=',1)[1]
+  if want not in PRESETS:raise RuntimeError('Performance preset must be one of: '+', '.join(PRESETS))
+  PRESET_FILE.write_text(want);v=PRESETS[want]
+  say('Studio will now use the %s preset: %d fps, 3D view at %d thousand pixels'%(
+   want,v['DFIntTaskSchedulerTargetFps'],v['DFIntDebugDynamicRenderKiloPixels']));return
  if arg.startswith('--use-windows='):
   want=arg.split('=',1)[1]
   if want not in ('desktop','separate'):raise RuntimeError('Window mode must be desktop or separate')
@@ -1248,16 +1254,30 @@ LIGHT_FLAGS={'DFIntTaskSchedulerTargetFps':24,'DFIntDebugFRMQualityLevelOverride
  # Draw the 3D view at about 240,000 pixels (a 1274x532 view is 678,000) and scale it up: on a
  # processor-drawn view that cuts the work per frame by almost two thirds, for a softer picture.
  'DFIntDebugDynamicRenderKiloPixels':240}
+# Performance presets (the Studio menu's "Performance preset"): the frame rate Studio aims for and how many
+# thousand pixels it draws the 3D view at before scaling it up. Low is the light settings above; Lower and Potato
+# give up smoothness and sharpness for less work per second on slow phones (Potato draws about 37% of Low's
+# pixels, at 15 fps).
+PRESETS={'Low':{'DFIntTaskSchedulerTargetFps':24,'DFIntDebugDynamicRenderKiloPixels':240},
+ 'Lower':{'DFIntTaskSchedulerTargetFps':20,'DFIntDebugDynamicRenderKiloPixels':160},
+ 'Potato':{'DFIntTaskSchedulerTargetFps':15,'DFIntDebugDynamicRenderKiloPixels':90}}
+PRESET_FILE=ROOT/'preset'
+def preset():
+ p=os.getenv('BODDY_STUDIO_PRESET') or (PRESET_FILE.read_text().strip() if PRESET_FILE.exists() else '')
+ return p if p in PRESETS else 'Low'
 def write_studio_settings(studio,renderer):
  path=studio/'ClientSettings'/'ClientAppSettings.json'
  try:flags=json.loads(path.read_text()) if path.exists() else {}
  except ValueError:flags={}  # not ours and not valid: replaced
  if not isinstance(flags,dict):flags={}
- if os.getenv('BODDY_STUDIO_FULL_GRAPHICS')!='1':flags.update(LIGHT_FLAGS)
+ full=os.getenv('BODDY_STUDIO_FULL_GRAPHICS')=='1'
+ if not full:flags.update(LIGHT_FLAGS);flags.update(PRESETS[preset()])
  # Direct3D 11 is what Studio uses anyway; say so, so an earlier preference for another API is undone.
  for r in ('OpenGL','Vulkan','D3D11FL10','D3D11'):flags['FFlagDebugGraphicsPrefer'+r]=r=='D3D11'
  path.parent.mkdir(exist_ok=True);path.write_text(json.dumps(flags,indent=1))
- say('Studio settings: light (24 fps, lowest quality, reduced 3D resolution)')
+ if full:say('Studio settings: full graphics (BODDY_STUDIO_FULL_GRAPHICS=1)')
+ else:say('Studio settings: %s preset (%d fps, lowest quality, 3D view drawn at %d thousand pixels)'%(
+  preset(),flags['DFIntTaskSchedulerTargetFps'],flags['DFIntDebugDynamicRenderKiloPixels']))
 # Box64 names an instruction it cannot run ("Unimplemented Opcode") only at BOX64_LOG=1, which also logs
 # every unaligned access it fixes and every child-process signal. Studio runs at that level and this
 # drops the noise, keeping the lines that say why it crashed.
