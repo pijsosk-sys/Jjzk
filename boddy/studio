@@ -680,7 +680,11 @@ FIREFOX_PREFS={
  'datareporting.policy.dataSubmissionEnabled':False,'datareporting.healthreport.uploadEnabled':False,'toolkit.telemetry.enabled':False,
  'network.protocol-handler.external.roblox-studio-auth':True,
  # Little memory for one sign-in page: Studio holds most of the phone's, and Android closes Boddy when it runs out.
- 'browser.cache.memory.capacity':16384,'browser.cache.disk.enable':False,'image.mem.surfacecache.max_size_kb':32768,
+ 'browser.cache.memory.capacity':16384,'browser.cache.memory.enable':False,
+ # Its JavaScript compilers and smooth drawing cost memory and processor a sign-in page does not need.
+ 'javascript.options.ion':False,'javascript.options.baselinejit':False,'javascript.options.wasm_optimizingjit':False,
+ 'layout.frame_rate':20,'general.smoothScroll':False,'toolkit.cosmeticAnimations.enabled':False,
+ 'browser.toolbars.bookmarks.visibility':'never','extensions.pocket.enabled':False,'browser.newtabpage.enabled':False,'browser.cache.disk.enable':False,'image.mem.surfacecache.max_size_kb':32768,
  'browser.sessionhistory.max_entries':3,'browser.sessionstore.max_tabs_undo':0,'javascript.options.mem.gc_incremental_slice_ms':5,
  # Only the sign-in page is needed while Studio runs: no fetching of pages, names or connections ahead of time
  # (link prefetch, DNS prefetch, the network predictor, speculative connections from the address bar).
@@ -730,16 +734,15 @@ def close_signin_browser():
   if profile.encode() in cmd and any(b'firefox' in c for c in cmd[:1]):
    try:os.kill(int(n),signal.SIGTERM)
    except OSError:pass
-# Where "Login via Browser" signs in. The phone's own browser keeps Firefox's memory out of Boddy: Studio and
-# a Firefox inside Boddy together ran the phone out of memory, and Android closed Boddy. When the sign-in is
-# done, roblox.com sends the browser to a roblox-studio-auth: link, which the Boddy app takes
-# (StudioSignInActivity) and passes back here through run-in-desktop.sh. Firefox inside Boddy stays the way
-# when the phone cannot be reached, or when chosen in the Studio menu ("Sign-in browser").
+# Where "Login via Browser" signs in: Firefox in Boddy (the default), with Studio frozen meanwhile so the two
+# fit in the phone's memory (see studio_frozen), or the phone's own browser, chosen in the Studio menu
+# ("Sign-in browser"): roblox.com then sends that browser to a roblox-studio-auth: link, which the Boddy app
+# takes (StudioSignInActivity) and passes back here through run-in-desktop.sh.
 SIGNIN_FILE=ROOT/'signin-browser'
 BODDY_CTL='/opt/boddy/boddy-ctl'
 def signin_browser():
  b=os.getenv('BODDY_STUDIO_SIGNIN') or (SIGNIN_FILE.read_text().strip() if SIGNIN_FILE.exists() else '')
- return b if b in ('phone','firefox') else 'phone'
+ return b if b in ('phone','firefox') else 'firefox'
 def open_on_phone(url):
  """Opens the link in the phone's browser through the Boddy app; whether that worked."""
  if not os.access(BODDY_CTL,os.X_OK):return False
@@ -757,6 +760,40 @@ def open_in_browser(url):
    return
   say('The phone\'s browser could not be used; signing in with Firefox in Boddy instead')
  open_in_firefox(url)
+def studio_processes():
+ """Studio and the Wine processes it runs on (those of the launch, BODDY_STUDIO_SESSION), not this helper or
+ what started it (Wine's winebrowser), nor Firefox."""
+ mine={os.getpid()};p=os.getppid()
+ while p>1 and p not in mine:
+  mine.add(p)
+  try:p=int(open('/proc/%d/stat'%p).read().rsplit(')',1)[1].split()[1])
+  except (OSError,ValueError,IndexError):break
+ found=[]
+ for n in os.listdir('/proc'):
+  if not n.isdigit() or int(n) in mine:continue
+  try:
+   comm=open('/proc/%s/comm'%n).read().strip()
+   if not (comm.endswith('.exe') or comm.startswith(('wineserver','RobloxStudio'))):continue
+   if b'BODDY_STUDIO_SESSION=' in open('/proc/%s/environ'%n,'rb').read():found.append(int(n))
+  except OSError:pass
+ return found
+FROZEN_FILE=ROOT/'studio-frozen'  # Studio's frozen processes, so any later start can unfreeze them
+def freeze_studio():
+ """Stops Studio while the sign-in Firefox is open. Studio only waits for the sign-in meanwhile; stopped, its
+ memory goes unused, and Android can squeeze it into its compressed swap to make room for Firefox (Studio and
+ Firefox side by side ran the phone out of memory, and Android closed Boddy)."""
+ if os.getenv('BODDY_STUDIO_FREEZE')=='0':return
+ pids=studio_processes()
+ for pid in pids:
+  try:os.kill(pid,signal.SIGSTOP)
+  except OSError:pass
+ if pids:FROZEN_FILE.write_text(' '.join(map(str,pids)));say('Studio is paused while you sign in (%d processes)'%len(pids))
+def unfreeze_studio():
+ if not FROZEN_FILE.exists():return
+ for pid in FROZEN_FILE.read_text().split():
+  try:os.kill(int(pid),signal.SIGCONT)
+  except (OSError,ValueError):pass
+ FROZEN_FILE.unlink(missing_ok=True);say('Studio runs again')
 def open_in_firefox(url):
  firefox=shutil.which('firefox-esr') or shutil.which('firefox')
  if not firefox:raise RuntimeError('Firefox is not installed; install firefox-esr from Install Apps')
@@ -776,10 +813,14 @@ def open_in_firefox(url):
  log=CACHE/'firefox.log';nofile=int(os.getenv('BODDY_NOFILE_SOFT') or 0)
  say('Opening in Firefox: '+url.split('?')[0])
  with log.open('w') as out:
-  proc=subprocess.Popen([firefox,'--profile',str(profile),url],stdin=subprocess.DEVNULL,stdout=out,stderr=subprocess.STDOUT,
+  # A window of 900x700 instead of the whole screen: less to draw and less memory for it.
+  proc=subprocess.Popen([firefox,'--profile',str(profile),'--width','900','--height','700',url],stdin=subprocess.DEVNULL,stdout=out,stderr=subprocess.STDOUT,
    env=browser_env(),start_new_session=True,preexec_fn=lambda:reset_process_state(nofile))
  threading.Thread(target=bring_to_front,args=(proc,),daemon=True).start()
- code=proc.wait()
+ # Once Firefox shows the page, Studio pauses until the sign-in comes back (pass_auth) or Firefox closes.
+ time.sleep(3);freeze_studio()
+ try:code=proc.wait()
+ finally:unfreeze_studio()
  if code==0:return
  saved=Path.home()/'Phone/Download'
  if saved.is_dir():shutil.copy(log,saved/'Boddy-Studio-firefox.log');where='Downloads/Boddy-Studio-firefox.log'
@@ -1079,6 +1120,7 @@ def pass_auth(link):
  if len(link)>16384 or not re.fullmatch(r'roblox-studio-auth:[\x21-\x7e]+',link):raise ValueError('Invalid Studio sign-in link')
  wine=installed_wine_command();studio=ROOT/'Studio'
  if not wine or not (studio/'RobloxStudioBeta.exe').exists():raise RuntimeError('Studio is not installed; open Studio from the desktop first')
+ unfreeze_studio()  # Studio has to run to take the sign-in
  say('Passing browser sign-in to Roblox Studio')
  # This second Studio process only forwards the link to the running one; its exit code says nothing about the sign-in.
  r=subprocess.run([*wine,str(studio/'RobloxStudioBeta.exe'),link],cwd=studio,env=wine_env(prefix_dir()))
@@ -1097,6 +1139,7 @@ def main():
  lock=(ROOT/'launcher.lock').open('w')
  try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
  except BlockingIOError:raise RuntimeError('A Studio launcher is already running')
+ unfreeze_studio()  # left frozen by a sign-in helper that was stopped
  resume_desktop()  # left paused by a launcher that was stopped (e.g. by Android) before Studio ended
  if arg=='--diagnose':diagnose();return
  if arg.startswith('--use-renderer='):

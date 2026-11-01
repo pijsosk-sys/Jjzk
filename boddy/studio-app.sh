@@ -207,10 +207,10 @@ case "$choice" in
         exit 0 ;;
     "Sign-in browser")
         # Where "Login via Browser" signs in (the launcher's signin_browser()).
-        now=$(cat "$HOME/.local/share/roblox-studio/signin-browser" 2>/dev/null); [ "$now" = firefox ] || now=phone
+        now=$(cat "$HOME/.local/share/roblox-studio/signin-browser" 2>/dev/null); [ "$now" = phone ] || now=firefox
         pick=$(zenity --list --title="$TITLE" --width=560 --height=260 --column=Browser --column=Status \
-            "Phone browser" "$([ "$now" = phone ] && echo 'in use, ')recommended: leaves Studio the memory" \
-            "Firefox in Boddy" "$([ "$now" = firefox ] && echo 'in use, ')needs much more memory next to Studio" 2>/dev/null) || exit 0
+            "Firefox in Boddy" "$([ "$now" = firefox ] && echo 'in use, ')default: Studio pauses while you sign in" \
+            "Phone browser" "$([ "$now" = phone ] && echo 'in use, ')the browser has to hand the sign-in back to Boddy" 2>/dev/null) || exit 0
         case "$pick" in "Phone browser") "$STUDIO" --use-signin=phone >/dev/null 2>&1 ;; "Firefox in Boddy") "$STUDIO" --use-signin=firefox >/dev/null 2>&1 ;; *) exit 0 ;; esac
         zenity --info --width=420 --title="$TITLE" --text="Sign-in browser set to $pick." 2>/dev/null
         exit 0 ;;
@@ -297,7 +297,7 @@ if [ -e "$work/started" ]; then
     tip=""
     if [ ! -e "$SEEN/studio-signin-tip-shown" ]; then
         touch "$SEEN/studio-signin-tip-shown"
-        tip="\n\nTo sign in, choose <b>Login via Browser</b> in Studio. The sign-in opens in your phone's browser; when you are signed in there, allow it to open Boddy, which hands the sign-in to Studio."
+        tip="\n\nTo sign in, choose <b>Login via Browser</b> in Studio and sign in in the Firefox window that opens (Studio pauses meanwhile), then allow Firefox to open the Roblox Studio link."
     fi
     zenity --info --width=440 --title="$TITLE" --timeout=40 \
         --text="Roblox Studio is starting. On a phone its window can take 5 to 15 minutes to appear: leave Boddy open and don't open Studio again.$tip" 2>/dev/null &

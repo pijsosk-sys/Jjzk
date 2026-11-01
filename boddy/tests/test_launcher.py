@@ -158,21 +158,76 @@ class SignInBrowser(unittest.TestCase):
   L.say=lambda s:None
  def make_ctl(self,code):
   open(self.ctl,'w').write('#!/bin/sh\necho "$@" >"%s.args"\necho ok\nexit %d\n'%(self.ctl,code));os.chmod(self.ctl,0o755)
- def test_phone_browser_by_default(self):
+ def test_firefox_in_boddy_by_default(self):
   self.make_ctl(0);L.open_in_browser(self.URL)
+  self.assertEqual(self.firefox,[self.URL]);self.assertFalse(os.path.exists(self.ctl+'.args'))
+ def test_phone_browser_when_chosen(self):
+  self.make_ctl(0);L.SIGNIN_FILE.write_text('phone');L.open_in_browser(self.URL)
   self.assertEqual(open(self.ctl+'.args').read().split(),['phone-open',self.URL]);self.assertEqual(self.firefox,[])
  def test_firefox_when_the_phone_cannot_be_reached(self):
-  self.make_ctl(1);L.open_in_browser(self.URL);self.assertEqual(self.firefox,[self.URL])
+  L.SIGNIN_FILE.write_text('phone');self.make_ctl(1);L.open_in_browser(self.URL);self.assertEqual(self.firefox,[self.URL])
   os.unlink(self.ctl);L.open_in_browser(self.URL);self.assertEqual(len(self.firefox),2)
  def test_firefox_when_chosen(self):
   self.make_ctl(0);sys.argv=['studio','--use-signin=firefox'];L.main()
   L.open_in_browser(self.URL);self.assertEqual(self.firefox,[self.URL]);self.assertFalse(os.path.exists(self.ctl+'.args'))
   sys.argv=['studio','--use-signin=phone'];L.main();L.open_in_browser(self.URL);self.assertTrue(os.path.exists(self.ctl+'.args'))
  def test_bad_links_refused(self):
-  self.make_ctl(0)
+  self.make_ctl(0);L.SIGNIN_FILE.write_text('phone')
   for bad in ('file:///etc/passwd','javascript:alert(1)','https://x y'):
    with self.assertRaises(ValueError):L.open_in_browser(bad)
   self.assertFalse(os.path.exists(self.ctl+'.args'))
+
+class FreezeWhileSigningIn(unittest.TestCase):
+ """Studio is paused while the sign-in Firefox is open, and runs again when the sign-in comes back."""
+ def setUp(self):
+  import shutil,subprocess
+  reset();L.say=lambda s:None;self.d=tempfile.mkdtemp();self.procs=[]
+  def start(name,session=True):
+   exe=os.path.join(tempfile.mkdtemp(dir=self.d),name);shutil.copy(shutil.which('sleep'),exe)
+   env=dict(os.environ);env.pop('BODDY_STUDIO_SESSION',None)
+   if session:env['BODDY_STUDIO_SESSION']='123'
+   p=subprocess.Popen([exe,'60'],env=env);self.procs.append(p);return p
+  self.studio=start('RobloxStudioBeta.exe');self.server=start('wineserver64')
+  self.other=start('RobloxStudioBeta.exe',session=False)  # not from this launch: left alone
+  self.notwine=start('xfce4-panel')
+  time.sleep(0.3)
+ def tearDown(self):
+  for p in self.procs:p.kill()
+  L.FROZEN_FILE.unlink(missing_ok=True)
+ def state(self,p):return open('/proc/%d/stat'%p.pid).read().rsplit(')',1)[1].split()[0]
+ def test_freeze_and_unfreeze(self):
+  self.assertEqual(sorted(L.studio_processes()),sorted([self.studio.pid,self.server.pid]))
+  L.freeze_studio()
+  self.assertEqual((self.state(self.studio),self.state(self.server)),('T','T'))
+  self.assertNotEqual(self.state(self.other),'T');self.assertNotEqual(self.state(self.notwine),'T')
+  L.unfreeze_studio()
+  self.assertNotEqual(self.state(self.studio),'T');self.assertFalse(L.FROZEN_FILE.exists())
+ def test_frozen_only_while_firefox_is_open(self):
+  bin=os.path.join(self.d,'bin');os.mkdir(bin)
+  open(os.path.join(bin,'firefox-esr'),'w').write('#!/bin/sh\nsleep 6\n')
+  open(os.path.join(bin,'zenity'),'w').write('#!/bin/sh\nexit 0\n')
+  for f in ('firefox-esr','zenity'):os.chmod(os.path.join(bin,f),0o755)
+  os.environ['PATH']=bin+':'+PATH;L.xdo=lambda *a,**k:''
+  import threading
+  t=threading.Thread(target=L.open_in_firefox,args=('https://www.roblox.com/login',));t.start()
+  time.sleep(4.5);during=self.state(self.studio)
+  t.join(20);os.environ['PATH']=PATH
+  self.assertEqual(during,'T');self.assertNotEqual(self.state(self.studio),'T')
+ def test_signin_coming_back_unfreezes_first(self):
+  L.freeze_studio();self.assertEqual(self.state(self.studio),'T')
+  seen=[]
+  (L.ROOT/'Studio').mkdir(parents=True,exist_ok=True);(L.ROOT/'Studio'/'RobloxStudioBeta.exe').write_bytes(b'MZ')
+  saved=(L.installed_wine_command,L.close_signin_browser)
+  L.installed_wine_command=lambda:['true'];L.close_signin_browser=lambda:None
+  self.addCleanup(lambda:(setattr(L,'installed_wine_command',saved[0]),setattr(L,'close_signin_browser',saved[1])))
+  _run=L.subprocess.run
+  def run(args,*a,**k):
+   if args and args[0]=='true':seen.append(self.state(self.studio))
+   return _run(args,*a,**k)
+  L.subprocess.run=run
+  try:L.pass_auth('roblox-studio-auth:?code=abc')
+  finally:L.subprocess.run=_run
+  self.assertEqual(len(seen),1);self.assertNotEqual(seen[0],'T')  # running when the link reached it
 
 class ScreenDepth(unittest.TestCase):
  def setUp(self):reset()
