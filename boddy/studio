@@ -700,6 +700,28 @@ def reset_process_state(nofile):
 def notify(text):
  say(text)
  if shutil.which('zenity'):subprocess.run(['zenity','--error','--width=460','--title=Roblox Studio sign-in','--text='+text],env=browser_env())
+def bring_to_front(proc,seconds=120):
+ """Puts the sign-in Firefox in front of Studio (it opened behind Studio's window, out of reach) and keeps
+ it above Studio while it is open; Studio comes back to the front when it closes."""
+ deadline=time.time()+seconds
+ while time.time()<deadline and proc.poll() is None:
+  ids=xdo('search','--onlyvisible','--pid',str(proc.pid)).split() or xdo('search','--onlyvisible','--class','firefox').split()
+  if ids:
+   time.sleep(2)  # let it finish opening, or the window manager may place Studio over it again
+   for wid in ids:
+    wm_state(wid,'add,above');xdo('windowactivate',wid)
+   say('Firefox is in front for signing in');return
+  time.sleep(1)
+def close_signin_browser():
+ """Ends the Firefox opened for signing in (by its profile), now that Studio has the sign-in."""
+ profile=str(ROOT/'firefox-profile')
+ for n in os.listdir('/proc'):
+  if not n.isdigit():continue
+  try:cmd=open('/proc/%s/cmdline'%n,'rb').read().split(b'\0')
+  except OSError:continue
+  if profile.encode() in cmd and any(b'firefox' in c for c in cmd[:1]):
+   try:os.kill(int(n),signal.SIGTERM)
+   except OSError:pass
 def open_in_browser(url):
  # Wine's winebrowser calls this for links Studio opens, e.g. "Login via Browser".
  if not re.fullmatch(r'https?://[\x21-\x7e]+',url) or len(url)>16384:raise ValueError('Refusing to open link: '+url[:200])
@@ -712,6 +734,7 @@ def open_in_browser(url):
  with log.open('w') as out:
   proc=subprocess.Popen([firefox,'--profile',str(profile),url],stdin=subprocess.DEVNULL,stdout=out,stderr=subprocess.STDOUT,
    env=browser_env(),start_new_session=True,preexec_fn=lambda:reset_process_state(nofile))
+ threading.Thread(target=bring_to_front,args=(proc,),daemon=True).start()
  code=proc.wait()
  if code==0:return
  saved=Path.home()/'Phone/Download'
@@ -780,6 +803,10 @@ def set_window_mode(wine,env,prefix):
  # Studio Mode puts Claude Code beside Studio: the desktop then takes the left part of the screen.
  share=STUDIO_SHARE if os.getenv('BODDY_STUDIO_LAYOUT')=='split' else 1.0
  want='%dx%d'%(int(size[0]*share)-8,size[1]-72) if size else ''
+ # What the window manager leaves free above Boddy's taskbar, less the window's title bar: so Studio never
+ # covers the taskbar and Boddy's apps (Firefox for signing in among them) stay one tap away.
+ area=work_area() if size else None
+ if area:want='%dx%d'%(int(area[2]*share)-8,area[3]-32)
  apply_desktop_settings(wine,env,prefix,want)
  say('Studio windows: '+('one Wine window of %s'%want if want else 'separate windows'))
 def wineserver(wine):
@@ -835,6 +862,70 @@ def desktop_background(wine,env):
  except subprocess.TimeoutExpired:return None
  m=re.search(r'Background\s+REG_SZ\s+(.*?)\s*$',r.stdout,re.M)
  return m.group(1) if m else None
+def xdo(*args,timeout=20):
+ """Runs xdotool (Boddy installs it); its output, or '' when it is missing or fails."""
+ if not shutil.which('xdotool'):return ''
+ try:return subprocess.run(['xdotool',*args],capture_output=True,text=True,errors='replace',timeout=timeout).stdout
+ except Exception:return ''
+def wm_state(wid,change):
+ """Asks the window manager to change a window's state, e.g. 'remove,fullscreen' or 'add,above'. Debian's
+ xdotool is too old for this; wmctrl does it."""
+ if not shutil.which('wmctrl'):return
+ try:subprocess.run(['wmctrl','-i','-r',wid,'-b',change],capture_output=True,timeout=20)
+ except Exception:pass
+def work_area():
+ """(x, y, width, height) of the screen not taken by Boddy's taskbar, from the window manager, or None."""
+ try:out=subprocess.run(['xprop','-root','_NET_WORKAREA'],capture_output=True,text=True,timeout=10).stdout
+ except Exception:return None
+ m=re.search(r'=\s*(\d+), (\d+), (\d+), (\d+)',out)
+ return tuple(int(v) for v in m.groups()) if m else None
+def keep_studio_above_taskbar(stop):
+ """While Studio runs, puts its Wine desktop window back inside the work area whenever it covers Boddy's
+ taskbar (Wine can make it full screen), so the taskbar and its apps stay reachable."""
+ share=STUDIO_SHARE if os.getenv('BODDY_STUDIO_LAYOUT')=='split' else 1.0
+ def run():
+  while not stop.wait(3):
+   area=work_area()
+   if not area:continue
+   ax,ay,aw,ah=area
+   for wid in xdo('search','--onlyvisible','--name','^%s - '%DESKTOP_NAME).split():
+    g=dict(re.findall(r'^(\w+)=(\d+)$',xdo('getwindowgeometry','--shell',wid),re.M))
+    if not g:continue
+    x,y,w,h=(int(g.get(k,0)) for k in ('X','Y','WIDTH','HEIGHT'))
+    if y+h<=ay+ah and y>=ay:continue  # inside: nothing to do
+    wm_state(wid,'remove,fullscreen');wm_state(wid,'remove,maximized_vert,maximized_horz')
+    xdo('windowsize',wid,str(int(aw*share)-8),str(ah-32));xdo('windowmove',wid,str(ax),str(ay))
+    say('Moved Studio\'s window off Boddy\'s taskbar')
+ if window_mode()!='desktop':return None
+ t=threading.Thread(target=run,daemon=True);t.start();return t
+# While Studio runs it covers the desktop, which still drew its icons and wallpaper and watched for files,
+# notifications and power events behind it: work for nothing. Those are paused (SIGSTOP: no processor time,
+# and the session does not start them again as it would after a kill) and resumed when Studio ends. The
+# taskbar and the window manager keep running.
+DESKTOP_EXTRAS=('xfdesktop','xfce4-notifyd','tumblerd','xfce4-screensaver','light-locker','xfce4-power-manager','update-notifier')
+PAUSED_FILE=ROOT/'desktop-paused'  # their process ids, to resume them even if this launcher was stopped
+def pause_desktop():
+ """Pauses the desktop programs Studio hides; returns a function that resumes them."""
+ if os.getenv('BODDY_STUDIO_KEEP_DESKTOP')=='1':return resume_desktop
+ names={n[:15] for n in DESKTOP_EXTRAS}  # /proc/N/comm holds the first 15 characters of a name
+ paused=[]
+ for n in os.listdir('/proc'):
+  if not n.isdigit():continue
+  try:comm=open('/proc/%s/comm'%n).read().strip()
+  except OSError:continue
+  if comm in names:
+   try:os.kill(int(n),signal.SIGSTOP);paused.append((n,comm))
+   except OSError:pass
+ if paused:
+  PAUSED_FILE.write_text(' '.join(p for p,_ in paused))
+  say('Paused while Studio runs (hidden behind it anyway): '+', '.join(sorted({c for _,c in paused})))
+ return resume_desktop
+def resume_desktop():
+ if not PAUSED_FILE.exists():return
+ for p in PAUSED_FILE.read_text().split():
+  try:os.kill(int(p),signal.SIGCONT)
+  except (OSError,ValueError):pass
+ PAUSED_FILE.unlink(missing_ok=True);say('Desktop resumed')
 PHANTOM_LIMIT=32
 def process_count():
  return sum(1 for n in os.listdir('/proc') if n.isdigit())
@@ -920,6 +1011,8 @@ def pass_auth(link):
  # This second Studio process only forwards the link to the running one; its exit code says nothing about the sign-in.
  r=subprocess.run([*wine,str(studio/'RobloxStudioBeta.exe'),link],cwd=studio,env=wine_env(prefix_dir()))
  say('Sign-in forwarded to Studio (forwarding process exit code %d)'%r.returncode)
+ # Firefox has done its job: close it, so its memory goes back to Studio and Studio is in front again.
+ close_signin_browser()
 def main():
  ROOT.mkdir(parents=True,exist_ok=True);CACHE.mkdir(parents=True,exist_ok=True);prune_logs()
  arg=sys.argv[1] if len(sys.argv)>1 else ''
@@ -928,6 +1021,7 @@ def main():
  lock=(ROOT/'launcher.lock').open('w')
  try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
  except BlockingIOError:raise RuntimeError('A Studio launcher is already running')
+ resume_desktop()  # left paused by a launcher that was stopped (e.g. by Android) before Studio ended
  if arg=='--diagnose':diagnose();return
  if arg.startswith('--use-renderer='):
   want=arg.split('=',1)[1]
@@ -1033,6 +1127,11 @@ def try_every_way(place):
   say('Launching real Roblox Studio. A process start alone does not prove the editor works.')
   say('Studio\'s built-in login does not work here: choose "Login via Browser", sign in in the Firefox window that opens,')
   say('then allow Firefox to open the Roblox Studio sign-in link.')
+  # Keeping Studio's window off the taskbar and the sign-in browser in front of Studio uses these two.
+  missing=[t for t in ('xdotool','wmctrl') if not shutil.which(t)]
+  if missing:
+   try:apt_install(*missing)
+   except Exception as e:say('Warning: could not install %s: %s'%(' '.join(missing),str(e).splitlines()[0]))
   restore_display=fit_display();set_window_mode(wine,env,prefix)
   say('Processes before Studio starts: '+process_summary())
   # Vulkan presents nothing on a 16-bit screen (Boddy's "Screen colours"), so Studio's 3D view would stay black.
@@ -1046,8 +1145,9 @@ def try_every_way(place):
     'Android stops Boddy above %d.'%(process_count(),PHANTOM_LIMIT))
   say('Roblox Studio is starting (%s, %s); its window can take several minutes to appear on a phone.'%(name,GRAPHICS[renderer]))
   began=time.time()
+  resume=pause_desktop();placed=threading.Event();keep_studio_above_taskbar(placed)
   try:code,notable=run_studio(args,studio,env)
-  finally:restore_display()
+  finally:placed.set();resume();restore_display()
   ran=time.time()-began
   say('Studio process exited with code %d after %d s'%(code,ran))
   say('Processes at the end: %s; most while it ran: %d'%(process_summary(),MOST_PROCESSES[0]))

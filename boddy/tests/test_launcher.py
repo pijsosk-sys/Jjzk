@@ -125,6 +125,17 @@ class Presets(unittest.TestCase):
   (L.ROOT/'Studio'/'ClientSettings'/'ClientAppSettings.json').write_text('{}')
   Launch([0]).go();self.assertNotIn('DFIntTaskSchedulerTargetFps',self.flags())
 
+class SignIn(unittest.TestCase):
+ def test_signin_browser_closed_once_studio_has_the_login(self):
+  import subprocess
+  # Stand-ins that run until stopped, named firefox-esr (argv[0]) with Firefox's arguments.
+  wait=['-c','import time;time.sleep(60)']
+  other=subprocess.Popen(['/usr/lib/firefox-esr/firefox-esr',*wait],executable=sys.executable)  # the user's own Firefox
+  signin=subprocess.Popen(['/usr/lib/firefox-esr/firefox-esr',*wait,'--profile',str(L.ROOT/'firefox-profile')],executable=sys.executable)
+  time.sleep(0.5);self.assertIsNone(signin.poll())
+  L.close_signin_browser()
+  self.assertIsNotNone(signin.wait(5));self.assertIsNone(other.poll());other.kill()
+
 class ScreenDepth(unittest.TestCase):
  def setUp(self):reset()
  def tearDown(self):
