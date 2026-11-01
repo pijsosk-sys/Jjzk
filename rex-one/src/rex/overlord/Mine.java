@@ -73,6 +73,7 @@ public final class Mine {
    private int radius = 40;
    private class_2338 current;
    private int arrivals;
+   private int walkTicks;
    private final Set<class_2338> rejected = new HashSet<>();
    private int heading;
    private int headingTries;
@@ -188,6 +189,7 @@ public final class Mine {
             if (!this.rejected.contains(candidate) && this.wanted(client, candidate) && Dig.canBreak(stock, Ids.of(client.field_1687.method_8320(candidate)))) {
                this.current = candidate;
                this.arrivals = 0;
+               this.walkTicks = 0;
                break;
             }
          }
@@ -214,6 +216,7 @@ public final class Mine {
             return;
          }
          if (result == Dig.Result.BREAKING) {
+            this.walkTicks = 0;
             navigator.release();
             this.traveller.release();
             this.status = this.dig.status;
@@ -230,13 +233,25 @@ public final class Mine {
             this.status = "Closing a window before walking";
             return;
          }
+         // Within three blocks of the block itself, not of the cell above it: a log near the top
+         // of a spruce has no standing room above it, and aiming there meant arriving nowhere.
          rex.path.Goal goal = new rex.path.Goal.Near(
-            this.current.method_10263(), this.current.method_10264() + 1, this.current.method_10260(), 2.5
+            this.current.method_10263(), this.current.method_10264(), this.current.method_10260(), 3.0
          );
          if (!goal.equals(this.traveller.goal())) {
             this.traveller.go(client, goal);
          }
          rex.path.Traveller.Result walk = this.traveller.tick(client, TRAVEL, tick);
+         // Twenty seconds is long enough to get to anything within the scan radius. Without this
+         // a block it could walk near but never quite reach went round for ever: arrive, replan,
+         // walk, arrive, and the stall watchdog counted it as no progress at all.
+         if (++this.walkTicks > 400) {
+            this.rejected.add(this.current);
+            this.current = null;
+            this.traveller.stop(client);
+            this.status = "Too long getting to that one; trying another";
+            return;
+         }
          if (walk == rex.path.Traveller.Result.UNREACHABLE) {
             this.rejected.add(this.current);
             this.current = null;
