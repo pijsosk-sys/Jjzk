@@ -26,7 +26,19 @@ copy_log() {
                   grep -vE 'Special unaligned|sigaction handler|Signal (3|17):|\(mmap\)|mmapped:3' | tail -n 80
               echo "=== launcher log (last 150 lines) ==="
               grep -vE '^Download progress: |Special unaligned case|Marked db .* as dirty|sigaction handler for sig (3|17)|Signal (3|17): ' "$1" 2>/dev/null | tail -n 150
-              [ -s "$MONITOR" ] && { echo "=== session monitor (last 20 lines) ==="; tail -n 20 "$MONITOR"; } )
+              [ -s "$MONITOR" ] && { echo "=== session monitor (last 20 lines) ==="; tail -n 20 "$MONITOR"; }
+              # Signing in runs in separate launches with their own logs (helper-*.log): opening the sign-in
+              # page, and the sign-in coming back from the browser. Those since this launch, by their names' times.
+              since=$(basename "$1" .log | sed -n 's/^launcher-\([0-9]*-[0-9]*\).*/\1/p')
+              echo "=== sign-in steps since this launch ==="
+              found=
+              for h in "$LOG_DIR"/helper-*.log; do
+                  [ -e "$h" ] || continue
+                  t=$(basename "$h" .log | sed -n 's/^helper-\([0-9]*-[0-9]*\).*/\1/p')
+                  [[ -z "$since" || "$t" > "$since" ]] || continue
+                  found=1; echo "--- $(basename "$h")"; grep -vE 'Special unaligned|^\[.*BOX64' "$h" | tail -n 15
+              done
+              [ -n "$found" ] || echo "none: no sign-in page was opened and no sign-in came back from a browser" )
     if command -v xclip >/dev/null && printf '%s\n' "$report" | xclip -selection clipboard 2>/dev/null; then
         zenity --info --width=360 --title="$TITLE" --timeout=6 --text="Log copied. Paste it anywhere on your phone." 2>/dev/null
     else

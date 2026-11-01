@@ -751,6 +751,7 @@ def open_in_browser(url):
  # Wine's winebrowser calls this for links Studio opens, e.g. "Login via Browser".
  if not re.fullmatch(r'https?://[\x21-\x7e]+',url) or len(url)>16384:raise ValueError('Refusing to open link: '+url[:200])
  if signin_browser()=='phone':
+  say('Sign-in page: '+url.split('?')[0])
   if open_on_phone(url):
    say('Opened on the phone\'s browser: '+url.split('?')[0]+'. After signing in there, Boddy hands the sign-in back to Studio.')
    return
@@ -1082,6 +1083,10 @@ def pass_auth(link):
  # This second Studio process only forwards the link to the running one; its exit code says nothing about the sign-in.
  r=subprocess.run([*wine,str(studio/'RobloxStudioBeta.exe'),link],cwd=studio,env=wine_env(prefix_dir()))
  say('Sign-in forwarded to Studio (forwarding process exit code %d)'%r.returncode)
+ if shutil.which('zenity'):
+  subprocess.Popen(['zenity','--info','--width=440','--title=Roblox Studio sign-in','--timeout=30','--text=The sign-in was '
+   'passed to Studio. If Studio still shows its sign-in screen after a minute, choose Copy log in the Studio menu '
+   'and send it.'],env=browser_env(),stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
  # Firefox has done its job: close it, so its memory goes back to Studio and Studio is in front again.
  close_signin_browser()
 def main():

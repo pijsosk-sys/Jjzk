@@ -5,6 +5,9 @@ export DISPLAY=:1 HOME=/root XDG_RUNTIME_DIR=/tmp/runtime-root
 # Studio launcher, which checks the link and passes it to the running Studio.
 case "$1" in roblox-studio-auth:*)
     setsid /opt/boddy/studio "$1" >/dev/null 2>&1 &
+    # Say it arrived, so a sign-in that Studio does not take is told apart from one that never came back.
+    setsid zenity --info --width=420 --title="Roblox Studio" --timeout=15 \
+        --text="Your sign-in came back from the browser. Passing it to Roblox Studio; this can take a minute." >/dev/null 2>&1 &
     exit 0 ;;
 esac
 f=/usr/share/applications/boddy-$1.desktop

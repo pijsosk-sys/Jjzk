@@ -58,4 +58,20 @@ launch 0
 check "Open Studio: launcher runs, no error shown" '[ -s "$HOME/stub.pid" ] && ! grep -q -- "--error" "$HOME/zenity.log"'
 launch 3
 check "Open Studio: a failed launch shows its exit code" 'grep -q "exit code 3" "$HOME/zenity.log"'
+# Copy log (from the "Studio is already running" question) includes the sign-in steps since the launch.
+export HOME=$(mktemp -d) DISPLAY=:99
+mkdir -p "$HOME/.config/boddy" "$HOME/bin" "$HOME/.cache/roblox-studio"
+printf '#!/bin/bash\ncase "$*" in *--question*) echo "Copy log" ;; esac\nexit 0\n' >"$HOME/bin/zenity"
+printf '#!/bin/bash\ncat >"$HOME/clipboard"\n' >"$HOME/bin/xclip"; chmod +x "$HOME/bin/"*
+L=$HOME/.cache/roblox-studio
+echo "Launching real Roblox Studio" >"$L/launcher-20261101-140000-1.log"; ln -s "$L/launcher-20261101-140000-1.log" "$L/latest.log"
+echo "Opening on the phone: old" >"$L/helper-20261101-130000-2.log"
+echo "Sign-in page: https://www.roblox.com/login" >"$L/helper-20261101-140500-3.log"
+echo "Passing browser sign-in to Roblox Studio" >"$L/helper-20261101-140900-4.log"
+sleep 300 & echo $! >"$HOME/.config/boddy/studio-running"
+PATH="$HOME/bin:$PATH" bash "$BODDY/studio-app.sh" </dev/null >/dev/null 2>&1
+kill %1 2>/dev/null
+check "Copy log has the sign-in page step" 'grep -q "Sign-in page: https://www.roblox.com/login" "$HOME/clipboard"'
+check "Copy log has the sign-in coming back" 'grep -q "Passing browser sign-in" "$HOME/clipboard"'
+check "Copy log leaves out sign-ins from before this launch" '! grep -q "Opening on the phone: old" "$HOME/clipboard"'
 echo "$fails failed"; exit $((fails>0))
