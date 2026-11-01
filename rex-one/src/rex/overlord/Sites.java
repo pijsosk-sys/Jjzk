@@ -39,6 +39,7 @@ public final class Sites {
    private String pendingKey = "";
    private class_2338 pendingStation;
    private int pendingTicks;
+   private int unreachableTicks;
    /** Spots a block was clicked into and never appeared in; they are not tried again. */
    private final Set<class_2338> badSpots = new HashSet<>();
    public String status = "";
@@ -180,8 +181,16 @@ public final class Sites {
       if (known != null) {
          this.pendingStation = null;
          this.use(client, navigator, known, false, null, "Opening the " + Ids.pretty(id));
+         // A station it cannot walk to is no use whatever it remembers about it; after three
+         // seconds of saying so, forget it and put another one down.
+         if (this.status.contains(": no way to") && ++this.unreachableTicks > 60) {
+            this.unreachableTicks = 0;
+            this.stations.remove(key);
+            this.status = "Cannot reach the " + Ids.pretty(id) + "; putting another down";
+         }
          return false;
       }
+      this.unreachableTicks = 0;
       // A block does not appear in the world on the tick its click is sent. Checking for it there
       // and then always said no, so nothing was ever remembered and it kept putting another one
       // down until the cobblestone ran out.

@@ -33,6 +33,8 @@ public final class Fight {
    private static final double ATTACK = 3.0;
    /** Hostiles this close are dealt with before anything else. */
    private static final double ENGAGE = 7.0;
+   /** Once in melee it stays in melee out to here, so it does not flutter across the boundary. */
+   private static final double DISENGAGE = 4.2;
    /** Swords, best first. */
    private static final List<String> SWORDS = List.of("netherite_sword", "diamond_sword", "iron_sword", "stone_sword", "wooden_sword", "golden_sword");
 
@@ -43,6 +45,7 @@ public final class Fight {
    private int strafeFlip;
    private int strafe = 1;
    private net.minecraft.class_243 closing;
+   private boolean inMelee;
 
    private boolean eating;
    private class_1297 threat;
@@ -96,11 +99,15 @@ public final class Fight {
       this.threat = this.pick(client, player, tick);
       if (this.threat == null) {
          this.threatTicks = 0;
+         this.inMelee = false;
          this.letGo();
          this.status = "Clear";
          return false;
       }
       double distance = Math.sqrt(player.method_5858(this.threat));
+      // Hysteresis: having closed to sword range, stay there rather than flutter in and out of
+      // the approach every time knockback pushes the gap over three blocks.
+      double engageAt = this.inMelee ? DISENGAGE : ATTACK;
       // A mob that cannot be got at in twenty seconds is left alone for a while, or the whole
       // progression stands in front of a zombie behind a wall for ever.
       if (++this.threatTicks > 400) {
@@ -111,7 +118,8 @@ public final class Fight {
          return false;
       }
       String name = this.threat.method_5477().getString();
-      if (distance > ATTACK) {
+      if (distance > engageAt) {
+         this.inMelee = false;
          // Straight at it, steered by hand. Standing still just out of reach, swinging at
          // nothing, was the old behaviour: the box test said "within range" while the server said
          // "too far". A route search is not wanted here either - a mob seven blocks away is in
@@ -129,6 +137,7 @@ public final class Fight {
          this.status = "Closing on " + name + " (" + String.format(java.util.Locale.ROOT, "%.1f", distance) + " blocks)";
          return true;
       }
+      this.inMelee = true;
       navigator.release();
       for (String sword : SWORDS) {
          if (Stock.count(stock, sword) > 0) {
@@ -216,18 +225,37 @@ public final class Fight {
    private class_1297 pick(class_310 client, class_746 player, long tick) {
       this.ignored.values().removeIf(until -> until < tick);
       if (this.threat != null && this.threat.method_5805() && player.method_5858(this.threat) <= ENGAGE * ENGAGE
-         && !this.ignored.containsKey(this.threat.method_5628())) {
+         && !this.ignored.containsKey(this.threat.method_5628())
+         && (reachable(client, player, this.threat) || player.method_5858(this.threat) < 6.25)) {
          return this.threat;
       }
       this.threatTicks = 0;
       return this.nearest(client, player);
    }
 
+   /**
+    * Can it be got at at all? A zombie in a cave under the floor is inside the seven blocks that
+    * count as near, and the old code would walk at it for ever: close to three blocks, drop into
+    * melee, get pushed back out, close again. A whole run went on that. Anything behind a solid
+    * block is left alone unless it is close enough to be actually hitting us.
+    */
+   private static boolean reachable(class_310 client, class_746 player, class_1297 mob) {
+      net.minecraft.class_243 eye = player.method_33571();
+      net.minecraft.class_243 at = mob.method_5829().method_1005();
+      net.minecraft.class_3965 hit = Reach.trace(client, eye, at);
+      return hit == null
+         || hit.method_17783() != net.minecraft.class_239.class_240.field_1332
+         || hit.method_17784().method_1025(eye) >= at.method_1025(eye) - 0.6;
+   }
+
    private class_1297 nearest(class_310 client, class_746 player) {
       List<class_1297> found = client.field_1687.method_8333(
          player,
          player.method_5829().method_1014(ENGAGE),
-         entity -> entity instanceof class_1588 && entity.method_5805() && !this.ignored.containsKey(entity.method_5628())
+         entity -> entity instanceof class_1588
+            && entity.method_5805()
+            && !this.ignored.containsKey(entity.method_5628())
+            && (reachable(client, player, entity) || player.method_5858(entity) < 6.25)
       );
       class_1297 best = null;
       double bestDistance = ENGAGE * ENGAGE;
