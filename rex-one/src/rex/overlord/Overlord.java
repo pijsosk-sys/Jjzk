@@ -74,6 +74,12 @@ public final class Overlord {
    private boolean mining;
    private boolean travelled;
    private class_1297 prey;
+   /**
+    * The piece on a workstation right now. A worn piece cannot be reached from a smithing or
+    * enchanting screen, which only show the bag and the hotbar, so it has to stay off until the
+    * work on it is finished.
+    */
+   private String offLimits = "";
    private class_1297 pickup;
    private int pickupTicks;
    private final Set<Integer> ignoredDrops = new HashSet<>();
@@ -501,7 +507,17 @@ public final class Overlord {
          }
          for (String piece : Recipes.GEAR) {
             if (this.count("netherite_" + piece) == 0) {
+               this.offLimits = "diamond_" + piece;
                this.acted = true;
+               int armourSlot = this.wornSlot("diamond_" + piece);
+               if (armourSlot >= 0) {
+                  Work.close(this.client);
+                  this.client.field_1761
+                     .method_2906(this.client.field_1724.field_7498.field_7763, armourSlot, 0, class_1713.field_7794, this.client.field_1724);
+                  this.status = "Taking the " + Ids.pretty(piece) + " off to upgrade it";
+                  this.delay = 2;
+                  return;
+               }
                this.work.smith(this.client, "diamond_" + piece);
                this.status = "Upgrading the " + Ids.pretty(piece);
                return;
@@ -535,12 +551,25 @@ public final class Overlord {
          for (String piece : Recipes.GEAR) {
             String id = "netherite_" + piece;
             if (!enchanted.contains(id)) {
+               this.offLimits = id;
                this.acted = true;
+               // A worn piece cannot be reached from the enchanting screen, which only shows the
+               // bag and the hotbar. Take it off first, enchant it, and it goes back on after.
+               int armourSlot = this.wornSlot(id);
+               if (armourSlot >= 0) {
+                  Work.close(this.client);
+                  this.client.field_1761
+                     .method_2906(this.client.field_1724.field_7498.field_7763, armourSlot, 0, class_1713.field_7794, this.client.field_1724);
+                  this.status = "Taking the " + Ids.pretty(piece) + " off to enchant it";
+                  this.delay = 2;
+                  return;
+               }
                this.work.enchant(this.client, id);
                this.status = "Enchanting the " + Ids.pretty(piece);
                return;
             }
          }
+         this.offLimits = "";
          return;
       }
 
@@ -845,6 +874,16 @@ public final class Overlord {
       this.status = "Hunting a cow";
    }
 
+   /** The armour slot this piece is worn in, or -1 when it is not being worn. */
+   private int wornSlot(String id) {
+      for (int piece = 0; piece < 4; piece++) {
+         if (Ids.of(this.client.field_1724.field_7498.method_7611(5 + piece).method_7677()).equals(id)) {
+            return 5 + piece;
+         }
+      }
+      return -1;
+   }
+
    /** Armour by slot, best first. The helmet slot is first, matching the screen handler. */
    private static final List<List<String>> ARMOUR = List.of(
       List.of("netherite_helmet", "diamond_helmet", "iron_helmet", "chainmail_helmet", "golden_helmet", "leather_helmet", "turtle_helmet"),
@@ -875,6 +914,9 @@ public final class Overlord {
          }
          int limit = wornRank < 0 ? order.size() : wornRank;
          for (int rank = 0; rank < limit; rank++) {
+            if (order.get(rank).equals(this.offLimits)) {
+               continue; // this one is waiting its turn on a workstation
+            }
             int index = Stock.find(player, order.get(rank));
             if (index < 0) {
                continue;
