@@ -41,6 +41,8 @@ public final class OverlordDriver implements ClientModInitializer {
    private final Map<String, Integer> stages = new LinkedHashMap<>();
    private String lastStage = "";
    private String worstStatus = "";
+   /** The last few distinct things it said, which is what a stall looks like from outside. */
+   private final java.util.ArrayDeque<String> saidRecently = new java.util.ArrayDeque<>();
    /** Where the player stood when the world was joined, which in a generated world is dry land. */
    private net.minecraft.class_243 spawn;
    private net.minecraft.class_243 startedAt;
@@ -294,6 +296,7 @@ public final class OverlordDriver implements ClientModInitializer {
             this.startedAt = null;
             this.moved = 0.0;
             this.sawMob = false;
+            this.saidRecently.clear();
             this.phase = 2;
             this.wait = 60;
          }
@@ -316,6 +319,12 @@ public final class OverlordDriver implements ClientModInitializer {
                }
                if (!engine.status.isEmpty()) {
                   this.worstStatus = engine.status.length() > 160 ? engine.status.substring(0, 160) + "..." : engine.status;
+                  if (!this.worstStatus.equals(this.saidRecently.peekLast())) {
+                     this.saidRecently.addLast(this.worstStatus);
+                     while (this.saidRecently.size() > 8) {
+                        this.saidRecently.removeFirst();
+                     }
+                  }
                }
                if (TRACE && this.ticks % 20 == 0) {
                   System.out.println(String.format(Locale.ROOT, "[overlord-trace] %6.1fs %-14s %s",
@@ -358,6 +367,9 @@ public final class OverlordDriver implements ClientModInitializer {
                   gaveUp ? " | gave up: " + engine.stopped : ""
                ));
                this.lines.add("             stages seen: " + this.stages.keySet());
+               if (!verdict.equals("PASS")) {
+                  this.saidRecently.forEach(said -> this.lines.add("               said: " + said));
+               }
                RexOverlord.command("#overlord stop");
                this.shot(client, scenario.name());
                this.phase = 1;
