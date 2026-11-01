@@ -79,6 +79,12 @@ public final class Mine {
    /** Where the miner's own time goes, for tracking down a stutter. */
    private final java.util.Map<String, Long> worst = new java.util.LinkedHashMap<>();
 
+   /** Forgets the worst times, so a measurement covers one run and not every run so far. */
+   public void resetCost() {
+      this.worst.clear();
+      this.marks = 0L;
+   }
+
    public String cost() {
       StringBuilder out = new StringBuilder();
       this.worst.forEach((part, nanos) -> out.append(out.isEmpty() ? "" : " ").append(part).append('=').append(nanos / 1000L));

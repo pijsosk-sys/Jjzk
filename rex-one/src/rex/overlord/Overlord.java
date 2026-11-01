@@ -143,6 +143,7 @@ public final class Overlord {
    }
 
    public void resetCost() {
+      this.mine.resetCost();
       this.averageNanos = 0.0;
       this.worstNanos = 0L;
       this.worstPart = "-";
