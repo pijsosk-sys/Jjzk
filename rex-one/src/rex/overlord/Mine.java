@@ -51,10 +51,11 @@ public final class Mine {
    private final Scan scan = new Scan();
    private final Dig dig = new Dig();
    /**
-    * Walking to ore goes through the pathfinder, not the builder navigator. The navigator searches
-    * up to six thousand cells in one call, unbudgeted, which is a fifty millisecond freeze in the
-    * middle of a tick; the pathfinder spreads the same search over several ticks and can break
-    * through or climb on the way.
+    * Walking to ore goes through the pathfinder, never the builder navigator. The navigator
+    * searches in one unbudgeted call and asks the world about every cell as it goes, which in
+    * real terrain measured seventy milliseconds inside a single tick. The pathfinder spreads the
+    * same search over several ticks against a cached world, and can break through or climb on the
+    * way.
     */
    private final rex.path.Traveller traveller = new rex.path.Traveller();
    // Not paused by an open screen: Overlord opens its own crafting table and furnace windows, so
@@ -75,6 +76,24 @@ public final class Mine {
    private int headingTries;
    private int tunnelled;
    public String status = "";
+   /** Where the miner's own time goes, for tracking down a stutter. */
+   private final java.util.Map<String, Long> worst = new java.util.LinkedHashMap<>();
+
+   public String cost() {
+      StringBuilder out = new StringBuilder();
+      this.worst.forEach((part, nanos) -> out.append(out.isEmpty() ? "" : " ").append(part).append('=').append(nanos / 1000L));
+      return out.toString();
+   }
+
+   private long marks;
+
+   private void mark(String part, long started) {
+      long took = System.nanoTime() - started;
+      // The first couple of seconds are the just-in-time compiler, not a stutter anyone sees.
+      if (++this.marks > 120L && took > this.worst.getOrDefault(part, 0L)) {
+         this.worst.put(part, took);
+      }
+   }
    /** Blocks broken since the last target change, for the HUD. */
    public int broken;
 
@@ -140,7 +159,9 @@ public final class Mine {
       if (this.blocks.isEmpty() || player == null) {
          return;
       }
+      long mark = System.nanoTime();
       this.scan.step(client, BUDGET, NANOS);
+      this.mark("scan", mark);
       if (!this.scan.running() && this.worthRescanning(player, tick)) {
          this.rescan(player, tick);
       }
@@ -156,10 +177,19 @@ public final class Mine {
                break;
             }
          }
+         // Everything in sight has been given up on at some point. They are worth another look
+         // before cutting a tunnel through a forest that is full of the very thing wanted.
+         if (this.current == null && !this.rejected.isEmpty()) {
+            this.rejected.clear();
+            this.status = "Trying the awkward ones again";
+            return;
+         }
       }
 
       if (this.current != null) {
+         mark = System.nanoTime();
          Dig.Result result = this.dig.tick(client, this.current, tick);
+         this.mark("dig", mark);
          if (result == Dig.Result.DONE) {
             this.broken++;
             this.current = null;
@@ -180,21 +210,6 @@ public final class Mine {
          // click that block from here", which is exactly the question. It is only over distance
          // that its one unbudgeted search turns into a freeze, and that is where the pathfinder
          // takes over.
-         if (player.method_24515().method_19455(this.current) <= 14) {
-            this.traveller.release();
-            BuilderNavigator.Result near = navigator.moveTo(client, this.current);
-            if (near == BuilderNavigator.Result.NO_PATH || near == BuilderNavigator.Result.STUCK) {
-               this.rejected.add(this.current);
-               this.current = null;
-               this.status = "No way to that one; trying another";
-               return;
-            }
-            if (near == BuilderNavigator.Result.ARRIVED) {
-               navigator.rejectCurrent(client);
-            }
-            this.status = "Walking to " + this.current.method_10263() + " " + this.current.method_10264() + " " + this.current.method_10260();
-            return;
-         }
          navigator.release();
          if (client.field_1755 != null) {
             Work.close(client);
@@ -219,7 +234,7 @@ public final class Mine {
             // There now. The dig runs first next tick and usually just works; only when standing
             // here has not helped three times is the block given up on.
             this.traveller.stop(client);
-            if (++this.arrivals > 3) {
+            if (++this.arrivals > 8) {
                this.rejected.add(this.current);
                this.current = null;
                this.status = "Cannot get at that one; trying another";
@@ -235,7 +250,9 @@ public final class Mine {
       }
 
       this.traveller.release();
+      mark = System.nanoTime();
       this.tunnel(client, navigator, tick, stock);
+      this.mark("tunnel", mark);
    }
 
    /** Digs new ground: a staircase toward the mining layer, then a corridor along it. */
@@ -284,7 +301,11 @@ public final class Mine {
       }
 
       this.dig.stop(client);
+      // One cell forward, along a corridor this very code just cleared. A full route search for
+      // that costs more than the step is worth - ninety milliseconds of it, in a forest.
+      navigator.searchBudget(150, 220);
       BuilderNavigator.Result walk = navigator.standAt(client, destination);
+      navigator.searchBudget(600, 1000);
       if (walk == BuilderNavigator.Result.ARRIVED) {
          this.headingTries = 0;
          // Every so often take a different line, so a strip mine does not become one endless shaft.

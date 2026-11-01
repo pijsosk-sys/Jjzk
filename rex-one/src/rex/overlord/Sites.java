@@ -229,18 +229,27 @@ public final class Sites {
       return best;
    }
 
-   /** An empty cell beside the player with solid ground under it and headroom over it. */
+   /**
+    * An empty cell beside the player with solid ground under it and headroom over it. In a forest
+    * there often is not one within arm's reach, and the old version then simply stopped with "no
+    * clear ground": the whole progression sat in the trees until the watchdog gave up. The last
+    * resort is the cell the player is standing in, which by definition has ground under it; use()
+    * steps aside before placing into it.
+    */
    private class_2338 freeSpot(class_310 client) {
       class_2338 feet = client.field_1724.method_24515();
-      for (int[] offset : new int[][]{{2, 0}, {-2, 0}, {0, 2}, {0, -2}, {2, 2}, {-2, -2}, {1, 2}, {-1, -2}, {2, 1}, {-2, -1}}) {
-         for (int dy : new int[]{0, -1, 1}) {
+      for (int[] offset : new int[][]{
+         {2, 0}, {-2, 0}, {0, 2}, {0, -2}, {2, 2}, {-2, -2}, {1, 2}, {-1, -2}, {2, 1}, {-2, -1},
+         {3, 0}, {-3, 0}, {0, 3}, {0, -3}, {1, 1}, {-1, 1}, {1, -1}, {-1, -1}, {3, 2}, {-3, -2}
+      }) {
+         for (int dy : new int[]{0, -1, 1, 2}) {
             class_2338 at = feet.method_10069(offset[0], dy, offset[1]);
             if (!this.badSpots.contains(at) && air(client, at) && air(client, at.method_10084()) && !air(client, at.method_10074())) {
                return at;
             }
          }
       }
-      return null;
+      return this.badSpots.contains(feet) ? null : feet;
    }
 
    /** Remembers a portal standing where the player came out, so the way back is known. */

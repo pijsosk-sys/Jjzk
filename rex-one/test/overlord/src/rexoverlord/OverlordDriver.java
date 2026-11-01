@@ -349,11 +349,12 @@ public final class OverlordDriver implements ClientModInitializer {
                String verdict = reached ? "PASS" : gaveUp ? "GAVE-UP" : "TIMEOUT";
                this.lines.add(String.format(
                   Locale.ROOT,
-                  "%-12s %-7s %6.1fs  goal: %s | stage: %s | moved %.1f | cost %d/%d us (%s) | health %.1f | last: %s%s",
+                  "%-12s %-7s %6.1fs  goal: %s | stage: %s | moved %.1f | cost %d/%d us (%s) [%s] | health %.1f | last: %s%s",
                   scenario.name(), verdict, this.ticks / 20.0, scenario.goalText(),
                   engine == null ? "?" : engine.stage.name(), this.moved,
                   engine == null ? 0L : engine.micros(), engine == null ? 0L : engine.worstMicros(),
-                  engine == null ? "-" : engine.worstPart(), client.field_1724.method_6032(), this.worstStatus,
+                  engine == null ? "-" : engine.worstPart(), engine == null ? "" : engine.mineCost(),
+                  client.field_1724.method_6032(), this.worstStatus,
                   gaveUp ? " | gave up: " + engine.stopped : ""
                ));
                this.lines.add("             stages seen: " + this.stages.keySet());

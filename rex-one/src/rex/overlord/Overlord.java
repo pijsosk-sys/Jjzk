@@ -44,7 +44,7 @@ public final class Overlord {
    private final BuilderNavigator navigator = new BuilderNavigator();
    {
       // Overlord replans far more often than the builder does, so it buys shorter searches.
-      this.navigator.searchBudget(900, 1600);
+      this.navigator.searchBudget(600, 1000);
    }
    /** Long hops go through REX's own pathfinder; the navigator handles the last few blocks. */
    private final rex.path.Traveller traveller = new rex.path.Traveller();
@@ -126,6 +126,11 @@ public final class Overlord {
 
    public int mined() {
       return this.mine.broken;
+   }
+
+   /** Where the miner's own time goes, in microseconds. */
+   public String mineCost() {
+      return this.mine.cost();
    }
 
    /** What Overlord costs the client, in microseconds a tick: a rolling average and the worst. */
