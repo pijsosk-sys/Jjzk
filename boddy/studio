@@ -758,32 +758,70 @@ def screen_size():
  except Exception:return None
  m=re.search(r'current (\d+) x (\d+)',out)
  return (int(m.group(1)),int(m.group(2))) if m else None
+DESKTOP_BACKGROUND='0 0 0'  # black instead of the classic Windows blue around Studio's window
 def set_window_mode(wine,env,prefix):
- """Puts Studio in a Wine virtual desktop that fills the screen above Boddy's taskbar, or takes it out."""
+ """Puts Studio in a Wine virtual desktop that fills the screen above Boddy's taskbar, or takes it out,
+ and gives the desktop its black background. Runs on every launch (see apply_desktop_settings)."""
  size=screen_size() if window_mode()=='desktop' else None
  # Room for the window's title bar and Boddy's taskbar, so the whole desktop stays on screen.
  # Studio Mode puts Claude Code beside Studio: the desktop then takes the left part of the screen.
  share=STUDIO_SHARE if os.getenv('BODDY_STUDIO_LAYOUT')=='split' else 1.0
  want='%dx%d'%(int(size[0]*share)-8,size[1]-72) if size else ''
- marker=prefix/'.boddy-window-mode'
- # v2: the desktop got a taskbar and a black background (bump it when the registry settings change).
- stamp='v2 '+want
- if marker.exists() and marker.read_text()==stamp:return
- reg=CACHE/'window-mode.reg'
- reg.write_text('REGEDIT4\r\n\r\n[HKEY_CURRENT_USER\\Software\\Wine\\Explorer]\r\n'+
-  ('"Desktop"="%s"\r\n\r\n[HKEY_CURRENT_USER\\Software\\Wine\\Explorer\\Desktops]\r\n"%s"="%s"\r\n'%(DESKTOP_NAME,DESKTOP_NAME,want)+
-   # A Windows-style taskbar in the desktop: without one, a minimized or hidden Studio window could not be
-   # brought back, leaving only the desktop's background until Studio was restarted.
-   '\r\n[HKEY_CURRENT_USER\\Software\\Wine\\Explorer\\Desktops\\%s]\r\n"EnableShell"=dword:00000001\r\n'%DESKTOP_NAME+
-   # Black instead of the classic Windows blue around Studio's window.
-   '\r\n[HKEY_CURRENT_USER\\Control Panel\\Colors]\r\n"Background"="0 0 0"\r\n'
-   if want else '"Desktop"=-\r\n'))
- command([*wine,'regedit','/S','Z:'+str(reg).replace('/','\\')],600,env)
- # explorer only reads it when the wineserver starts: end this one, so Studio starts a fresh one.
- server=Path(wine[-1]).parent/'wineserver'
- if server.exists():subprocess.run([*wine[:-1],str(server),'-k'],env=env,timeout=120)
- marker.write_text(stamp)
+ apply_desktop_settings(wine,env,prefix,want)
  say('Studio windows: '+('one Wine window of %s'%want if want else 'separate windows'))
+def wineserver(wine):
+ """The command that runs this Wine's wineserver (through Box64 when Wine runs through it), or None."""
+ server=Path(wine[-1]).parent/'wineserver'
+ return [*wine[:-1],str(server)] if server.exists() else None
+def apply_desktop_settings(wine,env,prefix,want=None):
+ """Writes Studio's desktop settings and the black background into the prefix, makes sure the wineserver has
+ saved them to disk, and checks they are there. `want` is the desktop size ('' for separate windows, None to
+ leave the window mode as it is: only the background and the desktop's look)."""
+ # The background used to be written once, with a marker in the prefix saying so. Wine keeps the registry in
+ # the wineserver's memory and writes it to disk when the wineserver ends cleanly; ended at once with -k
+ # (under Box64 and proot on a phone it does not get to save), the change was lost but the marker was still
+ # written, so every later start skipped it and the desktop stayed blue. Now it is written on every launch,
+ # saved, and read back. The marker (v3) now only records what the last launch applied; nothing skips on it.
+ marker=prefix/'.boddy-window-mode'
+ lines=['REGEDIT4','']
+ if want is not None:
+  lines+=['[HKEY_CURRENT_USER\\Software\\Wine\\Explorer]',
+   '"Desktop"="%s"'%DESKTOP_NAME if want else '"Desktop"=-','']
+  if want:
+   lines+=['[HKEY_CURRENT_USER\\Software\\Wine\\Explorer\\Desktops]','"%s"="%s"'%(DESKTOP_NAME,want),'',
+    # A Windows-style taskbar in the desktop: without one, a minimized or hidden Studio window could not be
+    # brought back, leaving only the desktop's background until Studio was restarted.
+    '[HKEY_CURRENT_USER\\Software\\Wine\\Explorer\\Desktops\\%s]'%DESKTOP_NAME,'"EnableShell"=dword:00000001','']
+ # The desktop's colour (Windows' "Background" system colour), with no wallpaper or pattern drawn over it.
+ lines+=['[HKEY_CURRENT_USER\\Control Panel\\Colors]','"Background"="%s"'%DESKTOP_BACKGROUND,'',
+  '[HKEY_CURRENT_USER\\Control Panel\\Desktop]','"Wallpaper"=""','"Pattern"="(None)"','']
+ reg=CACHE/'window-mode.reg';reg.write_text('\r\n'.join(lines)+'\r\n')
+ command([*wine,'regedit','/S','Z:'+str(reg).replace('/','\\')],600,env)
+ server=wineserver(wine)
+ # explorer only reads the desktop settings when the wineserver starts, so end this one and let Studio start a
+ # fresh one. First wait for it to end by itself (-w): it then writes the registry to disk. -k afterwards only
+ # stops one that is still running after that.
+ def end_server():
+  if not server:return
+  try:subprocess.run([*server,'-w'],env=env,timeout=180)
+  except subprocess.TimeoutExpired:say('Warning: Wine took over 3 minutes to save its settings; stopping it')
+  subprocess.run([*server,'-k'],env=env,timeout=120,stderr=subprocess.DEVNULL)
+ end_server()
+ # Read it back from what was saved (a new wineserver loads the registry from disk).
+ got=desktop_background(wine,env)
+ if got!=DESKTOP_BACKGROUND:
+  say('Warning: the desktop background did not save (it is %s); writing it again'%(got or 'missing'))
+  command([*wine,'reg','add','HKCU\\Control Panel\\Colors','/v','Background','/t','REG_SZ','/d',DESKTOP_BACKGROUND,'/f'],600,env)
+  end_server();got=desktop_background(wine,env)
+ end_server()
+ marker.write_text('v3 %s background=%s'%('unchanged' if want is None else want or 'separate',got or 'missing'))
+ say('Studio desktop background: %s'%('black' if got==DESKTOP_BACKGROUND else 'NOT black (%s); Studio may show a blue desktop'%(got or 'missing')))
+def desktop_background(wine,env):
+ """HKCU\\Control Panel\\Colors\\Background as Wine reads it, or None."""
+ try:r=subprocess.run([*wine,'reg','query','HKCU\\Control Panel\\Colors','/v','Background'],env=env,capture_output=True,text=True,errors='replace',timeout=600)
+ except subprocess.TimeoutExpired:return None
+ m=re.search(r'Background\s+REG_SZ\s+(.*?)\s*$',r.stdout,re.M)
+ return m.group(1) if m else None
 PHANTOM_LIMIT=32
 def process_count():
  return sum(1 for n in os.listdir('/proc') if n.isdigit())
@@ -1303,7 +1341,12 @@ def start_windows():
   say('Testing Windows command execution before downloading Studio')
   # Creating the Wine prefix under x86 emulation can take several minutes on a phone.
   code,out=run_logged([*wine,'cmd.exe','/c','echo','BODDY_WINE_STARTUP_OK'],1800,env)
-  if not code:(prefix/'.boddy-tested').touch();return wine,env,prefix
+  if not code:
+   # The prefix was just made: give it the black desktop background now, so nothing that starts in it
+   # (Studio's installer windows, the first Studio start) ever shows the classic Windows blue. Studio's
+   # launch applies it again with the desktop's size.
+   apply_desktop_settings(wine,env,prefix)
+   (prefix/'.boddy-tested').touch();return wine,env,prefix
   # A Windows setup left half-made by an earlier, stopped attempt can be the problem: start it again once.
   if not existed:raise RuntimeError(startup_reason(code,out)+'\n'+startup_help(out))
   say('Windows did not start in the existing setup; trying once more with a fresh one (the old one is kept as a backup)')
