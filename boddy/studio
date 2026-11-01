@@ -576,10 +576,14 @@ AUTH_DESKTOP='boddy-roblox-studio-auth.desktop'
 # register dump for every fault Wine handles, which slows Studio down. The start after a crash turns
 # them on (see run_studio); BODDY_BOX64_LOG=1 does it always.
 BOX64_ENV={'BOX64_NOBANNER':'1','BOX64_LOG':'0','BOX64_SHOWSEGV':'0'}
-# Speed: Box64's own defaults are its fast settings; STRONGMEM=1 adds the cheap memory barriers a heavily
-# multi-threaded x86 program like Studio relies on. "safe" is Box64's conservative preset (as Winlator's):
-# often twice as slow, kept as the last resort.
-BOX64_SPEED={'fast':{'BOX64_DYNAREC_STRONGMEM':'1'},
+# Speed: "fast" drops the memory barriers (STRONGMEM=0), builds bigger blocks of translated code across jumps
+# (BIGBLOCK=2) and turns x86 call/return pairs into native ones (CALLRET=1): the fastest Box64 runs, and the
+# first thing tried. A heavily multi-threaded x86 program like Studio can crash without the barriers, so the
+# next setup after such a crash is "strongmem": Box64's own defaults plus STRONGMEM=1, the cheap barriers
+# (what "fast" was before). "safe" is Box64's conservative preset (as Winlator's): often twice as slow, kept
+# as the last resort.
+BOX64_SPEED={'fast':{'BOX64_DYNAREC_STRONGMEM':'0','BOX64_DYNAREC_BIGBLOCK':'2','BOX64_DYNAREC_CALLRET':'1'},
+ 'strongmem':{'BOX64_DYNAREC_STRONGMEM':'1'},
  'safe':{'BOX64_DYNAREC_SAFEFLAGS':'2','BOX64_DYNAREC_FASTNAN':'0','BOX64_DYNAREC_FASTROUND':'0','BOX64_DYNAREC_X87DOUBLE':'1',
   'BOX64_DYNAREC_BIGBLOCK':'0','BOX64_DYNAREC_STRONGMEM':'2','BOX64_DYNAREC_CALLRET':'0','BOX64_DYNAREC_WAIT':'1'}}
 # Android forbids making written-to file pages executable, which is how Wine loads every DLL; this library,
@@ -956,6 +960,11 @@ def main():
  migrated=ROOT/'.choice-v7'
  if not migrated.exists():
   SETUP_FILE.unlink(missing_ok=True);migrated.touch()
+ # A faster emulation setup now comes first, and the saved step numbers mean other setups than before: start
+ # the ladder over once, at the fastest.
+ migrated=ROOT/'.choice-v8'
+ if not migrated.exists():
+  SETUP_FILE.unlink(missing_ok=True);migrated.touch()
  place=None
  if arg and not arg.startswith('--'):
   place=Path(arg).resolve()
@@ -1037,9 +1046,10 @@ def try_every_way(place):
 GRAPHICS={'DXVK':'DXVK (DirectX on Vulkan)','WineVulkan':"Wine's DirectX on Vulkan",'WineOpenGL':"Wine's DirectX on OpenGL"}
 RENDERER_FILE=ROOT/'renderer'  # a graphics mode chosen in the menu; it replaces the ladder's
 # The ways to run Studio once Windows starts, fastest first; each crash moves the next start one step down.
+# The first is the fastest emulation; a crash there goes on to the same with memory barriers, then as before.
 # All but the last hide AVX.
-SETUPS=(('DXVK',False,'fast'),('WineVulkan',False,'fast'),('WineOpenGL',False,'fast'),('DXVK',False,'safe'),
- ('WineOpenGL',False,'safe'),('WineOpenGL',True,'safe'))
+SETUPS=(('DXVK',False,'fast'),('DXVK',False,'strongmem'),('WineVulkan',False,'strongmem'),('WineOpenGL',False,'strongmem'),
+ ('DXVK',False,'safe'),('WineOpenGL',False,'safe'),('WineOpenGL',True,'safe'))
 SETUP_FILE=ROOT/'studio-setup'
 def current_setup():
  try:step=int(SETUP_FILE.read_text())
@@ -1049,8 +1059,9 @@ def current_setup():
  chosen=os.getenv('BODDY_STUDIO_RENDERER') or (RENDERER_FILE.read_text().strip() if RENDERER_FILE.exists() else '')
  if chosen in GRAPHICS:renderer=chosen
  return {'step':step,'renderer':renderer,'avx':avx,'speed':speed}
+SPEED_NAMES={'fast':'fast','strongmem':'fast with memory barriers','safe':'safe'}
 def describe_setup(s):
- return '%s, %s emulation%s'%(GRAPHICS[s['renderer']],s['speed'],'' if s['avx'] else ', AVX hidden')
+ return '%s, %s emulation%s'%(GRAPHICS[s['renderer']],SPEED_NAMES[s['speed']],'' if s['avx'] else ', AVX hidden')
 DXVK_VERSION='2.7.1'
 DXVK_URL='https://github.com/doitsujin/dxvk/releases/download/v%s/dxvk-%s.tar.gz'%(DXVK_VERSION,DXVK_VERSION)
 DXVK_SIZE=10310666
