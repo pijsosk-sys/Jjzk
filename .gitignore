@@ -1,0 +1,11 @@
+# The patched Horizon checkout and Cargo's output (scripts/build-native.sh).
+/build/
+# The native library the script builds into the app.
+/android/app/src/main/jniLibs/
+# Gradle and Android Studio.
+/android/.gradle/
+/android/build/
+/android/app/build/
+/android/local.properties
+/android/.idea/
+*.iml

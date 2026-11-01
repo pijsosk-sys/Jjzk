@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Horizon" parent="android:Theme.Material.NoActionBar">
+        <item name="android:colorAccent">#F0795A</item>
+        <item name="android:colorPrimary">#2A2470</item>
+        <item name="android:colorPrimaryDark">#1B174A</item>
+        <item name="android:windowBackground">#FF15122E</item>
+        <item name="android:statusBarColor">#FF15122E</item>
+        <item name="android:navigationBarColor">#FF15122E</item>
+    </style>
+    <style name="Theme.Horizon.Game" parent="android:Theme.Material.NoActionBar.Fullscreen">
+        <item name="android:windowBackground">#FF000000</item>
+    </style>
+</resources>
