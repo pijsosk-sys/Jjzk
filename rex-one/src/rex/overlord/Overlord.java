@@ -621,7 +621,11 @@ public final class Overlord {
 
    /** Points the miner at a set of blocks; the tick runs it once the ladder has had its say. */
    private void wantOre(Set<String> blocks, Integer layer) {
-      this.mine.want(blocks, layer);
+      this.wantOre(blocks, layer, false);
+   }
+
+   private void wantOre(Set<String> blocks, Integer layer, boolean descend) {
+      this.mine.want(blocks, layer, descend);
       this.mining = true;
    }
 
@@ -726,7 +730,9 @@ public final class Overlord {
          }
          case "cobblestone" -> {
             this.stage = Stage.STONE;
-            this.wantOre(Set.of("stone", "cobblestone", "andesite", "diorite", "granite"), null);
+            // Underground, under the grass: with nothing in sight the tunnel goes down rather
+            // than along, or it bores sideways through a forest looking for a hillside.
+            this.wantOre(Set.of("stone", "cobblestone", "andesite", "diorite", "granite", "deepslate", "tuff"), null, true);
          }
          case "coal" -> {
             if (!this.pickaxeAtLeast("wooden", depth)) {

@@ -92,9 +92,16 @@ public final class Sites {
       // A block cannot go where the player is standing. The server simply refuses it, and the ring
       // of bookshelves stopped on whichever one the walk had parked on.
       if (placing && (target.equals(feet) || target.equals(feet.method_10084()))) {
-         navigator.moveTo(client, target);
-         navigator.rejectCurrent(client);
-         this.status = what + ": standing where it goes, stepping aside";
+         // Step off it, properly: asking the navigator to walk to the cell already underfoot is
+         // asking it for nothing, and it answered "arrived" for ever while nothing was placed.
+         class_2338 aside = this.asideFrom(client, feet);
+         if (aside == null) {
+            this.badSpots.add(target);
+            this.status = what + ": standing on the only spot and nowhere to step";
+            return false;
+         }
+         navigator.standAt(client, aside);
+         this.status = what + ": stepping off " + coords(target);
          return false;
       }
       class_3965 hit = Reach.hitFor(client, target, placing);
@@ -206,6 +213,19 @@ public final class Sites {
          this.pendingTicks = 0;
       }
       return false;
+   }
+
+   /** A cell next to this one the player can stand in, for stepping off a spot. */
+   private class_2338 asideFrom(class_310 client, class_2338 feet) {
+      for (int[] offset : new int[][]{{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {-1, -1}, {1, -1}, {-1, 1}}) {
+         for (int dy : new int[]{0, 1, -1}) {
+            class_2338 at = feet.method_10069(offset[0], dy, offset[1]);
+            if (air(client, at) && air(client, at.method_10084()) && !air(client, at.method_10074())) {
+               return at;
+            }
+         }
+      }
+      return null;
    }
 
    private class_2338 nearby(class_310 client, String id, int range) {

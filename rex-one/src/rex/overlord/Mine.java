@@ -68,6 +68,8 @@ public final class Mine {
    private long lastScan;
    private class_2338 scannedFrom = class_2338.field_10980;
    private Integer layer;
+   /** Dig downward when nothing is in sight: what you do when the stuff is under the grass. */
+   private boolean descend;
    private int radius = 40;
    private class_2338 current;
    private int arrivals;
@@ -105,6 +107,12 @@ public final class Mine {
 
    /** What to look for, and the y the strip mine runs along when nothing is in sight. */
    public void want(Set<String> blocks, Integer layer) {
+      this.want(blocks, layer, false);
+   }
+
+   /** As above, but digging down rather than along while nothing is in sight. */
+   public void want(Set<String> blocks, Integer layer, boolean descend) {
+      this.descend = descend;
       if (!blocks.equals(this.blocks)) {
          this.blocks = blocks;
          java.util.Set<net.minecraft.class_2248> resolved = new HashSet<>();
@@ -267,7 +275,7 @@ public final class Mine {
       class_2338 feet = player.method_24515();
       // Only ever downward: a staircase up has nothing to stand on while it is being cut, and the
       // old version happily tried to climb to y=16 through open air and stood there for ever.
-      int dy = this.layer != null && feet.method_10264() > this.layer + 1 ? -1 : 0;
+      int dy = this.layer != null ? (feet.method_10264() > this.layer + 1 ? -1 : 0) : this.descend ? -1 : 0;
       int[] heading = HEADINGS[this.heading];
       class_2338 ahead = feet.method_10069(heading[0], 0, heading[1]);
 
