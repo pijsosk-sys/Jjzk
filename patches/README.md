@@ -7,6 +7,7 @@ against the copy shipped in `Boddy-studio-fix.apk`:
 2. `studio-gpu-default.patch` — draw on the phone's GPU by default ([below](#2-gpu-by-default))
 3. `studio-dead-fflags.patch` — drop the FFlags Studio has no variable for ([below](#3-dead-fflags))
 4. `studio-build-preset.patch` — a Build preset for when Claude is the one building ([below](#4-studio-mode-claude-building-in-studio))
+5. `studio-apt-expired-lists.patch` — recover when apt refuses a package list for its date ([below](#5-apt-refusing-a-signed-list-for-its-date))
 
 and three outside the launcher, for Studio Mode:
 
@@ -16,7 +17,7 @@ and three outside the launcher, for Studio Mode:
 
 Each patch has its file beside it as a drop-in (`patches/studio`,
 `patches/roblox-studio-mcp`, `patches/studio-app.sh`, `patches/studio-mode.sh`).
-The four launcher patches apply in order and reproduce `patches/studio` byte for
+The five launcher patches apply in order and reproduce `patches/studio` byte for
 byte; each of the other three reproduces its own drop-in.
 
 ---
@@ -341,10 +342,97 @@ of it has been through actual Studio on a phone.
 
 ---
 
+# 5. apt refusing a signed list for its date
+
+## From a real launch
+
+A launch on an Adreno 750 phone got the GPU and then stalled here:
+
+```
+GPU: Turnip Adreno (TM) 750 (Turnip 26.3.0-devel-20260824)
+Studio setup 1 of 8: DXVK on the phone's GPU (Adreno, experimental), fast emulation, AVX hidden
+Studio settings: GPU (30 fps, 3D view drawn at 720 thousand pixels)
+...
+Hit:2 http://deb.debian.org/debian trixie-updates InRelease
+E: Release file for .../trixie-updates/InRelease is expired (invalid since 9h 10min 29s).
+E: Release file for .../trixie-security/InRelease is expired (invalid since 13h 28min 21s).
+Some package lists failed to download; retrying in 20 s
+```
+
+Checked against the mirror at the time: the live files were issued that same day and valid for
+another week, so nothing on Debian's side was expired. The copies the phone was working from were
+stale — apt's lists travel inside the prebuilt rootfs image, an InRelease file is valid for about a
+week, and a cached copy (or one a caching proxy still answers with, which is what `Hit:` means) goes
+out of date while its signature stays perfectly good.
+
+`apt_install` retried the identical command three times with 20 s between, which cannot fix a date,
+then ran the install anyway — and `ensure_graphics('GPU')` raises if that install fails, taking the
+launch with it.
+
+## What it does now
+
+On seeing `Release file ... is expired` or `is not valid yet`:
+
+1. says so, instead of looking like a network problem;
+2. **reports the phone's clock against the server's** `Date` header. A clock days ahead makes every
+   current list look expired — and breaks HTTPS besides — so this separates "your lists are stale"
+   from "your clock is wrong" in one line rather than leaving it a mystery;
+3. deletes `/var/lib/apt/lists` so apt cannot fall back on the stale copy it came with;
+4. fetches again with `Acquire::Check-Valid-Until=false`, and carries that into the install.
+
+No sleeps on this path: one retry, immediately.
+
+**What relaxing that check costs.** The GPG signature is still verified; only "not older than
+allowed" is dropped. That is the part which stops an old, signed list being replayed to hold a system
+on known-vulnerable versions. It is the narrowest way past a stale image and it is not a reason to
+turn signature checking off — which this does not do.
+
+Also now: `apt-get` output is streamed as it arrives *and* captured, so the launcher log keeps live
+progress and can still read back why a run failed.
+
+## Verified
+
+The regex matched against the real log text above; that it ignores an ordinary mirror hiccup
+(`File has unexpected size`) and catches `is not valid yet`; `run_logged_output` streaming and
+capturing both streams with the right exit code; the clock comparison against a live server; and the
+decision path with apt stubbed — exactly two update attempts, no sleeps, lists cleared once, the flag
+carried into the install.
+
+## Not verified
+
+Not run against a genuinely expired list on a phone. The recovery is reasoned from the error text and
+exercised with apt stubbed out, not reproduced end to end.
+
+---
+
+# What a real launch confirmed
+
+From the 2026-11-01 log on an Adreno 750 phone, the GPU patch works as designed:
+
+```
+GPU: Turnip Adreno (TM) 750 (Turnip 26.3.0-devel-20260824)
+Studio setup 1 of 8: DXVK on the phone's GPU (Adreno, experimental), fast emulation, AVX hidden
+Studio settings: GPU (30 fps, 3D view drawn at 720 thousand pixels; set a preset by hand to override)
+Studio graphics: DXVK on the phone's GPU (Adreno, experimental)
+```
+
+`/dev/kgsl-3d0` opened, Turnip bound and `vulkaninfo` named the real device; the ladder started at
+step 1 of 8 (the GPU, which did not exist in the ladder before); and `GPU_FLAGS` applied instead of
+Potato's 15 fps / 90 thousand pixels. Wine 11.0 under Box64.
+
+Still unknown from that log: the frame rate once the editor is up, because the launch stalled in apt
+before Studio drew anything, and nothing about sign-in (`no sign-in page was opened`).
+
+Also worth noting from the session monitor: 29 of Android's 32 processes were in use, with three
+`bash`, three `studio-app.sh` and three `sleep` among them. Android 12+ stops the app above 32, so
+that is close. Turning on Developer options → Disable child process restrictions removes the ceiling.
+
+---
+
 # Built APK
 
 `Boddy-studio-fix-patched.apk` — the uploaded `Boddy-studio-fix.apk` with every patch applied,
-md5 `b06af8ac8707d24576c3251316b56f99`. Four assets replaced: `studio`, `roblox-studio-mcp`,
+md5 `ccfd98da791cc20fc4128081cd5745c6`. Four assets replaced: `studio`, `roblox-studio-mcp`,
 `studio-app.sh`, `studio-mode.sh`.
 
 Rebuilt from the APK, not from source. All 600 entries keep their original compression
@@ -358,20 +446,6 @@ no version gate. So reinstalling does replace all four on the next desktop start
 **It is signed with a new key**, so Android will not install it over an existing Boddy. Uninstalling
 first wipes the app's data, which holds the Debian rootfs, the Wine prefix and any Studio projects.
 Signing the aligned APK with the original `BODDY-TE` keystore instead makes it an ordinary update.
-
-To test without reinstalling anything, the four files can be dropped in by hand from Boddy's
-terminal — `copyScripts()` only overwrites names that exist as assets, so a copy under another name
-survives:
-
-```bash
-install -m755 ~/Phone/Download/studio            /opt/boddy/studio-patched
-install -m755 ~/Phone/Download/roblox-studio-mcp /opt/boddy/roblox-studio-mcp
-install -m755 ~/Phone/Download/studio-mode.sh    /opt/boddy/studio-mode.sh
-BODDY_STUDIO=/opt/boddy/studio-patched /opt/boddy/studio-app.sh
-```
-
-(The MCP server and `studio-mode.sh` do get overwritten on the next desktop start, so for those the
-APK is the lasting fix.)
 
 Not verified: the repack, alignment, signatures and asset contents are checked here; installing and
 launching it on a phone is not.

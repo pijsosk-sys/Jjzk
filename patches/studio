@@ -12,7 +12,7 @@ LOG="$HOME/.cache/roblox-studio/$([ $helper = 1 ] && echo helper || echo launche
 BODDY_LOG="$LOG" BODDY_HELPER=$helper exec python3 - "$@" <<'BODDY_PY'
 #!/usr/bin/env python3
 """Boddy Linux compatibility launcher. Does not modify Roblox binaries."""
-import os,sys,json,re,struct,zlib,hashlib,zipfile,tarfile,shutil,subprocess,time,threading,collections,concurrent.futures,urllib.request,urllib.error,urllib.parse,ssl,fcntl,signal,resource
+import os,sys,json,re,struct,zlib,hashlib,email.utils,zipfile,tarfile,shutil,subprocess,time,threading,collections,concurrent.futures,urllib.request,urllib.error,urllib.parse,ssl,fcntl,signal,resource
 from pathlib import Path
 ROOT=Path.home()/'.local/share/roblox-studio';CACHE=Path.home()/'.cache/roblox-studio'
 VERSION_URL='https://clientsettingscdn.roblox.com/v2/client-version/WindowsStudio64'
@@ -487,16 +487,68 @@ def ensure_graphics(renderer=''):
  if renderer=='GPU':wanted+=TURNIP_PACKAGES
  missing=[p for p in wanted if not installed(p)]
  if missing:say('Installing the 3D graphics libraries Studio draws with (one time): '+' '.join(missing));apt_install(*missing)
+# apt refusing a package list for its date: the signature is good but the file is older than it is
+# allowed to be (or newer than the phone thinks it can be).
+APT_DATE_ERROR=re.compile(r'Release file .*? is (?:expired|not valid yet)|Check-Valid-Until',re.I)
+APT_LISTS='/var/lib/apt/lists'
+def run_logged_output(args,env):
+ """Runs a command, printing what it writes as it comes (apt progress stays live in the log) and
+ returning (exit code, everything it wrote) so the reason for a failure can be looked at."""
+ lines=[]
+ proc=subprocess.Popen(args,env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,errors='replace',bufsize=1)
+ try:
+  for line in proc.stdout:
+   line=line.rstrip('\n')
+   if line.strip():say(line);lines.append(line)
+  return proc.wait(),'\n'.join(lines)
+ finally:
+  if proc.poll() is None:proc.kill()
+def server_clock(url='http://deb.debian.org/'):
+ """The date a server says it is, to compare with the phone's own; None if it cannot be asked."""
+ try:
+  with urllib.request.urlopen(urllib.request.Request(url,method='HEAD'),timeout=20) as r:
+   stamp=r.headers.get('Date')
+  return email.utils.parsedate_to_datetime(stamp) if stamp else None
+ except Exception:return None
+def report_clock():
+ """Says whether the phone's clock is the reason apt called a signed list expired. A clock that is
+ days ahead makes every current list look out of date, and breaks HTTPS besides."""
+ theirs=server_clock()
+ if not theirs:return
+ import datetime
+ mine=datetime.datetime.now(datetime.timezone.utc)
+ off=(mine-theirs).total_seconds()
+ if abs(off)<3600:
+  say("The phone's clock agrees with the server, so the lists themselves were stale, not the clock.");return
+ say("The phone's clock says %s and the server says %s: it is %s by %s. Fix the date in Android's "
+     'settings (Settings > System > Date & time, turn automatic on); a clock this far out also breaks HTTPS.'
+     %(mine.strftime('%Y-%m-%d %H:%M UTC'),theirs.strftime('%Y-%m-%d %H:%M UTC'),
+       'ahead' if off>0 else 'behind','%d days %d h'%divmod(round(abs(off)/3600),24)))
 def apt_install(*packages):
  wait_for_internet()
  env=dict(os.environ,DEBIAN_FRONTEND='noninteractive')
  # A Debian mirror mid-sync can fail one package list ("File has unexpected size"); apt then exits 100
  # even though the lists these packages come from are fine. Retry, then try the install anyway.
+ extra=[]
  for attempt in range(3):
-  if subprocess.run(['apt-get','-o','Acquire::Retries=3','update'],env=env).returncode==0:break
+  code,out=run_logged_output(['apt-get','-o','Acquire::Retries=3',*extra,'update'],env)
+  if code==0:break
+  if APT_DATE_ERROR.search(out) and not extra:
+   # Not something waiting fixes. A prebuilt rootfs carries apt's lists with it and a Debian InRelease
+   # file is only valid for about a week, so a cached copy (or one a caching proxy still serves) goes
+   # out of date and apt refuses it even though its signature is good. Throw the carried lists away so
+   # apt cannot fall back on them, and fetch again without the date check. The signature is still
+   # checked; only the "not older than" part is dropped, which is what allows an old list to be
+   # replayed, so this is the narrowest way out and not a reason to turn signing off.
+   say('apt refused a package list for its date. Clearing the lists this system came with and fetching them again without the date check.')
+   report_clock()
+   shutil.rmtree(APT_LISTS,ignore_errors=True)
+   os.makedirs(APT_LISTS+'/partial',exist_ok=True)
+   extra=['-o','Acquire::Check-Valid-Until=false']
+   continue
   if attempt<2:say('Some package lists failed to download; retrying in 20 s');time.sleep(20)
  else:say('Some package lists still failed; installing from the ones that downloaded')
- r=subprocess.run(['apt-get','-o','Acquire::Retries=3','install','-y','--no-install-recommends',*packages],env=env)
+ r=subprocess.run(['apt-get','-o','Acquire::Retries=3',*extra,'install','-y','--no-install-recommends',*packages],env=env)
  if r.returncode:raise RuntimeError('Could not install %s (apt exit code %d). Check the internet connection and try again.'%(' '.join(packages),r.returncode))
 # Debian's box64 is 0.3.4, well over a year behind upstream, and built for ordinary Linux. Under
 # proot on Android its wineserver dies as soon as the first Wine process talks to it
