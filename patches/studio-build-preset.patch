@@ -1,0 +1,22 @@
+--- a/assets/boddy/studio
++++ b/assets/boddy/studio
+@@ -1694,10 +1694,17 @@
+ # pixels, at 15 fps). Potato is the default: on a phone Studio is short of processor and memory first.
+ PRESETS={'Low':{'DFIntTaskSchedulerTargetFps':24,'DFIntDebugDynamicRenderKiloPixels':240},
+  'Lower':{'DFIntTaskSchedulerTargetFps':20,'DFIntDebugDynamicRenderKiloPixels':160},
+- 'Potato':{'DFIntTaskSchedulerTargetFps':15,'DFIntDebugDynamicRenderKiloPixels':90}}
++ 'Potato':{'DFIntTaskSchedulerTargetFps':15,'DFIntDebugDynamicRenderKiloPixels':90},
++ # For Studio Mode, where Claude builds through the MCP plugin and nobody is watching the 3D view:
++ # draw almost nothing (40 thousand pixels, a sixth of Potato's area) but leave the frame rate target
++ # ALONE. DFIntTaskSchedulerTargetFps paces Studio's whole task scheduler, not just drawing, and the
++ # MCP plugin's long poll and the Luau it runs are scheduled work too: lowering it would slow down
++ # the very thing being waited for. Dropping only the pixels takes the software rasteriser, which is
++ # what actually eats the processor, out of the way of the Luau.
++ 'Build':{'DFIntTaskSchedulerTargetFps':24,'DFIntDebugDynamicRenderKiloPixels':40}}
+ # The video memory Studio is told it has (DXVK and Wine's DirectX), in MB: with software drawing it is the
+ # phone's memory, so lighter presets give Studio a smaller texture budget.
+-VIDEO_MB={'Low':1024,'Lower':768,'Potato':512}
++VIDEO_MB={'Low':1024,'Lower':768,'Potato':512,'Build':512}
+ # On the GPU the pixels are not the processor's work any more, so the settings that exist only for software
+ # drawing come off: the frame rate target, the quality level, the texture quality and the downscaled 3D view.
+ # The processor still runs Lua, physics and the x86 translation, so the target stays well under 60, and the

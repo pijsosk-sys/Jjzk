@@ -1,0 +1,12 @@
+--- a/assets/boddy/studio-app.sh
++++ b/assets/boddy/studio-app.sh
+@@ -197,7 +197,8 @@
+             --column=Preset --column=Status \
+             "Potato" "$(mark Potato '15 fps, 3D view at 90k pixels, 512 MB video memory (default)')" \
+             "Lower" "$(mark Lower '20 fps, 3D view at 160k pixels, 768 MB video memory')" \
+-            "Low" "$(mark Low '24 fps, 3D view at 240k pixels, 1 GB video memory')" 2>/dev/null) || exit 0
++            "Low" "$(mark Low '24 fps, 3D view at 240k pixels, 1 GB video memory')" \
++            "Build" "$(mark Build 'for Studio Mode: 3D view at 40k pixels so Claude builds faster')" 2>/dev/null) || exit 0
+         [ -n "$pick" ] || exit 0
+         if out=$("$STUDIO" --use-preset="$pick" 2>&1); then
+             zenity --info --width=400 --title="$TITLE" --text="Performance preset set to $pick. Choose Open Studio to use it." 2>/dev/null

@@ -1,0 +1,534 @@
+#!/usr/bin/env python3
+"""Roblox Studio MCP server for Boddy: lets Claude Code (and other MCP clients) work in Roblox Studio.
+
+A small, dependency-free Python version of Roblox's official server
+(github.com/Roblox/studio-rust-mcp-server, MIT), speaking the same protocol to the same Studio
+plugin, so it runs on a phone without building Rust:
+  - MCP over stdio (newline-delimited JSON-RPC 2.0) to the client;
+  - HTTP on 127.0.0.1:44755 to the plugin, which long-polls GET /request for a task, gets
+    {"args": {"RunCode": {...}}, "id": "<uuid>"} (or 423 after 15 s with none), and answers with
+    POST /response {"success": bool, "response": str, "id": "<uuid>"};
+  - POST /proxy, so a second server whose port is taken passes its tasks to the first one.
+Unlike the official server it does not wait forever when Studio is not connected.
+
+    roblox-studio-mcp            run as an MCP server on stdio (what Claude Code starts)
+    roblox-studio-mcp --status   say whether Studio's plugin is polling
+    roblox-studio-mcp --dump-luau <tool> <json-args>   print the Luau a derived tool would run
+
+Besides the six tools the official server has, it adds five that each take a whole job in one round
+trip (get_tree, get_properties, set_properties, write_script, run_batch). They are built on RunCode,
+so the Studio plugin is unchanged: the generated Luau prints a sentinel line with a JSON result,
+which is read back out of the printed output.
+"""
+import json, queue, sys, threading, time, urllib.error, urllib.request, uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+PORT = 44755
+LONG_POLL = 15          # seconds the plugin's GET /request is held open, as the official server
+CONNECT_WAIT = 30       # how long a tool call waits for Studio's plugin to show up
+REPLY_WAIT = 600        # how long a tool call waits for Studio to answer (play-mode scripts are slow)
+VERSION = '0.1.0-boddy'
+
+INSTRUCTIONS = (
+    "You must aware of current studio mode before using any tools, infer the mode from conversation context or get_studio_mode.\n"
+    "User run_code to query data from Roblox Studio place or to change it\n"
+    "After calling run_script_in_play_mode, the datamodel status will be reset to stop mode.\n"
+    "Prefer using start_stop_play tool instead run_script_in_play_mode, Only used run_script_in_play_mode to run one time unit test code on server datamodel.\n"
+    "Studio runs on a phone here. Every tool call is a round trip of seconds, so the tools that take a\n"
+    "whole job at once are much faster than many run_code calls:\n"
+    "  get_tree        the instance tree in one call, instead of listing GetChildren() step by step\n"
+    "  get_properties  several properties of one instance in one call\n"
+    "set_properties  several properties set in one call, with Vector3/Color3/UDim2/Enum values\n"
+    "  write_script    create or replace a Script/LocalScript/ModuleScript and set its Source safely\n"
+    "  run_batch       several Luau snippets in ONE round trip, each with its own result or error\n"
+    "Paths are lists of child names from game, e.g. [\"Workspace\",\"Model\",\"Part\"], so names\n"
+    "containing dots, spaces or quotes work. Put a script's code in write_script rather than building\n"
+    "a .Source assignment inside run_code: the quoting is done for you and cannot break.\n"
+    "Prefer few, larger calls over many small ones.\n")
+
+def _schema(props, required):
+    return {'type': 'object', 'properties': props, 'required': required}
+
+# name -> (plugin's tool name, description, input schema); descriptions as the official server's.
+TOOLS = {
+    'run_code': ('RunCode',
+        'Runs a command in Roblox Studio and returns the printed output. Can be used to both make changes and retrieve information',
+        _schema({'command': {'type': 'string', 'description': 'Code to run'}}, ['command'])),
+    'insert_model': ('InsertModel',
+        'Inserts a model from the Roblox marketplace into the workspace. Returns the inserted model name.',
+        _schema({'query': {'type': 'string', 'description': 'Query to search for the model'}}, ['query'])),
+    'get_console_output': ('GetConsoleOutput', 'Get the console output from Roblox Studio.', _schema({}, [])),
+    'start_stop_play': ('StartStopPlay',
+        "Start or stop play mode or run the server, Don't enter run_server mode unless you are sure no client/player is needed.",
+        _schema({'mode': {'type': 'string', 'description': "Mode to start or stop, must be start_play, stop, or run_server. Don't use run_server unless you are sure no client/player is needed."}}, ['mode'])),
+    'run_script_in_play_mode': ('RunScriptInPlayMode',
+        'Run a script in play mode and automatically stop play after script finishes or timeout. Returns the output of the script.\n'
+        'Result format: { success: boolean, value: string, error: string, logs: { level: string, message: string, ts: number }[], errors: { level: string, message: string, ts: number }[], duration: number, isTimeout: boolean }.\n'
+        '- Prefer using start_stop_play tool instead run_script_in_play_mode, Only used run_script_in_play_mode to run one time unit test code on server datamodel.\n'
+        '- After calling run_script_in_play_mode, the datamodel status will be reset to stop mode.\n'
+        '- If It returns `StudioTestService: Previous call to start play session has not been completed`, call start_stop_play tool to stop play mode first then try it again.',
+        _schema({'code': {'type': 'string', 'description': 'Code to run'},
+                 'timeout': {'type': 'integer', 'description': 'Timeout in seconds, defaults to 100 seconds'},
+                 'mode': {'type': 'string', 'description': 'Mode to run in, must be start_play or run_server'}}, ['code', 'mode'])),
+    'get_studio_mode': ('GetStudioMode',
+        'Get the current studio mode. Returns the studio mode. The result will be one of start_play, run_server, or stop.',
+        _schema({}, [])),
+}
+
+# ---- appended to roblox-studio-mcp: tools built on the plugin's RunCode ----------------------
+# Every tool below is one RunCode round trip. On a phone a round trip is seconds, so the point of
+# each is to replace several exploratory run_code calls with one. Nothing here needs a change to
+# MCPStudioPlugin.rbxmx: the generated Luau prints a sentinel and a JSON payload, and the answer is
+# read back out of the printed output, so user print() output in the same run does not confuse it.
+SENTINEL = '<<<BODDY-MCP-1>>>'
+
+def lua_string(s):
+    """`s` as a Luau string literal. Escapes the three characters that end or continue a literal and
+    every control byte as a decimal escape, so a script's own quotes, brackets and newlines are safe.
+    A digit after a decimal escape would extend it, so escapes are always three digits."""
+    out = ['"']
+    for ch in str(s):
+        o = ord(ch)
+        if ch == '\\': out.append('\\\\')
+        elif ch == '"': out.append('\\"')
+        elif ch == '\n': out.append('\\n')
+        elif ch == '\r': out.append('\\r')
+        elif o < 32 or o == 127: out.append('\\%03d' % o)
+        else: out.append(ch)
+    out.append('"')
+    return ''.join(out)
+
+def lua_path(path):
+    """A path as a list of child names -> Luau that resolves it from game, or nil. A list avoids the
+    ambiguity of a dotted string: instance names may contain dots, spaces and quotes."""
+    if path in (None, '', []): return 'game'
+    if isinstance(path, str): path = [p for p in path.split('.') if p and p.lower() != 'game']
+    if not isinstance(path, list) or not all(isinstance(p, str) for p in path):
+        raise ValueError('path must be a list of child names, e.g. ["Workspace","Model","Part"]')
+    return 'boddyResolve({%s})' % ','.join(lua_string(p) for p in path)
+
+PRELUDE = """
+local boddyHttp = game:GetService("HttpService")
+local function boddyResolve(names)
+ local node = game
+ for _, n in ipairs(names) do
+  node = node and node:FindFirstChild(n)
+  if not node then return nil end
+ end
+ return node
+end
+local function boddyEmit(payload)
+ print(%s .. boddyHttp:JSONEncode(payload))
+end
+local function boddyValue(v)
+ local t = typeof(v)
+ if t == "string" or t == "number" or t == "boolean" or t == "nil" then return v end
+ if t == "Vector3" then return {x = v.X, y = v.Y, z = v.Z} end
+ if t == "Color3" then return {r = v.R, g = v.G, b = v.B} end
+ if t == "UDim2" then return {xs = v.X.Scale, xo = v.X.Offset, ys = v.Y.Scale, yo = v.Y.Offset} end
+ if t == "CFrame" then return {pos = {v.Position.X, v.Position.Y, v.Position.Z}} end
+ if t == "EnumItem" then return tostring(v) end
+ if t == "Instance" then return {instance = v:GetFullName(), class = v.ClassName} end
+ return tostring(v)
+end
+""" % lua_string(SENTINEL)
+
+def code_get_tree(path=None, depth=2, limit=400):
+    depth = max(0, min(int(depth if depth is not None else 2), 8))
+    limit = max(1, min(int(limit if limit is not None else 400), 4000))
+    return PRELUDE + """
+local root = %s
+if not root then boddyEmit({error = "no instance at that path"}) return end
+local count, truncated = 0, false
+local function walk(node, left)
+ local out = {name = node.Name, class = node.ClassName}
+ if left > 0 then
+  local kids = {}
+  for _, child in ipairs(node:GetChildren()) do
+   count = count + 1
+   if count > %d then truncated = true break end
+   table.insert(kids, walk(child, left - 1))
+  end
+  if #kids > 0 then out.children = kids end
+ elseif #node:GetChildren() > 0 then
+  out.more = #node:GetChildren()
+ end
+ return out
+end
+local tree = walk(root, %d)
+boddyEmit({tree = tree, nodes = count, truncated = truncated})
+""" % (lua_path(path), limit, depth)
+
+def code_get_properties(path, names=None):
+    target = lua_path(path)
+    if names:
+        if not isinstance(names, list): raise ValueError('names must be a list of property names')
+        wanted = '{%s}' % ','.join(lua_string(n) for n in names)
+    else:
+        wanted = '{"Name","ClassName","Parent","Position","Size","Anchored","Color","Material","Transparency","CFrame","Enabled","Visible","Text"}'
+    return PRELUDE + """
+local node = %s
+if not node then boddyEmit({error = "no instance at that path"}) return end
+local props, missing = {}, {}
+for _, key in ipairs(%s) do
+ local ok, value = pcall(function() return node[key] end)
+ if ok then props[key] = boddyValue(value) else table.insert(missing, key) end
+end
+boddyEmit({full_name = node:GetFullName(), class = node.ClassName, properties = props, not_present = missing})
+""" % (target, wanted)
+
+def lua_literal(v):
+    """A JSON-ish value as Luau. Vector3/Color3 come from {"Vector3":[x,y,z]} style tags so a caller
+    can set them without writing Luau."""
+    if isinstance(v, bool): return 'true' if v else 'false'
+    if v is None: return 'nil'
+    if isinstance(v, (int, float)): return repr(float(v)) if isinstance(v, float) else str(v)
+    if isinstance(v, str): return lua_string(v)
+    if isinstance(v, list): return '{%s}' % ','.join(lua_literal(x) for x in v)
+    if isinstance(v, dict):
+        for tag, ctor, keys in (('Vector3', 'Vector3.new', 3), ('Color3', 'Color3.fromRGB', 3),
+                                ('UDim2', 'UDim2.new', 4), ('Enum', None, 0)):
+            if tag in v:
+                if tag == 'Enum': return 'Enum.' + str(v['Enum'])  # e.g. "Material.Plastic"
+                nums = v[tag]
+                if not isinstance(nums, list) or len(nums) != keys:
+                    raise ValueError('%s needs %d numbers' % (tag, keys))
+                return '%s(%s)' % (ctor, ','.join(lua_literal(float(n)) for n in nums))
+        raise ValueError('unsupported value: %r' % (v,))
+    raise ValueError('unsupported value: %r' % (v,))
+
+def code_set_properties(path, properties):
+    if not isinstance(properties, dict) or not properties:
+        raise ValueError('properties must be a non-empty object')
+    sets = '\n'.join(' boddySet(%s, %s)' % (lua_string(k), lua_literal(val)) for k, val in properties.items())
+    return PRELUDE + """
+local node = %s
+if not node then boddyEmit({error = "no instance at that path"}) return end
+local done, failed = {}, {}
+local function boddySet(key, value)
+ local ok, err = pcall(function() node[key] = value end)
+ if ok then table.insert(done, key) else failed[key] = tostring(err) end
+end
+%s
+boddyEmit({full_name = node:GetFullName(), set = done, failed = failed})
+""" % (lua_path(path), sets)
+
+SCRIPT_CLASSES = ('Script', 'LocalScript', 'ModuleScript')
+
+def code_write_script(path, source, script_class='Script'):
+    if script_class not in SCRIPT_CLASSES:
+        raise ValueError('class must be one of: ' + ', '.join(SCRIPT_CLASSES))
+    if not isinstance(path, list) or not path:
+        raise ValueError('path must be a list of child names ending in the script name')
+    parent, name = path[:-1], path[-1]
+    return PRELUDE + """
+local parent = %s
+if not parent then boddyEmit({error = "no instance at the parent path"}) return end
+local name, class = %s, %s
+local node = parent:FindFirstChild(name)
+local created = false
+if node and node.ClassName ~= class then node:Destroy() node = nil end
+if not node then node = Instance.new(class) node.Name = name node.Parent = parent created = true end
+local ok, err = pcall(function() node.Source = %s end)
+if not ok then boddyEmit({error = tostring(err)}) return end
+boddyEmit({full_name = node:GetFullName(), class = node.ClassName, created = created, bytes = #node.Source})
+""" % (lua_path(parent), lua_string(name), lua_string(script_class), lua_string(source))
+
+def code_run_batch(commands):
+    if not isinstance(commands, list) or not commands or not all(isinstance(c, str) for c in commands):
+        raise ValueError('commands must be a non-empty list of Luau snippets')
+    parts = []
+    for i, c in enumerate(commands):
+        # Each snippet is its own chunk, so a syntax error in one does not stop the others, and each
+        # keeps its own printed output. loadstring is what the plugin's own command bar context allows.
+        parts.append("""
+local chunk%(i)d, loadErr%(i)d = loadstring(%(src)s)
+if not chunk%(i)d then
+ table.insert(results, {index = %(i)d, ok = false, error = "syntax: " .. tostring(loadErr%(i)d)})
+else
+ local ok, value = pcall(chunk%(i)d)
+ table.insert(results, {index = %(i)d, ok = ok, value = boddyValue(value), error = (not ok) and tostring(value) or nil})
+end""" % {'i': i, 'src': lua_string(c)})
+    return PRELUDE + "\nlocal results = {}\n" + '\n'.join(parts) + "\nboddyEmit({results = results})\n"
+
+# Derived tools: name -> (description, schema, generator of the Luau RunCode runs). They need no change
+# to MCPStudioPlugin.rbxmx, because each one is a RunCode task whose answer is read back from the
+# sentinel line the generated code prints.
+PATH_PROP = {'type': 'array', 'items': {'type': 'string'},
+             'description': 'Child names from game, e.g. ["Workspace","Model","Part"]. Omit for game itself.'}
+DERIVED = {
+    'get_tree': ('Returns the instance tree under a path in one call: name and class of each instance, '
+        'children down to `depth`. Use this instead of walking GetChildren() with run_code.',
+        _schema({'path': PATH_PROP,
+                 'depth': {'type': 'integer', 'description': 'How many levels of children, 0-8 (default 2)'},
+                 'limit': {'type': 'integer', 'description': 'Stop after this many instances, 1-4000 (default 400)'}}, []),
+        lambda a: code_get_tree(a.get('path'), a.get('depth', 2), a.get('limit', 400))),
+    'get_properties': ('Reads properties of one instance. Without `names` it reads a common set '
+        '(Name, ClassName, Position, Size, Color, Material, Transparency, Anchored, and others). '
+        'Properties the instance does not have come back under not_present instead of failing the call.',
+        _schema({'path': PATH_PROP, 'names': {'type': 'array', 'items': {'type': 'string'},
+                 'description': 'Property names to read; omit for the common set'}}, ['path']),
+        lambda a: code_get_properties(a['path'], a.get('names'))),
+    'set_properties': ('Sets several properties of one instance in one call. A value is a string, number or '
+        'boolean, or a tagged object for a Roblox type: {"Vector3":[x,y,z]}, {"Color3":[r,g,b]} (0-255), '
+        '{"UDim2":[xs,xo,ys,yo]}, {"Enum":"Material.Plastic"}. Each property reports separately, so one '
+        'bad property does not lose the others.',
+        _schema({'path': PATH_PROP, 'properties': {'type': 'object', 'description': 'Property name -> value'}},
+                ['path', 'properties']),
+        lambda a: code_set_properties(a['path'], a['properties'])),
+    'write_script': ('Creates or replaces a Script, LocalScript or ModuleScript and sets its Source. The last '
+        'name in `path` is the script. Pass the code as plain text: the quoting into Luau is done here and '
+        'handles quotes, backslashes, ]] and control characters, so it cannot break the way a .Source '
+        'assignment written inside run_code can. An instance of a different class at that path is replaced.',
+        _schema({'path': PATH_PROP, 'source': {'type': 'string', 'description': "The script's code"},
+                 'class': {'type': 'string', 'description': 'Script, LocalScript or ModuleScript (default Script)'}},
+                ['path', 'source']),
+        lambda a: code_write_script(a['path'], a['source'], a.get('class') or 'Script')),
+    'run_batch': ('Runs several Luau snippets in ONE round trip and returns a result per snippet: its return '
+        'value, or its error, or its syntax error. Much faster than one run_code call each, and one snippet '
+        'failing does not stop the rest.',
+        _schema({'commands': {'type': 'array', 'items': {'type': 'string'},
+                 'description': 'Luau snippets; each may return a value'}}, ['commands']),
+        lambda a: code_run_batch(a['commands'])),
+}
+
+def derived_task(name, arguments):
+    """A derived tool as a RunCode task for the plugin."""
+    code = DERIVED[name][2](arguments)
+    return {'args': {'RunCode': {'command': code}}, 'id': str(uuid.uuid4())}
+
+def derived_result(response):
+    """Splits the plugin's printed output into the sentinel payload and whatever else was printed."""
+    at = response.find(SENTINEL)
+    if at < 0:
+        return False, ('Roblox Studio ran the code but printed no result. Its output was:\n' + response)
+    before = response[:at].rstrip()
+    line = response[at + len(SENTINEL):].split('\n', 1)[0]
+    try: payload = json.loads(line)
+    except ValueError:
+        return False, 'Could not read the result Roblox Studio printed: ' + line[:500]
+    text = json.dumps(payload, indent=1)
+    if before: text += '\n\nAlso printed by Studio:\n' + before
+    return 'error' not in payload, text
+
+
+def log(*a):
+    print('[roblox-studio-mcp]', *a, file=sys.stderr, flush=True)
+
+
+class Bridge:
+    """Tasks waiting for Studio's plugin, and the callers waiting for their answers."""
+    def __init__(self):
+        self.tasks = queue.Queue()
+        self.waiting = {}            # id -> Queue that gets (success, response)
+        self.lock = threading.Lock()
+        self.last_poll = 0.0         # when the plugin last asked for a task
+
+    def connected(self):
+        return time.time() - self.last_poll < LONG_POLL + 10
+
+    def submit(self, task):
+        """Queues a task ({"args": ..., "id": ...}) for the plugin; returns (success, response)."""
+        answer = queue.Queue(1)
+        with self.lock: self.waiting[task['id']] = answer
+        self.tasks.put(task)
+        try:
+            deadline = time.time() + CONNECT_WAIT
+            while not self.connected() and time.time() < deadline:
+                try: return answer.get(timeout=1)
+                except queue.Empty: pass
+            if not self.connected():
+                return False, ("Roblox Studio is not connected. Open Roblox Studio (Boddy's Roblox Studio or Studio "
+                               "Mode app) with a place open, check that the MCP plugin is on in the Plugins tab, and "
+                               "allow it to access localhost if Studio asks. Then try again.")
+            try: return answer.get(timeout=REPLY_WAIT)
+            except queue.Empty: return False, 'Roblox Studio did not answer within %d s.' % REPLY_WAIT
+        finally:
+            with self.lock: self.waiting.pop(task['id'], None)
+            self._drop(task['id'])
+
+    def _drop(self, task_id):
+        # A task nobody waits for any more must not reach Studio later.
+        kept = []
+        while True:
+            try: t = self.tasks.get_nowait()
+            except queue.Empty: break
+            if t['id'] != task_id: kept.append(t)
+        for t in kept: self.tasks.put(t)
+
+    def next_task(self):
+        """The next task someone still waits for, or None after LONG_POLL seconds without one."""
+        deadline = time.time() + LONG_POLL
+        try:
+            while True:
+                self.last_poll = time.time()
+                try: task = self.tasks.get(timeout=max(0.1, deadline - time.time()))
+                except queue.Empty: return None
+                with self.lock:
+                    if task['id'] in self.waiting: return task
+        finally: self.last_poll = time.time()
+
+    def answer(self, task_id, success, response):
+        with self.lock: target = self.waiting.get(task_id)
+        if not target: return False
+        target.put((bool(success), str(response)))
+        return True
+
+
+def make_handler(bridge):
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = 'HTTP/1.1'
+        def log_message(self, *a): pass
+        def _send(self, code, body=b'', kind='application/json'):
+            self.send_response(code)
+            self.send_header('Content-Type', kind)
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        def _json(self):
+            return json.loads(self.rfile.read(int(self.headers.get('Content-Length') or 0)) or b'null')
+        def do_GET(self):
+            if self.path.split('?')[0] == '/status':
+                state = {'studio_connected': bridge.connected(), 'tasks_waiting': bridge.tasks.qsize()}
+                return self._send(200, json.dumps(state).encode())
+            if self.path.split('?')[0] != '/request': return self._send(404)
+            task = bridge.next_task()
+            if task is None: return self._send(423)    # nothing to do: the plugin asks again
+            self._send(200, json.dumps(task).encode())
+        def do_POST(self):
+            path = self.path.split('?')[0]
+            try: body = self._json()
+            except ValueError: return self._send(400, b'invalid JSON', 'text/plain')
+            if path == '/response':
+                if not isinstance(body, dict) or not bridge.answer(body.get('id'), body.get('success'), body.get('response', '')):
+                    return self._send(400, b'Unknown ID', 'text/plain')
+                return self._send(200)
+            if path == '/proxy':
+                if not isinstance(body, dict) or not body.get('id'):
+                    return self._send(400, b'Got proxy command with no id', 'text/plain')
+                success, response = bridge.submit(body)
+                return self._send(200, json.dumps({'success': success, 'response': response, 'id': body['id']}).encode())
+            self._send(404)
+    return Handler
+
+
+def start_http(bridge):
+    """Serves the plugin on 127.0.0.1:PORT; None if another server already does (then use /proxy)."""
+    try: server = ThreadingHTTPServer(('127.0.0.1', PORT), make_handler(bridge))
+    except OSError: return None
+    server.daemon_threads = True
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+def via_proxy(task):
+    req = urllib.request.Request('http://127.0.0.1:%d/proxy' % PORT, json.dumps(task).encode(),
+                                 {'Content-Type': 'application/json'})
+    try:
+        with urllib.request.urlopen(req, timeout=CONNECT_WAIT + REPLY_WAIT + 30) as r:
+            reply = json.loads(r.read())
+        return bool(reply.get('success')), str(reply.get('response', ''))
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        return False, 'Could not reach the Roblox Studio MCP server already running on port %d: %s' % (PORT, e)
+
+
+def tool_task(name, arguments):
+    plugin_name, _, schema = TOOLS[name]
+    args = {}
+    for key in schema['properties']:
+        if key in arguments: args[key] = arguments[key]
+        elif key in schema['required']: raise ValueError('missing argument: ' + key)
+        else: args[key] = None   # as serde writes a missing Option
+    return {'args': {plugin_name: args}, 'id': str(uuid.uuid4())}
+
+
+class Mcp:
+    SUPPORTED = ('2025-06-18', '2025-03-26', '2024-11-05')
+
+    def __init__(self, run_task):
+        self.run_task = run_task
+        self.out_lock = threading.Lock()
+
+    def send(self, message):
+        with self.out_lock:
+            sys.stdout.write(json.dumps(message) + '\n')
+            sys.stdout.flush()
+
+    def reply(self, rid, result=None, error=None):
+        self.send({'jsonrpc': '2.0', 'id': rid, **({'error': error} if error else {'result': result})})
+
+    def handle(self, msg):
+        method, rid, params = msg.get('method'), msg.get('id'), msg.get('params') or {}
+        if method is None or rid is None: return   # a notification or a stray reply: nothing to answer
+        if method == 'initialize':
+            asked = params.get('protocolVersion')
+            return self.reply(rid, {
+                'protocolVersion': asked if asked in self.SUPPORTED else self.SUPPORTED[0],
+                'capabilities': {'tools': {}},
+                'serverInfo': {'name': 'Roblox_Studio', 'title': 'Roblox Studio MCP Server', 'version': VERSION},
+                'instructions': INSTRUCTIONS})
+        if method == 'ping': return self.reply(rid, {})
+        if method == 'tools/list':
+            listed = [{'name': n, 'description': d, 'inputSchema': s} for n, (_, d, s) in TOOLS.items()]
+            listed += [{'name': n, 'description': d, 'inputSchema': s} for n, (d, s, _) in DERIVED.items()]
+            return self.reply(rid, {'tools': listed})
+        if method == 'tools/call':
+            name = params.get('name')
+            if name not in TOOLS and name not in DERIVED:
+                return self.reply(rid, error={'code': -32602, 'message': 'Unknown tool: %s' % name})
+            derived = name in DERIVED
+            try:
+                task = derived_task(name, params.get('arguments') or {}) if derived \
+                    else tool_task(name, params.get('arguments') or {})
+            except (ValueError, KeyError, TypeError) as e:
+                return self.reply(rid, error={'code': -32602, 'message': str(e)})
+            # Studio can take minutes: answer from a thread so other requests are not held up.
+            def call():
+                success, response = self.run_task(task)
+                if derived and success: success, response = derived_result(response)
+                self.reply(rid, {'content': [{'type': 'text', 'text': response}], 'isError': not success})
+            return threading.Thread(target=call, daemon=True).start()
+        self.reply(rid, error={'code': -32601, 'message': 'Method not found: %s' % method})
+
+    def serve(self, stream):
+        for line in stream:
+            line = line.strip()
+            if not line: continue
+            try: msg = json.loads(line)
+            except ValueError:
+                self.send({'jsonrpc': '2.0', 'id': None, 'error': {'code': -32700, 'message': 'Parse error'}})
+                continue
+            for m in (msg if isinstance(msg, list) else [msg]):
+                if isinstance(m, dict): self.handle(m)
+
+
+def status():
+    """Exit 0 if a server is running and Studio's plugin polled it recently."""
+    try:
+        with urllib.request.urlopen('http://127.0.0.1:%d/status' % PORT, timeout=3) as r:
+            print(r.read().decode()); return 0
+    except (urllib.error.URLError, OSError):
+        print('No Roblox Studio MCP server is running (Claude Code starts it when it needs it).'); return 1
+
+
+def main():
+    if '--status' in sys.argv[1:]: return status()
+    if '--dump-luau' in sys.argv[1:]:
+        # Shows exactly what a derived tool sends to Studio, for checking it by hand.
+        rest = sys.argv[sys.argv.index('--dump-luau') + 1:]
+        if not rest or rest[0] not in DERIVED:
+            print('Usage: roblox-studio-mcp --dump-luau <%s> [json-args]' % '|'.join(DERIVED), file=sys.stderr)
+            return 2
+        print(DERIVED[rest[0]][2](json.loads(rest[1]) if len(rest) > 1 else {}))
+        return 0
+    bridge = Bridge()
+    server = start_http(bridge)
+    if server: log('serving Roblox Studio plugin on 127.0.0.1:%d' % PORT)
+    else: log('port %d is in use: passing tasks to the server already running there' % PORT)
+    Mcp(bridge.submit if server else via_proxy).serve(sys.stdin)
+    if server: server.shutdown()
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

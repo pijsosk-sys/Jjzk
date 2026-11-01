@@ -1,0 +1,44 @@
+--- a/assets/boddy/studio-mode.sh
++++ b/assets/boddy/studio-mode.sh
+@@ -26,16 +26,33 @@
+     [ -f CLAUDE.md ] || cat > CLAUDE.md <<'MD'
+ # Roblox Studio on a phone
+ 
+-Roblox Studio is open beside you and connected through the Roblox_Studio MCP tools:
+-`run_code` (run Luau in Studio and get what it prints), `insert_model`, `get_console_output`,
+-`start_stop_play`, `run_script_in_play_mode` and `get_studio_mode`.
++Roblox Studio is open beside you and connected through the Roblox_Studio MCP tools.
+ 
+-- Build by running Luau with `run_code`: create Parts, Models, Scripts (set `.Source`), etc. in the
+-  open place. Check what is there first (e.g. list `workspace:GetChildren()`).
+-- Studio runs on a phone through emulation and draws 3D on the processor: it is slow. Batch work
+-  into a few larger `run_code` calls, keep scenes light (few parts, no huge terrain), and expect
+-  each call to take seconds.
++Every call is a round trip of seconds, because Studio runs here under x86 emulation. So use the tool
++that takes the whole job at once instead of several `run_code` calls:
++
++| tool | use it for |
++|---|---|
++| `get_tree` | the instance tree in one call. Never walk `GetChildren()` with `run_code`. |
++| `get_properties` | several properties of one instance at once |
++| `set_properties` | several properties set at once, with `{"Vector3":[x,y,z]}`, `{"Color3":[r,g,b]}`, `{"UDim2":[xs,xo,ys,yo]}`, `{"Enum":"Material.Plastic"}` values |
++| `write_script` | create or replace a Script/LocalScript/ModuleScript and set its code |
++| `run_batch` | several Luau snippets in ONE round trip, each with its own result or error |
++| `run_code` | anything the above do not cover |
++| `insert_model` | a model from the marketplace |
++| `start_stop_play`, `run_script_in_play_mode`, `get_studio_mode`, `get_console_output` | testing |
++
++Paths are lists of child names from `game`, e.g. `["Workspace","Model","Part"]`, so a name with a
++dot, a space or a quote in it works.
++
++- Put a script's code in `write_script`, not in a `.Source` assignment inside `run_code`. The quoting
++  into Luau is done for you and handles quotes, backslashes, `]]` and control characters.
++- Look before you build: one `get_tree` tells you what is already there.
++- Keep scenes light (few parts, no huge terrain) and expect each call to take seconds.
+ - Use `start_stop_play` to test, `get_console_output` to read errors, then stop play mode again.
++- If building feels slow, set the Build performance preset (Roblox Studio app -> Performance preset
++  -> Build): the 3D view drops to 40k pixels, which leaves the processor to your Luau instead of to
++  drawing a view nobody is looking at while you work. Put it back to Potato to look at the result.
+ - If a tool says Studio is not connected: Studio is still starting, no place is open, or the MCP
+   plugin needs permission to reach localhost (Studio asks once).
+ MD

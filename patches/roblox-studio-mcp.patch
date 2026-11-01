@@ -1,0 +1,322 @@
+--- a/assets/boddy/roblox-studio-mcp
++++ b/assets/boddy/roblox-studio-mcp
+@@ -13,6 +13,12 @@
+ 
+     roblox-studio-mcp            run as an MCP server on stdio (what Claude Code starts)
+     roblox-studio-mcp --status   say whether Studio's plugin is polling
++    roblox-studio-mcp --dump-luau <tool> <json-args>   print the Luau a derived tool would run
++
++Besides the six tools the official server has, it adds five that each take a whole job in one round
++trip (get_tree, get_properties, set_properties, write_script, run_batch). They are built on RunCode,
++so the Studio plugin is unchanged: the generated Luau prints a sentinel line with a JSON result,
++which is read back out of the printed output.
+ """
+ import json, queue, sys, threading, time, urllib.error, urllib.request, uuid
+ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+@@ -28,7 +34,17 @@
+     "User run_code to query data from Roblox Studio place or to change it\n"
+     "After calling run_script_in_play_mode, the datamodel status will be reset to stop mode.\n"
+     "Prefer using start_stop_play tool instead run_script_in_play_mode, Only used run_script_in_play_mode to run one time unit test code on server datamodel.\n"
+-    "Studio runs on a phone here: it is slow, so prefer few, larger run_code calls over many small ones.\n")
++    "Studio runs on a phone here. Every tool call is a round trip of seconds, so the tools that take a\n"
++    "whole job at once are much faster than many run_code calls:\n"
++    "  get_tree        the instance tree in one call, instead of listing GetChildren() step by step\n"
++    "  get_properties  several properties of one instance in one call\n"
++    "set_properties  several properties set in one call, with Vector3/Color3/UDim2/Enum values\n"
++    "  write_script    create or replace a Script/LocalScript/ModuleScript and set its Source safely\n"
++    "  run_batch       several Luau snippets in ONE round trip, each with its own result or error\n"
++    "Paths are lists of child names from game, e.g. [\"Workspace\",\"Model\",\"Part\"], so names\n"
++    "containing dots, spaces or quotes work. Put a script's code in write_script rather than building\n"
++    "a .Source assignment inside run_code: the quoting is done for you and cannot break.\n"
++    "Prefer few, larger calls over many small ones.\n")
+ 
+ def _schema(props, required):
+     return {'type': 'object', 'properties': props, 'required': required}
+@@ -59,6 +75,243 @@
+         _schema({}, [])),
+ }
+ 
++# ---- appended to roblox-studio-mcp: tools built on the plugin's RunCode ----------------------
++# Every tool below is one RunCode round trip. On a phone a round trip is seconds, so the point of
++# each is to replace several exploratory run_code calls with one. Nothing here needs a change to
++# MCPStudioPlugin.rbxmx: the generated Luau prints a sentinel and a JSON payload, and the answer is
++# read back out of the printed output, so user print() output in the same run does not confuse it.
++SENTINEL = '<<<BODDY-MCP-1>>>'
++
++def lua_string(s):
++    """`s` as a Luau string literal. Escapes the three characters that end or continue a literal and
++    every control byte as a decimal escape, so a script's own quotes, brackets and newlines are safe.
++    A digit after a decimal escape would extend it, so escapes are always three digits."""
++    out = ['"']
++    for ch in str(s):
++        o = ord(ch)
++        if ch == '\\': out.append('\\\\')
++        elif ch == '"': out.append('\\"')
++        elif ch == '\n': out.append('\\n')
++        elif ch == '\r': out.append('\\r')
++        elif o < 32 or o == 127: out.append('\\%03d' % o)
++        else: out.append(ch)
++    out.append('"')
++    return ''.join(out)
++
++def lua_path(path):
++    """A path as a list of child names -> Luau that resolves it from game, or nil. A list avoids the
++    ambiguity of a dotted string: instance names may contain dots, spaces and quotes."""
++    if path in (None, '', []): return 'game'
++    if isinstance(path, str): path = [p for p in path.split('.') if p and p.lower() != 'game']
++    if not isinstance(path, list) or not all(isinstance(p, str) for p in path):
++        raise ValueError('path must be a list of child names, e.g. ["Workspace","Model","Part"]')
++    return 'boddyResolve({%s})' % ','.join(lua_string(p) for p in path)
++
++PRELUDE = """
++local boddyHttp = game:GetService("HttpService")
++local function boddyResolve(names)
++ local node = game
++ for _, n in ipairs(names) do
++  node = node and node:FindFirstChild(n)
++  if not node then return nil end
++ end
++ return node
++end
++local function boddyEmit(payload)
++ print(%s .. boddyHttp:JSONEncode(payload))
++end
++local function boddyValue(v)
++ local t = typeof(v)
++ if t == "string" or t == "number" or t == "boolean" or t == "nil" then return v end
++ if t == "Vector3" then return {x = v.X, y = v.Y, z = v.Z} end
++ if t == "Color3" then return {r = v.R, g = v.G, b = v.B} end
++ if t == "UDim2" then return {xs = v.X.Scale, xo = v.X.Offset, ys = v.Y.Scale, yo = v.Y.Offset} end
++ if t == "CFrame" then return {pos = {v.Position.X, v.Position.Y, v.Position.Z}} end
++ if t == "EnumItem" then return tostring(v) end
++ if t == "Instance" then return {instance = v:GetFullName(), class = v.ClassName} end
++ return tostring(v)
++end
++""" % lua_string(SENTINEL)
++
++def code_get_tree(path=None, depth=2, limit=400):
++    depth = max(0, min(int(depth if depth is not None else 2), 8))
++    limit = max(1, min(int(limit if limit is not None else 400), 4000))
++    return PRELUDE + """
++local root = %s
++if not root then boddyEmit({error = "no instance at that path"}) return end
++local count, truncated = 0, false
++local function walk(node, left)
++ local out = {name = node.Name, class = node.ClassName}
++ if left > 0 then
++  local kids = {}
++  for _, child in ipairs(node:GetChildren()) do
++   count = count + 1
++   if count > %d then truncated = true break end
++   table.insert(kids, walk(child, left - 1))
++  end
++  if #kids > 0 then out.children = kids end
++ elseif #node:GetChildren() > 0 then
++  out.more = #node:GetChildren()
++ end
++ return out
++end
++local tree = walk(root, %d)
++boddyEmit({tree = tree, nodes = count, truncated = truncated})
++""" % (lua_path(path), limit, depth)
++
++def code_get_properties(path, names=None):
++    target = lua_path(path)
++    if names:
++        if not isinstance(names, list): raise ValueError('names must be a list of property names')
++        wanted = '{%s}' % ','.join(lua_string(n) for n in names)
++    else:
++        wanted = '{"Name","ClassName","Parent","Position","Size","Anchored","Color","Material","Transparency","CFrame","Enabled","Visible","Text"}'
++    return PRELUDE + """
++local node = %s
++if not node then boddyEmit({error = "no instance at that path"}) return end
++local props, missing = {}, {}
++for _, key in ipairs(%s) do
++ local ok, value = pcall(function() return node[key] end)
++ if ok then props[key] = boddyValue(value) else table.insert(missing, key) end
++end
++boddyEmit({full_name = node:GetFullName(), class = node.ClassName, properties = props, not_present = missing})
++""" % (target, wanted)
++
++def lua_literal(v):
++    """A JSON-ish value as Luau. Vector3/Color3 come from {"Vector3":[x,y,z]} style tags so a caller
++    can set them without writing Luau."""
++    if isinstance(v, bool): return 'true' if v else 'false'
++    if v is None: return 'nil'
++    if isinstance(v, (int, float)): return repr(float(v)) if isinstance(v, float) else str(v)
++    if isinstance(v, str): return lua_string(v)
++    if isinstance(v, list): return '{%s}' % ','.join(lua_literal(x) for x in v)
++    if isinstance(v, dict):
++        for tag, ctor, keys in (('Vector3', 'Vector3.new', 3), ('Color3', 'Color3.fromRGB', 3),
++                                ('UDim2', 'UDim2.new', 4), ('Enum', None, 0)):
++            if tag in v:
++                if tag == 'Enum': return 'Enum.' + str(v['Enum'])  # e.g. "Material.Plastic"
++                nums = v[tag]
++                if not isinstance(nums, list) or len(nums) != keys:
++                    raise ValueError('%s needs %d numbers' % (tag, keys))
++                return '%s(%s)' % (ctor, ','.join(lua_literal(float(n)) for n in nums))
++        raise ValueError('unsupported value: %r' % (v,))
++    raise ValueError('unsupported value: %r' % (v,))
++
++def code_set_properties(path, properties):
++    if not isinstance(properties, dict) or not properties:
++        raise ValueError('properties must be a non-empty object')
++    sets = '\n'.join(' boddySet(%s, %s)' % (lua_string(k), lua_literal(val)) for k, val in properties.items())
++    return PRELUDE + """
++local node = %s
++if not node then boddyEmit({error = "no instance at that path"}) return end
++local done, failed = {}, {}
++local function boddySet(key, value)
++ local ok, err = pcall(function() node[key] = value end)
++ if ok then table.insert(done, key) else failed[key] = tostring(err) end
++end
++%s
++boddyEmit({full_name = node:GetFullName(), set = done, failed = failed})
++""" % (lua_path(path), sets)
++
++SCRIPT_CLASSES = ('Script', 'LocalScript', 'ModuleScript')
++
++def code_write_script(path, source, script_class='Script'):
++    if script_class not in SCRIPT_CLASSES:
++        raise ValueError('class must be one of: ' + ', '.join(SCRIPT_CLASSES))
++    if not isinstance(path, list) or not path:
++        raise ValueError('path must be a list of child names ending in the script name')
++    parent, name = path[:-1], path[-1]
++    return PRELUDE + """
++local parent = %s
++if not parent then boddyEmit({error = "no instance at the parent path"}) return end
++local name, class = %s, %s
++local node = parent:FindFirstChild(name)
++local created = false
++if node and node.ClassName ~= class then node:Destroy() node = nil end
++if not node then node = Instance.new(class) node.Name = name node.Parent = parent created = true end
++local ok, err = pcall(function() node.Source = %s end)
++if not ok then boddyEmit({error = tostring(err)}) return end
++boddyEmit({full_name = node:GetFullName(), class = node.ClassName, created = created, bytes = #node.Source})
++""" % (lua_path(parent), lua_string(name), lua_string(script_class), lua_string(source))
++
++def code_run_batch(commands):
++    if not isinstance(commands, list) or not commands or not all(isinstance(c, str) for c in commands):
++        raise ValueError('commands must be a non-empty list of Luau snippets')
++    parts = []
++    for i, c in enumerate(commands):
++        # Each snippet is its own chunk, so a syntax error in one does not stop the others, and each
++        # keeps its own printed output. loadstring is what the plugin's own command bar context allows.
++        parts.append("""
++local chunk%(i)d, loadErr%(i)d = loadstring(%(src)s)
++if not chunk%(i)d then
++ table.insert(results, {index = %(i)d, ok = false, error = "syntax: " .. tostring(loadErr%(i)d)})
++else
++ local ok, value = pcall(chunk%(i)d)
++ table.insert(results, {index = %(i)d, ok = ok, value = boddyValue(value), error = (not ok) and tostring(value) or nil})
++end""" % {'i': i, 'src': lua_string(c)})
++    return PRELUDE + "\nlocal results = {}\n" + '\n'.join(parts) + "\nboddyEmit({results = results})\n"
++
++# Derived tools: name -> (description, schema, generator of the Luau RunCode runs). They need no change
++# to MCPStudioPlugin.rbxmx, because each one is a RunCode task whose answer is read back from the
++# sentinel line the generated code prints.
++PATH_PROP = {'type': 'array', 'items': {'type': 'string'},
++             'description': 'Child names from game, e.g. ["Workspace","Model","Part"]. Omit for game itself.'}
++DERIVED = {
++    'get_tree': ('Returns the instance tree under a path in one call: name and class of each instance, '
++        'children down to `depth`. Use this instead of walking GetChildren() with run_code.',
++        _schema({'path': PATH_PROP,
++                 'depth': {'type': 'integer', 'description': 'How many levels of children, 0-8 (default 2)'},
++                 'limit': {'type': 'integer', 'description': 'Stop after this many instances, 1-4000 (default 400)'}}, []),
++        lambda a: code_get_tree(a.get('path'), a.get('depth', 2), a.get('limit', 400))),
++    'get_properties': ('Reads properties of one instance. Without `names` it reads a common set '
++        '(Name, ClassName, Position, Size, Color, Material, Transparency, Anchored, and others). '
++        'Properties the instance does not have come back under not_present instead of failing the call.',
++        _schema({'path': PATH_PROP, 'names': {'type': 'array', 'items': {'type': 'string'},
++                 'description': 'Property names to read; omit for the common set'}}, ['path']),
++        lambda a: code_get_properties(a['path'], a.get('names'))),
++    'set_properties': ('Sets several properties of one instance in one call. A value is a string, number or '
++        'boolean, or a tagged object for a Roblox type: {"Vector3":[x,y,z]}, {"Color3":[r,g,b]} (0-255), '
++        '{"UDim2":[xs,xo,ys,yo]}, {"Enum":"Material.Plastic"}. Each property reports separately, so one '
++        'bad property does not lose the others.',
++        _schema({'path': PATH_PROP, 'properties': {'type': 'object', 'description': 'Property name -> value'}},
++                ['path', 'properties']),
++        lambda a: code_set_properties(a['path'], a['properties'])),
++    'write_script': ('Creates or replaces a Script, LocalScript or ModuleScript and sets its Source. The last '
++        'name in `path` is the script. Pass the code as plain text: the quoting into Luau is done here and '
++        'handles quotes, backslashes, ]] and control characters, so it cannot break the way a .Source '
++        'assignment written inside run_code can. An instance of a different class at that path is replaced.',
++        _schema({'path': PATH_PROP, 'source': {'type': 'string', 'description': "The script's code"},
++                 'class': {'type': 'string', 'description': 'Script, LocalScript or ModuleScript (default Script)'}},
++                ['path', 'source']),
++        lambda a: code_write_script(a['path'], a['source'], a.get('class') or 'Script')),
++    'run_batch': ('Runs several Luau snippets in ONE round trip and returns a result per snippet: its return '
++        'value, or its error, or its syntax error. Much faster than one run_code call each, and one snippet '
++        'failing does not stop the rest.',
++        _schema({'commands': {'type': 'array', 'items': {'type': 'string'},
++                 'description': 'Luau snippets; each may return a value'}}, ['commands']),
++        lambda a: code_run_batch(a['commands'])),
++}
++
++def derived_task(name, arguments):
++    """A derived tool as a RunCode task for the plugin."""
++    code = DERIVED[name][2](arguments)
++    return {'args': {'RunCode': {'command': code}}, 'id': str(uuid.uuid4())}
++
++def derived_result(response):
++    """Splits the plugin's printed output into the sentinel payload and whatever else was printed."""
++    at = response.find(SENTINEL)
++    if at < 0:
++        return False, ('Roblox Studio ran the code but printed no result. Its output was:\n' + response)
++    before = response[:at].rstrip()
++    line = response[at + len(SENTINEL):].split('\n', 1)[0]
++    try: payload = json.loads(line)
++    except ValueError:
++        return False, 'Could not read the result Roblox Studio printed: ' + line[:500]
++    text = json.dumps(payload, indent=1)
++    if before: text += '\n\nAlso printed by Studio:\n' + before
++    return 'error' not in payload, text
++
++
+ def log(*a):
+     print('[roblox-studio-mcp]', *a, file=sys.stderr, flush=True)
+ 
+@@ -216,17 +469,23 @@
+                 'instructions': INSTRUCTIONS})
+         if method == 'ping': return self.reply(rid, {})
+         if method == 'tools/list':
+-            return self.reply(rid, {'tools': [{'name': n, 'description': d, 'inputSchema': s}
+-                                              for n, (_, d, s) in TOOLS.items()]})
++            listed = [{'name': n, 'description': d, 'inputSchema': s} for n, (_, d, s) in TOOLS.items()]
++            listed += [{'name': n, 'description': d, 'inputSchema': s} for n, (d, s, _) in DERIVED.items()]
++            return self.reply(rid, {'tools': listed})
+         if method == 'tools/call':
+             name = params.get('name')
+-            if name not in TOOLS:
++            if name not in TOOLS and name not in DERIVED:
+                 return self.reply(rid, error={'code': -32602, 'message': 'Unknown tool: %s' % name})
+-            try: task = tool_task(name, params.get('arguments') or {})
+-            except ValueError as e: return self.reply(rid, error={'code': -32602, 'message': str(e)})
++            derived = name in DERIVED
++            try:
++                task = derived_task(name, params.get('arguments') or {}) if derived \
++                    else tool_task(name, params.get('arguments') or {})
++            except (ValueError, KeyError, TypeError) as e:
++                return self.reply(rid, error={'code': -32602, 'message': str(e)})
+             # Studio can take minutes: answer from a thread so other requests are not held up.
+             def call():
+                 success, response = self.run_task(task)
++                if derived and success: success, response = derived_result(response)
+                 self.reply(rid, {'content': [{'type': 'text', 'text': response}], 'isError': not success})
+             return threading.Thread(target=call, daemon=True).start()
+         self.reply(rid, error={'code': -32601, 'message': 'Method not found: %s' % method})
+@@ -254,6 +513,14 @@
+ 
+ def main():
+     if '--status' in sys.argv[1:]: return status()
++    if '--dump-luau' in sys.argv[1:]:
++        # Shows exactly what a derived tool sends to Studio, for checking it by hand.
++        rest = sys.argv[sys.argv.index('--dump-luau') + 1:]
++        if not rest or rest[0] not in DERIVED:
++            print('Usage: roblox-studio-mcp --dump-luau <%s> [json-args]' % '|'.join(DERIVED), file=sys.stderr)
++            return 2
++        print(DERIVED[rest[0]][2](json.loads(rest[1]) if len(rest) > 1 else {}))
++        return 0
+     bridge = Bridge()
+     server = start_http(bridge)
+     if server: log('serving Roblox Studio plugin on 127.0.0.1:%d' % PORT)

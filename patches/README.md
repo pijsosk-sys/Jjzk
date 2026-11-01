@@ -6,9 +6,18 @@ against the copy shipped in `Boddy-studio-fix.apk`:
 1. `studio-selective-install.patch` — install less (below)
 2. `studio-gpu-default.patch` — draw on the phone's GPU by default ([below](#2-gpu-by-default))
 3. `studio-dead-fflags.patch` — drop the FFlags Studio has no variable for ([below](#3-dead-fflags))
+4. `studio-build-preset.patch` — a Build preset for when Claude is the one building ([below](#4-studio-mode-claude-building-in-studio))
 
-`patches/studio` is the launcher with all three applied, as a drop-in. They
-apply in that order and reproduce it byte for byte.
+and three outside the launcher, for Studio Mode:
+
+- `roblox-studio-mcp.patch` — five tools that each take a whole job in one round trip
+- `studio-app.sh.patch` — Build in the performance-preset menu
+- `studio-mode.sh.patch` — the agent instructions rewritten for the new tools
+
+Each patch has its file beside it as a drop-in (`patches/studio`,
+`patches/roblox-studio-mcp`, `patches/studio-app.sh`, `patches/studio-mode.sh`).
+The four launcher patches apply in order and reproduce `patches/studio` byte for
+byte; each of the other three reproduces its own drop-in.
 
 ---
 
@@ -250,37 +259,119 @@ expectation is that it does not.
 
 ---
 
+# 4. Studio Mode: Claude building in Studio
+
+The APK already shipped this: `studio-mode.sh` puts Studio on the left of the screen and Claude Code
+on the right, joined by `roblox-studio-mcp` and `MCPStudioPlugin.rbxmx`, so Claude can read and build
+in the open place. The server is a dependency-free Python port of Roblox's official
+`studio-rust-mcp-server`, speaking the same protocol to the same plugin, with six tools:
+`run_code`, `insert_model`, `get_console_output`, `start_stop_play`, `run_script_in_play_mode`,
+`get_studio_mode`.
+
+Every one of those is a round trip through emulated Studio: seconds each. So the cost of a build is
+mostly the *number* of calls, and all six are small primitives — the existing `CLAUDE.md` could only
+ask Claude to batch by hand.
+
+## Five tools that take a whole job
+
+| tool | replaces |
+|---|---|
+| `get_tree(path?, depth?, limit?)` | walking `GetChildren()` one `run_code` at a time |
+| `get_properties(path, names?)` | one `run_code` per property |
+| `set_properties(path, properties)` | one `run_code` per property, and hand-written Luau literals |
+| `write_script(path, source, class?)` | a `.Source = "..."` assignment built inside `run_code` |
+| `run_batch(commands[])` | N `run_code` calls |
+
+**No plugin change.** Each is a `RunCode` task whose generated Luau prints a sentinel line with a
+JSON result, read back out of the printed output — so anything the user's own code prints in the same
+run is kept separate rather than confusing the parser. `MCPStudioPlugin.rbxmx` is untouched.
+
+**Paths are lists**, `["Workspace","Model","Part"]`, not dotted strings: instance names may contain
+dots, spaces and quotes, and the stub tree in the tests is literally named `Weird.Name "quoted"` to
+keep that honest.
+
+**Values are tagged** so a caller never writes Luau: `{"Vector3":[x,y,z]}`, `{"Color3":[r,g,b]}`
+(0–255), `{"UDim2":[xs,xo,ys,yo]}`, `{"Enum":"Material.Plastic"}`.
+
+**`write_script` exists because of quoting.** Putting a script's code inside a Luau string literal in
+a `run_code` command breaks on a quote, a backslash, a `]]`, a nested long comment or a control
+character. `lua_string()` escapes all of it, always as three-digit decimal escapes so a following
+digit cannot extend one.
+
+`roblox-studio-mcp --dump-luau <tool> '<json-args>'` prints the exact Luau a tool would send, for
+checking by hand.
+
+## The Build preset
+
+For Studio Mode, where Claude is building and nobody is watching the 3D view:
+`DFIntDebugDynamicRenderKiloPixels` drops to 40 thousand pixels, a sixth of Potato's area, and the
+frame-rate target is deliberately left at 24.
+
+That second half matters. `DFIntTaskSchedulerTargetFps` paces Studio's *whole* task scheduler, not
+just drawing, and the MCP plugin's long poll and the Luau it runs are scheduled work too — so
+lowering it to "stop rendering" would throttle the very thing being waited for. Cutting only the
+pixel count takes the software rasteriser, which is what actually eats the processor, out of the way
+of the Luau.
+
+In the Roblox Studio app: Performance preset → Build. Put it back to Potato to look at the result.
+
+## Verified
+
+- the generated Luau is executed for real with `lua5.4` against a Roblox-shaped stub (`game`,
+  `Instance.new`, `FindFirstChild`, `GetFullName`, `typeof`, `HttpService:JSONEncode`, `Vector3`,
+  `Color3`, `Enum`), and each tool's JSON result checked;
+- `write_script` round-trips a 297-byte script containing `"`, `\`, `]]`, `]=]`, a nested
+  `--[==[ ]==]` comment, a NUL, byte 127, Cyrillic, `∑` and an emoji — **byte-identical**, and the
+  reported length matches;
+- replacing an instance of a different class at the same path works;
+- end to end over the real MCP protocol: a subprocess server, the real HTTP bridge on 44755, and a
+  fake plugin that long-polls and actually runs the Luau — `tools/list` returns 11 tools, all five
+  new ones return parsed JSON, a missing instance comes back as `isError`, and bad arguments come
+  back as a JSON-RPC error rather than reaching Studio;
+- every flag the Build preset writes is present in `RobloxStudioBeta.exe`.
+
+## Not verified
+
+`lua5.4` is not Luau, so this checks syntax, escaping and logic — not Roblox semantics. In the stub,
+reading a property an instance does not have returns nil instead of raising, so the `not_present`
+branch of `get_properties` is exercised by construction rather than by a real failure. `loadstring`
+is what `run_batch` and the error wrapper use; the plugin runs code in a context where it should be
+available, but that is from the official server's behaviour, not something I ran in Studio. And none
+of it has been through actual Studio on a phone.
+
+---
+
 # Built APK
 
-`Boddy-studio-fix-patched.apk` — the uploaded `Boddy-studio-fix.apk` with all
-three patches applied, md5 `d0b922ead6f73370277cba22cc56dfb5`.
+`Boddy-studio-fix-patched.apk` — the uploaded `Boddy-studio-fix.apk` with every patch applied,
+md5 `b06af8ac8707d24576c3251316b56f99`. Four assets replaced: `studio`, `roblox-studio-mcp`,
+`studio-app.sh`, `studio-mode.sh`.
 
-Rebuilt from the APK, not from source: the only changed file is the asset
-`assets/boddy/studio`. All 600 entries keep their original compression
-(`resources.arsc` stays STORED), the old `META-INF` signatures are stripped,
-then `zipalign -p -f 4` and `apksigner sign`. v2 and v3 verify.
+Rebuilt from the APK, not from source. All 600 entries keep their original compression
+(`resources.arsc` stays STORED), the old `META-INF` signatures are stripped, then `zipalign -p -f 4`
+and `apksigner sign`. v2 and v3 verify.
 
-`Installer.copyScripts()` in `classes.dex` is called from
-`BoddyService.startDesktop` unconditionally: it lists the `boddy` asset
-directory and overwrites each file in `/opt/boddy/`, with no version gate. So
-reinstalling does replace the launcher on the next desktop start.
+`Installer.copyScripts()` in `classes.dex` is called from `BoddyService.startDesktop`
+unconditionally: it lists the `boddy` asset directory and overwrites each file in `/opt/boddy/`, with
+no version gate. So reinstalling does replace all four on the next desktop start.
 
-**It is signed with a new key**, so Android will not install it over an
-existing Boddy. Uninstalling first wipes the app's data, which holds the Debian
-rootfs, the Wine prefix and any Studio projects. Signing the aligned APK with
-the original `BODDY-TE` keystore instead makes it an ordinary update.
+**It is signed with a new key**, so Android will not install it over an existing Boddy. Uninstalling
+first wipes the app's data, which holds the Debian rootfs, the Wine prefix and any Studio projects.
+Signing the aligned APK with the original `BODDY-TE` keystore instead makes it an ordinary update.
 
-To test without reinstalling anything: `studio-app.sh` reads
-`STUDIO=${BODDY_STUDIO:-/opt/boddy/studio}`, so put `patches/studio` on the
-phone and run
+To test without reinstalling anything, the four files can be dropped in by hand from Boddy's
+terminal — `copyScripts()` only overwrites names that exist as assets, so a copy under another name
+survives:
 
 ```bash
-install -m755 ~/Phone/Download/studio-patched /opt/boddy/studio-patched
+install -m755 ~/Phone/Download/studio            /opt/boddy/studio-patched
+install -m755 ~/Phone/Download/roblox-studio-mcp /opt/boddy/roblox-studio-mcp
+install -m755 ~/Phone/Download/studio-mode.sh    /opt/boddy/studio-mode.sh
 BODDY_STUDIO=/opt/boddy/studio-patched /opt/boddy/studio-app.sh
 ```
 
-`copyScripts()` only overwrites files that exist as assets, so that copy
-survives restarts.
+(The MCP server and `studio-mode.sh` do get overwritten on the next desktop start, so for those the
+APK is the lasting fix.)
 
-Not verified: the repack, alignment, signatures and asset contents are checked
-here; installing and launching it on a phone is not.
+Not verified: the repack, alignment, signatures and asset contents are checked here; installing and
+launching it on a phone is not.
