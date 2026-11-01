@@ -1,0 +1,1950 @@
+#!/bin/bash
+set -uo pipefail
+mkdir -p "$HOME/.cache/roblox-studio"
+# Browser hand-offs (--open-url, roblox-studio-auth: links) run while Studio is open; they keep
+# their own log and leave latest.log and the launch log in Downloads pointing at the Studio launch.
+helper=0
+case "${1:-}" in --open-url|roblox-studio-auth:*) helper=1 ;; esac
+LOG="$HOME/.cache/roblox-studio/$([ $helper = 1 ] && echo helper || echo launcher)-$(date +%Y%m%d-%H%M%S)-$$.log"
+[ $helper = 1 ] || ln -sfn "$LOG" "$HOME/.cache/roblox-studio/latest.log"
+# This script, tee and Python were three processes for all of Studio's run, under Android's limit of 32 per
+# app: Python now writes the log itself (start_log) and takes this script's place.
+BODDY_LOG="$LOG" BODDY_HELPER=$helper exec python3 - "$@" <<'BODDY_PY'
+#!/usr/bin/env python3
+"""Boddy Linux compatibility launcher. Does not modify Roblox binaries."""
+import os,sys,json,re,struct,zlib,hashlib,zipfile,tarfile,shutil,subprocess,time,threading,collections,concurrent.futures,urllib.request,urllib.error,urllib.parse,ssl,fcntl,signal,resource
+from pathlib import Path
+ROOT=Path.home()/'.local/share/roblox-studio';CACHE=Path.home()/'.cache/roblox-studio'
+VERSION_URL='https://clientsettingscdn.roblox.com/v2/client-version/WindowsStudio64'
+CDN='https://setup.rbxcdn.com/'
+DEST={'ApplicationConfig':'ApplicationConfig','BuiltInPlugins':'BuiltInPlugins','BuiltInStandalonePlugins':'BuiltInStandalonePlugins','Plugins':'Plugins','Qml':'Qml','StudioFonts':'StudioFonts','RibbonConfig':'RibbonConfig','shaders':'shaders','ssl':'ssl','WebView2RuntimeInstaller':'WebView2RuntimeInstaller','content-textures2':'content/textures','content-textures3':'PlatformContent/pc/textures','content-terrain':'PlatformContent/pc/terrain','content-platform-fonts':'PlatformContent/pc/fonts','content-platform-dictionaries':'PlatformContent/pc/shared_compression_dictionaries','content-studio_svg_textures':'content/studio_svg_textures','content-qt_translations':'content/qt_translations','content-api-docs':'content/api_docs'}
+# Packages this stack never uses. The WebView2 runtime is a Windows installer for Studio's built-in
+# sign-in browser, and sign-in goes through the phone's browser or Firefox here (setup_browser_login);
+# WebView2.zip, the loader DLL Studio links against, is still installed. redist.zip is deliberately NOT
+# here: it carries the loose msvcp140/vcruntime140/ucrtbase DLLs that RobloxStudio.zip does not ship.
+UNUSED={'WebView2RuntimeInstaller'}
+# Studio's standalone plugins (Toolbox, Asset Manager, Animation Editor, Terrain tools): 114 MB, real
+# features, so they are installed unless BODDY_STUDIO_NO_PLUGINS=1.
+OPTIONAL={'BuiltInStandalonePlugins'}
+LOCALE_FILE=ROOT/'locale'
+def studio_locale():
+ l=(os.getenv('BODDY_STUDIO_LOCALE') or (LOCALE_FILE.read_text().strip() if LOCALE_FILE.exists() else '') or 'en-us').lower()
+ return l if re.fullmatch(r'[a-z]{2}(-[a-z0-9]{2,4})?',l) else 'en-us'
+def keep_rules():
+ """package stem -> (entry name -> install it?), for packages whose bytes are mostly the same data repeated
+ once per language, or font weights for scripts a phone does not need. Measured on 0.745.0.7451137: these
+ three are 125 MB of the 570 MB download and 363 MB of the 1083 MB on disk; the rules leave 17 MB and 28 MB.
+ BODDY_STUDIO_ALL_LOCALES=1 installs every language instead."""
+ if os.getenv('BODDY_STUDIO_ALL_LOCALES')=='1':return {}
+ loc=studio_locale();lang=loc.split('-')[0]
+ def api_docs(n):
+  # 34 files of about 6.5 MB, one per language; en-us stays as Studio's fallback.
+  return not re.fullmatch(r'[a-z]{2}(-[a-z0-9]+)?\.json',n) or n in (loc+'.json','en-us.json')
+ def qt(n):
+  # <module>_<language>.qm for 11 languages.
+  m=re.fullmatch(r'(\w+)_([a-z]{2}(?:_[A-Z]{2})?)\.qm',n)
+  return not m or m.group(2).split('_')[0] in (lang,'en')
+ def fonts(n):
+  # 7 NotoSansCJK weights at 16-19 MB each; one weight keeps Chinese/Japanese/Korean text readable.
+  m=re.fullmatch(r'NotoSansCJK-(\w+)\.ttc',n)
+  return not m or m.group(1)=='Regular'
+ return {'content-api-docs':api_docs,'content-qt_translations':qt,'StudioFonts':fonts}
+_say_lock=threading.Lock()
+last_said=''  # the session monitor records it, so a log cut off by Android still shows the step
+def say(s):
+ global last_said
+ with _say_lock:print(s,flush=True);last_said=s.splitlines()[0] if s else s  # downloads report from several threads
+class TlsError(RuntimeError):pass
+class OfflineError(RuntimeError):pass
+_tls=None
+def tls_context():
+ # Verification always stays on. BODDY_CA_FILE adds a trusted root (e.g. an HTTPS-filtering proxy) without touching the system store.
+ global _tls
+ if _tls is None:
+  _tls=ssl.create_default_context()
+  extra=os.getenv('BODDY_CA_FILE')
+  if extra:
+   try:_tls.load_verify_locations(cafile=extra)
+   except (OSError,ssl.SSLError) as e:raise RuntimeError('BODDY_CA_FILE=%s is not a readable PEM certificate: %s'%(extra,e)) from e
+ return _tls
+def presented_chain(host,port=443):
+ # Show who signed the certificate we were given, so the user can identify the interceptor.
+ if not shutil.which('openssl'):return []
+ args=['openssl','s_client','-connect','%s:%d'%(host,port),'-servername',host,'-showcerts']
+ proxy=urllib.request.getproxies().get('https')
+ if proxy:args+=['-proxy',urllib.parse.urlsplit(proxy).netloc or proxy]
+ try:out=subprocess.run(args,input=b'',capture_output=True,timeout=20).stdout.decode(errors='replace')
+ except Exception:return []
+ return [l.strip() for l in out.splitlines() if re.match(r'\s*\d+ s:|\s+i:',l)]
+def tls_help(url,reason):
+ u=urllib.parse.urlsplit(url);host=u.hostname or url
+ lines=['HTTPS certificate check failed for %s: %s'%(host,getattr(reason,'verify_message',None) or reason)]
+ chain=presented_chain(host,u.port or 443)
+ if chain:lines+=['Certificate chain presented to this phone:']+['  '+l for l in chain]
+ lines+=['',
+  'Something between this phone and %s is replacing its certificate: usually a VPN, ad-blocker'%host,
+  'or antivirus app with HTTPS filtering, a work/school network, or a Wi-Fi sign-in page.',
+  "Boddy's Linux system does not see certificates installed in Android settings.",
+  'Fix one of:',
+  '  1. Turn off HTTPS filtering in that app, or switch to mobile data / another Wi-Fi, then retry.',
+  '  2. If you trust that filter, export its root certificate (PEM) to Downloads and run in the Boddy terminal:',
+  '       cp ~/Phone/Download/<name>.pem /usr/local/share/ca-certificates/<name>.crt && update-ca-certificates',
+  '     (or set BODDY_CA_FILE=/path/to/<name>.pem for this launcher only).',
+  'Certificate verification is not skipped.']
+ return '\n'.join(lines)
+def open_url(url,headers=None):
+ req=urllib.request.Request(url,headers={'User-Agent':'Boddy-Studio-Compatibility/1.0',**(headers or {})})
+ try:return urllib.request.urlopen(req,timeout=60,context=tls_context())
+ except urllib.error.URLError as e:
+  if isinstance(e.reason,ssl.SSLCertVerificationError):raise TlsError(tls_help(url,e.reason)) from e
+  raise
+def fetch(url):
+ with open_url(url) as r:return r.read()
+def size_text(n):
+ return '%.1f GB'%(n/1e9) if n>=1e9 else '%d MB'%max(1,round(n/1e6))
+class Progress:
+ """Reports a download as "Download progress: P% text" lines (every few seconds) for the progress window:
+ how much is done, the speed, and the time left."""
+ def __init__(self,what,total):
+  self.what=what;self.total=max(total,1);self.done=0;self.fetched=0;self.shown=0
+  self.samples=collections.deque();self.lock=threading.RLock()
+ def skip(self,n):
+  # Bytes already on disk from an earlier attempt (or taken back when a file starts over); not part of the speed.
+  with self.lock:self.done+=n
+ def add(self,n):
+  with self.lock:
+   self.done+=n;self.fetched+=n;now=time.time();self.samples.append((now,self.fetched))
+   # Speed over the last 30 s, so it follows the connection without jumping about.
+   while len(self.samples)>2 and now-self.samples[0][0]>30:self.samples.popleft()
+   if now-self.shown<3:return
+   self.shown=now;self.report(now)
+ def report(self,now=None):
+  with self.lock:
+   now=now or time.time();done=min(self.done,self.total)
+   (t0,b0),(t1,b1)=(self.samples[0],self.samples[-1]) if self.samples else ((now,0),(now,0))
+  text='Downloading %s: %s of %s'%(self.what,size_text(done),size_text(self.total))
+  speed=(b1-b0)/(t1-t0) if t1-t0>=2 else 0
+  if done>=self.total:text='Downloaded %s (%s), unpacking'%(self.what,size_text(self.total))
+  elif speed>0:
+   left=(self.total-done)/speed
+   text+=' at %.1f MB/s, about %s left'%(speed/1e6,'%d h %d min'%divmod(round(left/60),60) if left>=3600 else '%d min'%max(1,round(left/60)))
+  else:text+=', working out the time left'
+  # The window closes itself at 100%, so a finished download shows 99 until the next step.
+  say('Download progress: %d%% %s'%(min(99,done*100//self.total),text))
+def download(url,path,size=None,md5=None,sha256=None,progress=None):
+ def valid(p):
+  if not p.exists() or (size is not None and p.stat().st_size!=size):return False
+  for alg,want in [('md5',md5),('sha256',sha256)]:
+   if want:
+    h=hashlib.new(alg)
+    with p.open('rb') as f:
+     for b in iter(lambda:f.read(1048576),b''):h.update(b)
+    if h.hexdigest().lower()!=want.lower():return False
+  return True
+ if valid(path) and (md5 or sha256):
+  if progress:progress.skip(path.stat().st_size)
+  return
+ part=path.with_suffix(path.suffix+'.part');path.parent.mkdir(parents=True,exist_ok=True)
+ counted=0  # bytes of this file included in progress
+ def count(have):
+  nonlocal counted
+  if progress and have!=counted:progress.skip(have-counted);counted=have
+ for attempt in range(5):
+  try:
+   # Continue a partial download (Android may have stopped Boddy mid-way); the checksum covers the joined file.
+   have=part.stat().st_size if part.exists() else 0
+   # A part that is already complete (stopped just before it was renamed) needs no download.
+   if size is not None and have==size and (md5 or sha256) and valid(part):
+    count(have);part.replace(path);return
+   if size is not None and have>=size:have=0
+   with open_url(url,{'Range':'bytes=%d-'%have} if have else None) as r:
+    if have and getattr(r,'status',None)!=206:have=0  # server sent the whole file
+    count(have)
+    with part.open('ab' if have else 'wb') as f:
+     for b in iter(lambda:r.read(262144),b''):
+      f.write(b)
+      if progress:progress.add(len(b));counted+=len(b)
+   if not valid(part):
+    part.unlink(missing_ok=True);count(0);raise RuntimeError('Download size/checksum mismatch: '+path.name)
+   part.replace(path);return
+  except TlsError:raise
+  except Exception:
+   if attempt==4:raise
+   time.sleep(2*(attempt+1))  # a mobile connection that dropped needs a moment to come back
+def manifest(data):
+ lines=[s.strip() for s in data.decode().splitlines() if s.strip()]
+ if not lines or lines.pop(0)!='v0' or len(lines)%4:raise ValueError('Invalid Roblox package manifest')
+ result=[]
+ for i in range(0,len(lines),4):
+  name,digest,size,unpacked=lines[i:i+4]
+  if not re.fullmatch(r'[A-Za-z0-9_.-]+\.zip',name) or not re.fullmatch(r'[a-fA-F0-9]{32}',digest):raise ValueError('Unsafe manifest package')
+  size=int(size);unpacked=int(unpacked)
+  if size<0 or unpacked<0:raise ValueError('Invalid package size')
+  result.append((name,digest,size,unpacked))
+ if not any(x[0]=='RobloxStudio.zip' for x in result):raise ValueError('Studio executable package missing')
+ return result
+def destination(name):
+ stem=name[:-4]
+ if stem in DEST:return DEST[stem]
+ if stem.startswith('content-'):return 'content/'+stem[8:]
+ if stem.startswith('extracontent-'):return 'ExtraContent/'+{'luapackages':'LuaPackages'}.get(stem[13:],stem[13:])
+ if stem.startswith('studiocontent-'):return 'StudioContent/'+stem[14:]
+ return '.'
+def extract_zip(path,dest):
+ with zipfile.ZipFile(path) as z:
+  for item in z.infolist():
+   # Roblox packages use Windows paths with a leading separator, e.g. \Lua\ for a directory.
+   n=item.filename.replace('\\','/');is_dir=n.endswith('/');n=n.lstrip('/');p=Path(n)
+   if n in ('','.','./'):
+    if item.file_size==0:continue
+    raise ValueError('Unsafe ZIP entry: '+item.filename)
+   if '..' in p.parts or ':' in n or ((item.external_attr>>16)&0o170000)==0o120000:raise ValueError('Unsafe ZIP entry: '+item.filename)
+   target=dest/p
+   if is_dir:target.mkdir(parents=True,exist_ok=True)
+   else:
+    target.parent.mkdir(parents=True,exist_ok=True)
+    with z.open(item) as src,target.open('wb') as out:shutil.copyfileobj(src,out)
+class RangeUnsupported(RuntimeError):pass
+class RemoteZip:
+ """Reads one package's central directory over HTTPS and fetches only wanted entries with Range requests,
+ so a package that is mostly unwanted languages costs only what is kept. setup.rbxcdn.com is S3 and answers
+ 206; anything that answers 200 instead (an HTTPS filter that drops Range) raises RangeUnsupported and the
+ caller downloads the whole archive the way it always did.
+
+ Entries that sit next to each other are fetched in one request, with up to RUN_GAP of unwanted bytes
+ carried along rather than splitting the request: two requests beat 36 on a phone's latency, and the
+ unwanted bytes are thrown away without being written.
+
+ The manifest's MD5 covers the whole archive, so it cannot be checked when only part is fetched. Each entry
+ is checked against the CRC32 and the unpacked size in the archive's own central directory, over TLS that is
+ still verified; a package fetched whole keeps its MD5 check."""
+ TAIL=66560    # end record, its comment, and the ZIP64 records before it
+ RUN_GAP=2<<20 # unwanted bytes worth fetching to avoid another round trip
+ def __init__(self,url):
+  self.url=url;self.entries={};self.at={}
+  total=self._length()
+  tail=self._get(max(0,total-self.TAIL),total-1)
+  i=tail.rfind(b'PK\x05\x06')
+  if i<0:raise ValueError('No ZIP end record in '+url)
+  count,cd_size,cd_at=struct.unpack_from('<HII',tail,i+10)
+  if count==0xFFFF or 0xFFFFFFFF in (cd_size,cd_at):
+   j=tail.rfind(b'PK\x06\x06')
+   if j<0:raise ValueError('No ZIP64 end record in '+url)
+   count,=struct.unpack_from('<Q',tail,j+32);cd_size,cd_at=struct.unpack_from('<QQ',tail,j+40)
+  self.cd_at=cd_at
+  cd=self._get(cd_at,cd_at+cd_size-1);p=0
+  for _ in range(count):
+   if cd[p:p+4]!=b'PK\x01\x02':raise ValueError('Damaged central directory in '+url)
+   method,=struct.unpack_from('<H',cd,p+10);crc,csize,usize=struct.unpack_from('<III',cd,p+16)
+   nlen,elen,clen=struct.unpack_from('<HHH',cd,p+28)
+   attr,=struct.unpack_from('<I',cd,p+38);at,=struct.unpack_from('<I',cd,p+42)
+   name=cd[p+46:p+46+nlen].decode('utf-8','replace');extra=cd[p+46+nlen:p+46+nlen+elen]
+   if 0xFFFFFFFF in (csize,usize,at):usize,csize,at=self._zip64(extra,usize,csize,at)
+   self.entries[name]=(method,crc,csize,usize,at,attr);self.at[name]=at
+   p+=46+nlen+elen+clen
+  # Each local record runs from its own offset to the next one (the central directory bounds the last),
+  # so a run can be fetched whole and the local headers read out of the buffer.
+  order=sorted(self.at,key=lambda n:self.at[n])
+  bounds=[self.at[n] for n in order]+[cd_at]
+  self.extent={n:(bounds[k],bounds[k+1]) for k,n in enumerate(order)}
+ @staticmethod
+ def _zip64(extra,usize,csize,at):
+  q=0
+  while q+4<=len(extra):
+   tag,size=struct.unpack_from('<HH',extra,q);q+=4
+   if tag==1:
+    values=iter(struct.unpack_from('<%dQ'%(size//8),extra,q))
+    if usize==0xFFFFFFFF:usize=next(values)
+    if csize==0xFFFFFFFF:csize=next(values)
+    if at==0xFFFFFFFF:at=next(values)
+    break
+   q+=size
+  return usize,csize,at
+ def _length(self):
+  for attempt in range(5):
+   try:
+    with open_url(self.url,{'Range':'bytes=0-0'}) as r:
+     if getattr(r,'status',None)!=206:raise RangeUnsupported(self.url)
+     r.read();return int(r.headers['Content-Range'].rsplit('/',1)[1])
+   except (TlsError,RangeUnsupported):raise
+   except Exception:
+    if attempt==4:raise
+    time.sleep(2*(attempt+1))
+ def _get(self,start,end):
+  for attempt in range(5):
+   try:
+    with open_url(self.url,{'Range':'bytes=%d-%d'%(start,end)}) as r:
+     if getattr(r,'status',None)!=206:raise RangeUnsupported(self.url)
+     data=r.read()
+    if len(data)!=end-start+1:raise RuntimeError('Short range read from '+self.url)
+    return data
+   except (TlsError,RangeUnsupported):raise
+   except Exception:
+    if attempt==4:raise
+    time.sleep(2*(attempt+1))
+ def runs(self,names):
+  """The wanted entries grouped into (start, end, [name...]) byte ranges to fetch one request each."""
+  names=sorted(names,key=lambda n:self.at[n]);out=[]
+  for n in names:
+   a,b=self.extent[n]
+   if out and a-out[-1][1]<=self.RUN_GAP:out[-1][1]=b;out[-1][2].append(n)
+   else:out.append([a,b,[n]])
+  return [(a,b,ns) for a,b,ns in out]
+ def unpack(self,buffer,base,name,target):
+  method,crc,csize,usize,at,_=self.entries[name]
+  if method not in (0,8):raise ValueError('Unsupported compression for %s in %s'%(name,self.url))
+  o=at-base
+  if buffer[o:o+4]!=b'PK\x03\x04':raise ValueError('Damaged local header for '+name)
+  nlen,elen=struct.unpack_from('<HH',buffer,o+26);start=o+30+nlen+elen
+  raw=bytes(buffer[start:start+csize])
+  if len(raw)!=csize:raise ValueError('Truncated entry '+name)
+  data=zlib.decompress(raw,-15) if method==8 else raw
+  if len(data)!=usize or zlib.crc32(data)&0xFFFFFFFF!=crc:raise ValueError('Package entry %s failed its checksum'%name)
+  part=target.with_suffix(target.suffix+'.part');part.write_bytes(data);part.replace(target)
+def kept_entries(remote,keep):
+ """The entries to install, with the same safety checks extract_zip makes."""
+ out=[]
+ for name,e in remote.entries.items():
+  n=name.replace('\\','/');is_dir=n.endswith('/');n=n.lstrip('/')
+  if n in ('','.','./'):continue
+  p=Path(n)
+  if '..' in p.parts or ':' in n or ((e[5]>>16)&0o170000)==0o120000:raise ValueError('Unsafe ZIP entry: '+name)
+  if is_dir or keep(n):out.append((name,n,is_dir,e))
+ return out
+def extract_ranged(remote,entries,dest,progress=None):
+ for _,n,is_dir,_ in entries:
+  if is_dir:(dest/n).mkdir(parents=True,exist_ok=True)
+ files={name:n for name,n,is_dir,_ in entries if not is_dir}
+ for start,end,names in remote.runs(files):
+  buffer=remote._get(start,end-1)
+  for name in names:
+   target=dest/files[name];target.parent.mkdir(parents=True,exist_ok=True)
+   remote.unpack(buffer,start,name,target)
+   if progress:progress.add(remote.entries[name][2])
+  del buffer
+def prune_downloads(keep_stage=None,keep_version=None):
+ # Package archives are only a download cache; old Studio copies are 1+ GB each. Keep the newest backup.
+ for f in CACHE.iterdir():
+  m=re.fullmatch(r'(version-[0-9a-fA-F]+)-[A-Za-z0-9_.-]+\.zip(\.part)?',f.name)
+  if m and m.group(1)!=keep_version and f.is_file():f.unlink()
+ for d in ROOT.glob('stage-version-*'):
+  if d.is_dir() and d!=keep_stage:shutil.rmtree(d,ignore_errors=True)
+ for d in sorted(ROOT.glob('Studio-backup-*'),key=lambda d:d.name)[:-1]:
+  if d.is_dir():shutil.rmtree(d,ignore_errors=True)
+def prune_logs(keep=10):
+ for pattern in ('launcher-*.log','helper-*.log'):
+  for f in sorted(CACHE.glob(pattern),key=lambda f:f.stat().st_mtime)[:-keep]:f.unlink(missing_ok=True)
+DOWNLOADS_AT_ONCE=4  # Studio is ~40 files; several at once is much faster than one by one on a phone
+def install_studio():
+ target=ROOT/'Studio';stamp=target/'.version'
+ try:
+  version=json.loads(fetch(VERSION_URL))['clientVersionUpload']
+  if not isinstance(version,str) or not re.fullmatch(r'version-[0-9a-fA-F]+',version):raise ValueError('Invalid Studio version from Roblox: %r'%(version,))
+ except Exception as e:
+  if (target/'RobloxStudioBeta.exe').exists():
+   say('Could not check for Studio updates; opening the installed version.\n'+str(e));return target
+  raise
+ if stamp.exists() and stamp.read_text().strip()==version and (target/'RobloxStudioBeta.exe').exists():return target
+ packages=manifest(fetch(CDN+version+'-rbxPkgManifest.txt'))
+ skip=set(UNUSED)|(OPTIONAL if os.getenv('BODDY_STUDIO_NO_PLUGINS')=='1' else set())
+ dropped=sorted(p[0] for p in packages if p[0][:-4] in skip)
+ packages=[p for p in packages if p[0][:-4] not in skip]
+ if dropped:say('Not installing: '+', '.join(dropped))
+ stage=ROOT/('stage-'+version);prune_downloads(keep_stage=stage,keep_version=version);stage.mkdir(exist_ok=True)
+ # Packages already unpacked into this stage are skipped, so a stopped install continues where it was.
+ done_file=stage/'.boddy-extracted';done=set(done_file.read_text().split()) if done_file.exists() else set()
+ todo=[p for p in packages if p[0]+':'+p[1] not in done]
+ # A package with a rule is fetched entry by entry, so the languages and font weights left out cost nothing
+ # to download either. Reading its central directory is two small requests; if anything about that fails (an
+ # HTTPS filter that drops Range, a layout we do not expect) the package falls back to the whole-archive
+ # download, so a failure here only costs the behaviour this launcher had before. A rule that would keep
+ # most of the archive anyway is not worth the extra requests or the lost MD5 check, so it falls back too.
+ rules=keep_rules();plan=[];saved_dl=saved_disk=0
+ for name,md5,csize,usize in todo:
+  keep=rules.get(name[:-4]);remote=entries=None
+  if keep:
+   try:
+    found=RemoteZip(CDN+version+'-'+name);picked=kept_entries(found,keep)
+    # What actually goes over the wire: the runs, including the unwanted bytes carried inside one.
+    got_dl=sum(b-a for a,b,_ in found.runs([n for n,_,d,_ in picked if not d]))
+    got_disk=sum(e[3] for _,_,d,e in picked if not d)
+    if got_dl<=csize*0.7:
+     remote,entries=found,picked;saved_dl+=csize-got_dl;saved_disk+=usize-got_disk;csize,usize=got_dl,got_disk
+   except TlsError:raise
+   except Exception as e:say('Installing all of %s: it cannot be fetched in parts (%s)'%(name,e))
+  plan.append((name,md5,csize,usize,remote,entries))
+ if saved_dl>0:say('Language and font pruning: %s less to download and %s less on disk '
+  '(BODDY_STUDIO_ALL_LOCALES=1 installs every language)'%(size_text(saved_dl),size_text(saved_disk)))
+ # Room for what is still to unpack, plus the archives that can be on disk at once.
+ required=sum(e[3] for e in plan)+sum(sorted((e[2] for e in plan if e[4] is None),reverse=True)[:DOWNLOADS_AT_ONCE])+512*1024*1024
+ free=shutil.disk_usage(ROOT).free
+ if free<required:raise RuntimeError('Not enough free storage for Roblox Studio: it needs about %s more and %s is free. '
+  'Free up space on the phone and try again; what is already downloaded is kept.'%(size_text(required),size_text(free)))
+ progress=Progress('Roblox Studio',sum(e[2] for e in plan))
+ say('Roblox Studio: %d files, %s to download (%d already done)'%(len(plan),size_text(progress.total),len(packages)-len(plan)))
+ progress.report()
+ # Downloads run DOWNLOADS_AT_ONCE at a time; each archive is unpacked in order as soon as it is in, then deleted,
+ # so at most DOWNLOADS_AT_ONCE archives are on disk (the free-space check assumes this).
+ queue=iter(plan);pending=collections.deque();unpacked=len(packages)-len(plan)
+ with concurrent.futures.ThreadPoolExecutor(DOWNLOADS_AT_ONCE) as pool:
+  try:
+   while True:
+    while len(pending)<DOWNLOADS_AT_ONCE:
+     p=next(queue,None)
+     if p is None:break
+     name,md5,csize,usize,remote,entries=p
+     if remote is not None:
+      # Fetched and unpacked in the pool thread, straight into the stage: no archive on disk, and these
+      # unpack beside the other downloads instead of waiting their turn on the main thread.
+      archive=None;job=pool.submit(extract_ranged,remote,entries,stage/destination(name),progress)
+     else:
+      archive=CACHE/(version+'-'+name)
+      job=pool.submit(download,CDN+version+'-'+name,archive,csize,md5,progress=progress)
+     pending.append((p,archive,job))
+    if not pending:break
+    (name,md5,size,_,_,_),archive,job=pending.popleft();job.result()
+    unpacked+=1;say('Studio %d/%d: %s'%(unpacked,len(packages),name))
+    if archive is not None:extract_zip(archive,stage/destination(name));archive.unlink()
+    with done_file.open('a') as f:f.write(name+':'+md5+'\\n');f.flush();os.fsync(f.fileno())
+  except BaseException:
+   for *_,job in pending:job.cancel()  # don't start the rest; the ones running finish and are kept for next time
+   raise
+ progress.report()
+ if not (stage/'RobloxStudioBeta.exe').exists():raise RuntimeError('Studio executable absent after extraction')
+ (stage/'AppSettings.xml').write_text('<Settings><ContentFolder>content</ContentFolder><BaseUrl>https://www.roblox.com</BaseUrl></Settings>')
+ (stage/'.version').write_text(version);done_file.unlink()
+ backup=ROOT/('Studio-backup-'+str(time.time_ns()))
+ if target.exists():target.rename(backup)
+ try:stage.rename(target)
+ except Exception:
+  if backup.exists():backup.rename(target)
+  raise
+ prune_downloads()
+ say('Studio installation verified.'+(' The previous installation is kept as a backup.' if backup.exists() else ''));return target
+# Two ways to run the x86-64 Windows Studio on the phone's ARM64 chip:
+#  box64    (default) Box64 runs the whole regular x86-64 Linux Wine from WineHQ. The way phone apps like
+#           Winlator run Windows programs. Studio itself was confirmed on this exact Wine (11.0) on a PC.
+#  hangover ARM64 Wine with FEX translating only the Windows code (ARM64EC). Studio crashed here with
+#           "virtual_setup_exception stack overflow": exception dispatch through ARM64EC thunks recurses
+#           (FEX-Emu/FEX#6041, open), so it is kept only to compare.
+RUNTIME_FILE=ROOT/'runtime'
+def prefix_dir():
+ if runtime()=='hangover':return ROOT/'prefix'
+ m=wine_major()
+ return ROOT/('prefix-box64-wine'+m if m else 'prefix-box64')
+# While main() tries each combination in turn, the one being tried overrides the saved choice.
+FORCED={}
+def runtime():
+ r=FORCED.get('runtime') or os.getenv('BODDY_STUDIO_RUNTIME') or (RUNTIME_FILE.read_text().strip() if RUNTIME_FILE.exists() else 'box64')
+ return r if r in ('box64','hangover') else 'box64'
+PAGE_SIZE=os.sysconf('SC_PAGE_SIZE')
+def preflight():
+ # x86-64 code assumes 4 KB memory pages, and so do Box64 and Hangover/FEX. A kernel built with
+ # larger pages (phones released with Android 15+ ship 16 KB) cannot run them at all. Check it
+ # here: otherwise this downloads Wine and ~1.8 GB of Studio first and then dies in the emulator
+ # with a message nobody can act on.
+ if PAGE_SIZE!=4096:
+  raise RuntimeError(
+   "This phone's Linux kernel uses %d KB memory pages, and Windows programs need 4 KB pages, so "
+   "Roblox Studio cannot run on this phone. Nothing you can change in Boddy or Android fixes it.\n\n"
+   "Making Roblox games still works: open Roblox Tools and choose \"Start a new game I can edit "
+   "with an AI agent\"." % (PAGE_SIZE//1024))
+WINEHQ='https://dl.winehq.org/wine-builds/debian/'
+WINE_BRANCH='stable'
+WINE_MAJOR_FILE=ROOT/'wine-major'
+def wine_major():
+ """The Wine major version to install, or '' for the newest WineHQ offers."""
+ if 'wine' in FORCED:return FORCED['wine']
+ v=(os.getenv('BODDY_WINE_MAJOR') or (WINE_MAJOR_FILE.read_text().strip() if WINE_MAJOR_FILE.exists() else '')).strip()
+ return v if re.fullmatch(r'\d+',v) else ''
+WINE_X64=ROOT/'wine-x64'
+def wait_for_internet(host='deb.debian.org',seconds=90):
+ # Name lookup is what failed on the phone ("Temporary failure resolving"): wait for it before
+ # downloading, so a short drop (switching networks, screen off) doesn't fail the whole install.
+ import socket
+ deadline=time.time()+seconds;warned=False
+ while True:
+  try:socket.getaddrinfo(host,80);return
+  except OSError as e:
+   if time.time()>deadline:
+    try:dns=open('/etc/resolv.conf').read().split()
+    except OSError:dns=[]
+    servers=[dns[i+1] for i,w in enumerate(dns[:-1]) if w=='nameserver']
+    raise OfflineError("No internet inside Linux: can't look up %s (%s). DNS servers: %s.\n"
+     "Check Wi-Fi or mobile data. If you use a VPN, an ad blocker or Private DNS (Settings > Connections > "
+     "More connection settings), try turning it off, then tap Launch again."%(host,e,', '.join(servers) or 'none'))
+   if not warned:say('Waiting for the internet (looking up %s failed)...'%host);warned=True
+   time.sleep(5)
+# Wine draws Studio with OpenGL, through EGL (Wine 11) or GLX; Box64 hands those calls to these ARM64
+# libraries, and Mesa's llvmpipe draws on the processor. Without them: "Failed to load libEGL.so.1".
+GRAPHICS_PACKAGES=('libegl1','libegl-mesa0','libgl1','libglx-mesa0','libgl1-mesa-dri','libpulse0')  # libpulse0: sound
+def ensure_graphics(renderer=''):
+ def installed(p):
+  r=subprocess.run(['dpkg-query','-W','-f=${Status}',p],capture_output=True,text=True)
+  return 'ok installed' in r.stdout
+ wanted=GRAPHICS_PACKAGES+(('libvulkan1','mesa-vulkan-drivers') if renderer in ('DXVK','WineVulkan','GPU') else ())
+ # The GPU driver (Turnip) needs these next to what lavapipe does; vulkaninfo checks it loads before Studio starts.
+ if renderer=='GPU':wanted+=TURNIP_PACKAGES
+ missing=[p for p in wanted if not installed(p)]
+ if missing:say('Installing the 3D graphics libraries Studio draws with (one time): '+' '.join(missing));apt_install(*missing)
+def apt_install(*packages):
+ wait_for_internet()
+ env=dict(os.environ,DEBIAN_FRONTEND='noninteractive')
+ # A Debian mirror mid-sync can fail one package list ("File has unexpected size"); apt then exits 100
+ # even though the lists these packages come from are fine. Retry, then try the install anyway.
+ for attempt in range(3):
+  if subprocess.run(['apt-get','-o','Acquire::Retries=3','update'],env=env).returncode==0:break
+  if attempt<2:say('Some package lists failed to download; retrying in 20 s');time.sleep(20)
+ else:say('Some package lists still failed; installing from the ones that downloaded')
+ r=subprocess.run(['apt-get','-o','Acquire::Retries=3','install','-y','--no-install-recommends',*packages],env=env)
+ if r.returncode:raise RuntimeError('Could not install %s (apt exit code %d). Check the internet connection and try again.'%(' '.join(packages),r.returncode))
+# Debian's box64 is 0.3.4, well over a year behind upstream, and built for ordinary Linux. Under
+# proot on Android its wineserver dies as soon as the first Wine process talks to it
+# ("wine client error:0: recvmsg: Connection reset by peer"). The Box64 project's own repository
+# builds a current box64 with -DBAD_SIGNAL=ON, the flag for a system where signal delivery cannot
+# be relied on, which is what proot gives us. That build also carries its own x86-64 libunwind and
+# libstdc++ in /usr/lib/box64-x86_64-linux-gnu, a path box64 searches by default, so unlike
+# Debian's package it needs no amd64 architecture and no extra apt lists.
+BOX64_REPO='https://ryanfortner.github.io/box64-debs/debian/'
+BOX64_PKG='box64-android'
+BOX64_BIN='/usr/local/bin/box64'  # where that package puts it; /usr/local/bin precedes /usr/bin
+def box64_path():
+ """The box64 to use: the Android build if present, otherwise whatever Debian installed."""
+ return BOX64_BIN if os.access(BOX64_BIN,os.X_OK) else shutil.which('box64')
+def install_box64():
+ stamp=ROOT/'box64.version'
+ try:
+  if not os.access(BOX64_BIN,os.X_OK):wait_for_internet('ryanfortner.github.io')
+  index=fetch(BOX64_REPO+'Packages').decode()
+ except Exception as e:
+  have=box64_path()
+  if have:say('Could not check for Box64 updates; using the installed one.\n'+str(e));return have
+  raise
+ fields=None
+ for block in index.split('\n\n'):
+  f=dict(re.findall(r'^([A-Za-z0-9-]+): (.*)$',block,re.M))
+  if f.get('Package')==BOX64_PKG and f.get('Architecture')=='arm64':fields=f;break
+ if not fields:raise RuntimeError('Could not find %s for ARM64 in the Box64 repository'%BOX64_PKG)
+ version=fields['Version']
+ if stamp.exists() and stamp.read_text().strip()==version and os.access(BOX64_BIN,os.X_OK):return BOX64_BIN
+ name=re.sub(r'^\./','',fields['Filename'])
+ if not re.fullmatch(r'[A-Za-z0-9._~+-]+\.deb',name):raise ValueError('Unexpected Box64 package path')
+ say('Installing Box64 %s, the Android build (one time)'%version)
+ deb=CACHE/name
+ download(BOX64_REPO+name,deb,int(fields['Size']),sha256=fields.get('SHA256'))
+ apt_install(str(deb.resolve()))
+ deb.unlink(missing_ok=True)
+ if not os.access(BOX64_BIN,os.X_OK):raise RuntimeError('Box64 installed but %s is missing'%BOX64_BIN)
+ stamp.write_text(version)
+ return BOX64_BIN
+def wine_x64_binary(root=WINE_X64):
+ """The x86-64 Wine program in an unpacked WineHQ install, or None. Up to Wine 10 the 64-bit one is
+ bin/wine64 (bin/wine comes from the 32-bit package, which is not installed); from 11 it is bin/wine."""
+ bindir=root/'opt'/('wine-'+WINE_BRANCH)/'bin'
+ return next((p for p in (bindir/'wine',bindir/'wine64') if p.is_file()),None)
+def install_box64_wine():
+ """Returns the command that runs x86-64 Wine: [box64, .../bin/wine]."""
+ if os.uname().machine not in ('aarch64','arm64'):raise RuntimeError('Box64 mode needs ARM64 Linux')
+ box64=install_box64()
+ wine=wine_x64_binary()
+ stamp=WINE_X64/'.version'
+ index=None
+ try:
+  if not wine:wait_for_internet('dl.winehq.org')
+  index=fetch(WINEHQ+'dists/trixie/main/binary-amd64/Packages').decode()
+ except Exception as e:
+  if wine:say('Could not check for Wine updates; using the installed one.\n'+str(e));return [box64,str(wine)]
+  raise
+ pkgs={};major=wine_major()
+ for block in index.split('\n\n'):
+  f=dict(re.findall(r'^([A-Za-z0-9-]+): (.*)$',block,re.M))
+  if f.get('Package') in ('wine-'+WINE_BRANCH,'wine-'+WINE_BRANCH+'-amd64') and f.get('Architecture')=='amd64':
+   if major and not f['Version'].startswith(major+'.'):continue
+   key=[int(n) for n in re.findall(r'\d+',f['Version'])[:4]]
+   if f['Package'] not in pkgs or key>pkgs[f['Package']][0]:pkgs[f['Package']]=(key,f)
+ if len(pkgs)!=2:raise RuntimeError('Could not find WineHQ %s packages for Debian 13%s'%(
+  WINE_BRANCH,' with major version '+major if major else ''))
+ version=pkgs['wine-'+WINE_BRANCH][1]['Version']
+ if stamp.exists() and stamp.read_text().strip()==version and wine:return [box64,str(wine)]
+ say('Installing Wine %s (x86-64, from WineHQ) for Box64'%version)
+ stage=ROOT/'wine-x64-stage';shutil.rmtree(stage,ignore_errors=True);stage.mkdir()
+ progress=Progress('Wine %s'%version,sum(int(f['Size']) for _,f in pkgs.values()))
+ for name,(_,f) in pkgs.items():
+  if not re.fullmatch(r'pool/main/[A-Za-z0-9/._~+-]+\.deb',f['Filename']) or '..' in f['Filename']:raise ValueError('Unexpected Wine package path')
+  deb=CACHE/Path(f['Filename']).name
+  download(WINEHQ+f['Filename'],deb,int(f['Size']),sha256=f['SHA256'],progress=progress)
+  subprocess.run(['dpkg-deb','-x',str(deb),str(stage)],check=True)
+  deb.unlink()
+ if not wine_x64_binary(stage):raise RuntimeError('Wine executable absent after extraction')
+ (stage/'.version').write_text(version)
+ shutil.rmtree(WINE_X64,ignore_errors=True);stage.rename(WINE_X64)
+ return [box64,str(wine_x64_binary())]
+def startup_reason(code,output):
+ """One line saying why Windows stopped, for the list of every way that was tried."""
+ box64=box64_path()
+ if 'noexec filesystem' in output:return 'Android would not let Wine make its code runnable%s'%(
+  '' if execmod_fix() else ' (Boddy\'s fix for this, %s, is missing)'%EXECMOD_LIB_NAME)
+ if 'virtual_setup_exception' in output or '0xecec' in output:return 'Wine crashed on code Box64 will not run (its "no execute" check)'
+ if 'Connection reset by peer' in output:return "Wine's background process (wineserver) stopped as soon as Windows started"
+ if runtime()=='box64' and box64!=BOX64_BIN:return 'the Android build of Box64 is not installed (using %s)'%box64
+ if code==-signal.SIGKILL or code==137:return 'it was stopped, most likely because the phone ran out of memory'
+ if code<0:return 'it crashed (%s)'%signal.Signals(-code).name
+ for pattern,why in [('Illegal instruction','the phone\'s chip could not run an instruction (Illegal instruction)'),
+  ('Segmentation fault','it crashed (Segmentation fault)'),('Bus error','it crashed (Bus error)'),
+  ('could not load','Wine could not load one of its own files'),('Unsupported','the emulator met something it does not support')]:
+  if pattern in output:return why
+ lines=[l.strip() for l in output.splitlines() if l.strip() and not l.startswith('Running: ')]
+ return 'Windows stopped with exit code %d%s'%(code,': '+lines[-1][:160] if lines else ' and printed nothing')
+def startup_help(output=''):
+ # "wine client error: recvmsg: Connection reset by peer" in the log above this means wineserver
+ # died. Box64 must be built with BAD_SIGNAL=ON to run Wine under proot (Box64's own build notes
+ # say so); Debian's package is not, the box64-android package is.
+ box64=box64_path();using_android=box64==BOX64_BIN
+ lines=['Windows could not start under %s.'%('Box64' if runtime()=='box64' else 'Hangover'),'']
+ # Box64 refuses to run code on a page it does not consider executable and raises its own fault
+ # (code 0xecec) in a loop until the program fixes the page; Wine never does, and dies dispatching
+ # the exception. That is this Wine's problem, not the emulator's, so another Wine is the fix.
+ if ('virtual_setup_exception' in output or '0xecec' in output) and 'noexec filesystem' not in output:
+  major=wine_major()
+  nxt={'':'10','11':'10','10':'9','9':'8'}.get(major,'')
+  lines+=['%s got as far as running Windows code, then stopped on a part of itself that Box64'%(
+    'Wine '+major if major else 'The newest Wine'),
+   'will not run (its "no execute" check). Nothing in Boddy can change that; a different Wine can.','']
+  if nxt:lines+=['In the Studio menu choose "Wine version" and pick %s, then Open Studio again.'%nxt]
+  else:lines+=['Every Wine version offered has now failed, so Studio cannot run on this phone.',
+   'Roblox Tools > "Start a new game I can edit with an AI agent" still works and needs none of this.']
+  return '\n'.join(lines)
+ if 'noexec filesystem' in output:
+  # Wine maps a DLL's file, writes address fix-ups into it, then makes it executable. Android forbids that
+  # last step for apps (SELinux "execmod"), which libboddy-execmod.so works around; see execmod-fix.c.
+  lines+=['Android would not let Wine make the Windows code it loaded runnable ("noexec" in the log).',
+   'Boddy loads a fix for this into Wine (%s); %s.'%(EXECMOD_LIB_NAME,
+    'it was loaded, so Android blocked something the fix does not cover' if execmod_fix() else
+    'it is missing, so update Boddy (or check the internet connection) and open Studio again'),'',
+   'Choose "Copy log" and send the log.']
+  return '\n'.join(lines)
+ if 'Connection reset by peer' in output:
+  lines+=['Wine\'s background process (wineserver) stopped as soon as Windows started.','']
+ if runtime()=='box64' and not using_android:
+  lines+=['Box64 in use: %s.'%box64,
+   'This is not the Android build, which is the one that can run Wine inside Boddy.',
+   'Check the internet connection and open Studio again so it can install that build.']
+ else:
+  lines+=['Box64 in use: %s'%box64,
+   'Things to try, in the Studio menu:',
+   '  Wine version   - try 10, then 9. Studio needs a recent Wine, but older ones emulate better.',
+   '  Reset Studio   - starts the Windows setup again from scratch.',
+   '  Compatibility mode - Hangover instead of Box64 (it is the weaker option, but different).']
+ lines+=['','Choose "Copy log" and send the log if none of that helps; the lines above this one say why '
+  'Windows stopped.']
+ return '\n'.join(lines)
+def wine_command():
+ return install_box64_wine() if runtime()=='box64' else [install_wine()]
+def installed_wine_command():
+ """The Wine command without installing anything (for the sign-in helper and diagnostics)."""
+ if runtime()=='box64':
+  wine=wine_x64_binary()
+  box64=box64_path()
+  return [box64,str(wine)] if box64 and wine else None
+ w=find_wine();return [w] if w else None
+def find_wine():
+ candidates=['/opt/hangover/bin/wine','/usr/bin/hangover-wine','/usr/local/bin/wine','/usr/bin/wine',shutil.which('wine')]
+ return next((str(p) for p in candidates if p and os.path.isfile(p) and os.access(p,os.X_OK)),None)
+def install_wine():
+ w=find_wine()
+ if w:return w
+ if os.uname().machine not in ('aarch64','arm64'):raise RuntimeError('Boddy runtime requires ARM64 Linux')
+ say('Installing Hangover for Debian 13 ARM64')
+ meta=json.loads(fetch('https://api.github.com/repos/AndreRH/hangover/releases/latest'))
+ assets=[a for a in meta['assets'] if re.fullmatch(r'hangover_[0-9.]+_debian13_trixie_arm64\.tar',a['name'])]
+ if len(assets)!=1:raise RuntimeError('Could not identify a Debian 13 ARM64 Hangover release')
+ a=assets[0];url=a['browser_download_url']
+ if not url.startswith('https://github.com/AndreRH/hangover/releases/download/'):raise ValueError('Unexpected runtime URL')
+ archive=CACHE/a['name'];digest=a.get('digest') or '';sha=digest[7:] if digest.startswith('sha256:') else None
+ download(url,archive,a['size'],sha256=sha,progress=Progress('Hangover',a['size']))
+ # A fresh directory: packages left from an earlier attempt or release would be installed alongside.
+ unpack=CACHE/'hangover-packages';shutil.rmtree(unpack,ignore_errors=True);unpack.mkdir()
+ with tarfile.open(archive) as t:
+  for member in t.getmembers():
+   p=Path(member.name)
+   if p.is_absolute() or '..' in p.parts or not (member.isdir() or member.isfile()):raise ValueError('Unsafe runtime archive')
+  t.extractall(unpack,filter='data')
+ debs=list(unpack.rglob('*.deb'))
+ if not debs:raise RuntimeError('Runtime archive contains no Debian packages')
+ apt_install(*[str(p.resolve()) for p in debs])
+ shutil.rmtree(unpack,ignore_errors=True);archive.unlink(missing_ok=True)
+ w=find_wine()
+ if not w:raise RuntimeError('Hangover installed but Wine executable not found')
+ return w
+def run_logged(args,timeout,env,keep=400):
+ """Runs a command, echoing its output, and returns (exit code, last `keep` lines)."""
+ import collections
+ say('Running: '+' '.join(args))
+ tail=collections.deque(maxlen=keep)
+ proc=subprocess.Popen(args,env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,errors='replace',bufsize=1)
+ deadline=time.time()+timeout
+ try:
+  for line in proc.stdout:
+   line=line.rstrip('\n');tail.append(line);print(line,flush=True)
+   if time.time()>deadline:proc.kill();raise RuntimeError('Windows did not start within %d minutes'%(timeout//60))
+  return proc.wait(),'\n'.join(tail)
+ finally:
+  if proc.poll() is None:proc.kill()
+def command(args,timeout=90,env=None):
+ say('Running: '+' '.join(args));r=subprocess.run(args,timeout=timeout,env=env)
+ if r.returncode:raise RuntimeError('%s failed with exit code %d'%(' '.join(args[:3]),r.returncode))
+def execmod_probe():
+ """Whether this phone lets a process make written-to file pages executable, as Wine does to load a DLL."""
+ import ctypes,mmap as _m
+ probe=ROOT/'.execmod-probe'
+ try:
+  libc=ctypes.CDLL(None,use_errno=True)
+  libc.mprotect.argtypes=[ctypes.c_void_p,ctypes.c_size_t,ctypes.c_int]
+  probe.write_bytes(b'\0'*PAGE_SIZE)
+  with probe.open('r+b') as fh,_m.mmap(fh.fileno(),PAGE_SIZE,flags=_m.MAP_PRIVATE,prot=_m.PROT_READ|_m.PROT_WRITE) as mm:
+   mm[0]=1
+   addr=ctypes.addressof(ctypes.c_char.from_buffer(mm))
+   ok=libc.mprotect(addr,PAGE_SIZE,_m.PROT_READ|_m.PROT_EXEC)==0;err=ctypes.get_errno()
+   libc.mprotect(addr,PAGE_SIZE,_m.PROT_READ|_m.PROT_WRITE)  # back to what mmap expects before closing
+  return 'works' if ok else 'blocked by Android (%s); Wine needs the execmod fix'%os.strerror(err)
+ except Exception as e:return 'could not test (%s)'%e
+ finally:probe.unlink(missing_ok=True)
+def diagnose():
+ say('Boddy Studio compatibility report')
+ say('Kernel: '+str(os.uname()));say('DISPLAY='+os.getenv('DISPLAY','<unset>'));say('Free storage: %.2f GB'%(shutil.disk_usage(ROOT).free/1e9))
+ say('Runtime: '+runtime());w=installed_wine_command();say('Wine command: '+str(w))
+ box64=box64_path()
+ say('Box64: '+str(box64)+('' if box64==BOX64_BIN else '  <-- Debian build; the Android build is the one that works'))
+ if box64:
+  try:subprocess.run([box64,'--version'],timeout=60)
+  except Exception as e:say(str(e))
+ for url in [VERSION_URL,CDN]:
+  try:open_url(url).close();say('HTTPS OK: '+url)
+  except urllib.error.HTTPError:say('HTTPS OK: '+url)
+  except Exception as e:say('HTTPS FAILED: '+url+'\n'+str(e))
+ say('Memory available: %d MB'%mem_available_mb())
+ say('Processes: %s (Android stops Boddy above about %d)'%(process_summary(12),PHANTOM_LIMIT))
+ say('Page size: %d bytes%s'%(PAGE_SIZE,'' if PAGE_SIZE==4096 else '  <-- too big; Windows programs need 4096'))
+ say('Execmod fix for Wine: '+(execmod_fix() or 'missing  <-- Wine cannot load Windows programs on Android without it'))
+ try:features=next((l.split(':',1)[1].split() for l in open('/proc/cpuinfo') if l.startswith('Features')),[])
+ except OSError:features=[]
+ say('SVE in the kernel: %s (Mesa is told to use a generic CPU either way)'%('yes' if 'sve' in features else 'no'))
+ say('Making changed file pages executable: '+execmod_probe())
+ say('Wine version wanted: '+(wine_major() or 'newest'))
+ say('Adreno GPU for the GPU graphics mode: '+(kgsl_device() or '%s is there'%KGSL_DEVICE)+(
+  '; Studio crashed on it last time' if GPU_FAILED_FILE.exists() else ''))
+ # Wine maps its DLLs from disk as executable. If Android refuses that, no Wine can ever work here.
+ try:
+  import mmap as _m
+  probe=ROOT/'.exec-probe';probe.write_bytes(b'\xc3'*PAGE_SIZE)
+  with probe.open('rb') as fh:
+   mm=_m.mmap(fh.fileno(),PAGE_SIZE,prot=_m.PROT_READ|_m.PROT_EXEC);mm.close()
+  say('Mapping a file as executable: works')
+ except Exception as e:say('Mapping a file as executable: FAILED (%s) <-- no Windows program can run'%e)
+ finally:
+  try:(ROOT/'.exec-probe').unlink()
+  except OSError:pass
+ # Whether 3D works at all is the main open question, so install the one tool that answers it.
+ if not shutil.which('glxinfo'):
+  say('Installing glxinfo to test 3D graphics (one time)')
+  try:apt_install('mesa-utils')
+  except Exception as e:say('Could not install mesa-utils: '+str(e))
+ for args in [['getconf','PAGESIZE'],['uname','-m'],['glxinfo','-B']]:
+  if shutil.which(args[0]):
+   try:subprocess.run(args,timeout=20)
+   except Exception as e:say(str(e))
+ if w:
+  try:command([*w,'--version'],120,wine_env(prefix_dir()))
+  except Exception as e:say(str(e))
+ say('Report does not include account tokens or application configuration files.')
+AUTH_SCHEME='roblox-studio-auth:'
+AUTH_DESKTOP='boddy-roblox-studio-auth.desktop'
+# Quiet by default: BOX64_LOG=1 adds a line for every unaligned access Box64 fixes, and SHOWSEGV a
+# register dump for every fault Wine handles, which slows Studio down. The start after a crash turns
+# them on (see run_studio); BODDY_BOX64_LOG=1 does it always.
+BOX64_ENV={'BOX64_NOBANNER':'1','BOX64_LOG':'0','BOX64_SHOWSEGV':'0'}
+# Speed: "fast" drops the memory barriers (STRONGMEM=0), builds bigger blocks of translated code across jumps
+# (BIGBLOCK=2) and turns x86 call/return pairs into native ones (CALLRET=1): the fastest Box64 runs, and the
+# first thing tried. A heavily multi-threaded x86 program like Studio can crash without the barriers, so the
+# next setup after such a crash is "strongmem": Box64's own defaults plus STRONGMEM=1, the cheap barriers
+# (what "fast" was before). "safe" is Box64's conservative preset (as Winlator's): often twice as slow, kept
+# as the last resort.
+BOX64_SPEED={'fast':{'BOX64_DYNAREC_STRONGMEM':'0','BOX64_DYNAREC_BIGBLOCK':'2','BOX64_DYNAREC_CALLRET':'1'},
+ 'strongmem':{'BOX64_DYNAREC_STRONGMEM':'1'},
+ 'safe':{'BOX64_DYNAREC_SAFEFLAGS':'2','BOX64_DYNAREC_FASTNAN':'0','BOX64_DYNAREC_FASTROUND':'0','BOX64_DYNAREC_X87DOUBLE':'1',
+  'BOX64_DYNAREC_BIGBLOCK':'0','BOX64_DYNAREC_STRONGMEM':'2','BOX64_DYNAREC_CALLRET':'0','BOX64_DYNAREC_WAIT':'1'}}
+# Android forbids making written-to file pages executable, which is how Wine loads every DLL; this library,
+# preloaded into Wine only, moves such pages to anonymous memory first (see execmod-fix.c). Box64 notes it
+# cannot load it as an x86 library and carries on; the host side, where mprotect() runs, loads it.
+EXECMOD_LIB_NAME='libboddy-execmod.so'
+EXECMOD_LIB_SHA256='435cac690e72be3ccc9d79ef8d75534338bba60686b5cad2dd204f09fd34f31b'
+EXECMOD_LIB_URL='https://raw.githubusercontent.com/pijsosk-sys/Jjzk/ccr-f8458f15-i347hd/boddy/'+EXECMOD_LIB_NAME
+def execmod_fix(fetch_missing=False):
+ """Path of the ARM64 execmod fix library, downloading it if asked and it is not shipped with Boddy."""
+ if os.uname().machine not in ('aarch64','arm64'):return None
+ def good(p):
+  try:return hashlib.sha256(p.read_bytes()).hexdigest()==EXECMOD_LIB_SHA256
+  except OSError:return False
+ for p in (Path('/opt/boddy')/EXECMOD_LIB_NAME,ROOT/EXECMOD_LIB_NAME):
+  if good(p):return str(p)
+ if not fetch_missing:return None
+ try:
+  download(EXECMOD_LIB_URL,ROOT/EXECMOD_LIB_NAME,sha256=EXECMOD_LIB_SHA256)
+  return str(ROOT/EXECMOD_LIB_NAME)
+ except Exception as e:
+  say('Could not download %s, which Wine needs on Android: %s'%(EXECMOD_LIB_NAME,e));return None
+def wine_env(prefix):
+ nofile=os.getenv('BODDY_NOFILE_SOFT') or str(resource.getrlimit(resource.RLIMIT_NOFILE)[0])
+ env=dict(os.environ,BODDY_NOFILE_SOFT=nofile,WINEPREFIX=str(prefix),WINEARCH='win64',WINEDEBUG=os.getenv('BODDY_WINEDEBUG','-all,err+all'),LIBGL_ALWAYS_SOFTWARE='1',QT_X11_NO_MITSHM='1')
+ # Without this, creating the prefix stops at "install wine-mono?" and waits for a click nobody sees.
+ # winemenubuilder only adds Linux menu entries for Windows programs: one process fewer under Android's limit.
+ env.setdefault('WINEDLLOVERRIDES','mscoree=;mshtml=;winemenubuilder.exe=d')
+ if Path('/tmp/pulse.sock').exists():env.setdefault('PULSE_SERVER','unix:/tmp/pulse.sock')
+ if runtime()=='box64':
+  for k,v in BOX64_ENV.items():env.setdefault(k,v)
+ setup=current_setup()
+ for k,v in BOX64_SPEED[setup['speed']].items():env.setdefault(k,v)  # Hangover's WowBox64 reads these too
+ # Box64 tells programs the CPU has AVX2; Studio then runs AVX code, and it died on an illegal instruction
+ # (SIGILL) under both Box64 and Hangover. Without AVX it uses its SSE code instead.
+ if not setup['avx']:env.setdefault('BOX64_AVX','0')
+ if runtime()=='box64':
+  if os.getenv('BODDY_BOX64_LOG'):env.update(BOX64_LOG=os.environ['BODDY_BOX64_LOG'],BOX64_SHOWSEGV='1')
+ fix=execmod_fix(fetch_missing=True)
+ # The same library hides the CPU model from Mesa's LLVM, which otherwise compiles shaders with SVE
+ # instructions a Snapdragon's kernel does not allow (SIGILL on the first frame; see execmod-fix.c).
+ env.setdefault('BODDY_GENERIC_CPU','1')
+ if fix and fix not in env.get('LD_PRELOAD','').split():env['LD_PRELOAD']=' '.join(filter(None,[fix,env.get('LD_PRELOAD')]))
+ return env
+def set_default_handler(mime,desktop):
+ import configparser
+ path=Path(os.getenv('XDG_CONFIG_HOME') or Path.home()/'.config')/'mimeapps.list'
+ cfg=configparser.ConfigParser(interpolation=None,strict=False,delimiters=('=',));cfg.optionxform=str
+ if path.exists():cfg.read(path)
+ if not cfg.has_section('Default Applications'):cfg.add_section('Default Applications')
+ if cfg.get('Default Applications',mime,fallback='')==desktop+';':return
+ cfg.set('Default Applications',mime,desktop+';')
+ path.parent.mkdir(parents=True,exist_ok=True)
+ with path.open('w') as f:cfg.write(f,space_around_delimiters=False)
+def setup_browser_login(wine,env,prefix):
+ # Studio's built-in login needs WebView2, which does not run here. "Login via Browser" opens the
+ # sign-in page through Wine's winebrowser, and roblox.com returns to a roblox-studio-auth: link
+ # that has to be handed back to the running Studio (the same approach as Vinegar).
+ apps=Path(os.getenv('XDG_DATA_HOME') or Path.home()/'.local/share')/'applications';apps.mkdir(parents=True,exist_ok=True)
+ (apps/AUTH_DESKTOP).write_text('[Desktop Entry]\nType=Application\nName=Roblox Studio sign-in\nExec=/opt/boddy/studio %u\nNoDisplay=true\nTerminal=false\nMimeType=x-scheme-handler/roblox-studio-auth;\n')
+ set_default_handler('x-scheme-handler/roblox-studio-auth',AUTH_DESKTOP)
+ if shutil.which('update-desktop-database'):subprocess.run(['update-desktop-database',str(apps)],timeout=60)
+ marker=prefix/'.boddy-browser-login'
+ if not marker.exists() or marker.read_text()!=BROWSERS:
+  # Wine's default list (xdg-open, firefox, ...) finds no browser in Boddy, and a browser started
+  # directly by Wine inherits Wine's process state, so links go through open_in_browser().
+  command([*wine,'reg','add','HKCU\\Software\\Wine\\WineBrowser','/v','Browsers','/t','REG_SZ','/d',BROWSERS,'/f'],600,env)
+  marker.write_text(BROWSERS)
+BROWSERS='/opt/boddy/studio --open-url,firefox-esr,xdg-open,firefox'
+FIREFOX_PROCESSES=3  # with FIREFOX_PREFS: Firefox, one page process, and this launcher waiting on it
+FIREFOX_PREFS={
+ # Same as Boddy's system Firefox: the content sandbox needs kernel features proot lacks.
+ 'security.sandbox.content.level':0,
+ # Studio already uses most of the phone's memory: one content process, no per-site processes.
+ 'fission.autostart':False,'dom.ipc.processCount':1,'dom.ipc.processCount.webIsolated':1,'dom.ipc.processPrelaunch.enabled':False,
+ # Android 12+ kills an app's Linux processes beyond 32 in total, so keep Firefox to a main and one content process.
+ 'network.process.enabled':False,'media.rdd-process.enabled':False,'media.utility-process.enabled':False,
+ 'layers.gpu-process.enabled':False,'media.gmp-provider.enabled':False,'media.eme.enabled':False,
+ 'browser.tabs.remote.separateFileUriProcess':False,
+ 'extensions.webextensions.remote':False,'dom.ipc.forkserver.enable':False,
+ 'browser.tabs.remote.separatePrivilegedContentProcess':False,'browser.tabs.remote.separatePrivilegedMozillaWebContentProcess':False,
+ 'browser.tabs.unloadOnLowMemory':True,'browser.sessionhistory.max_total_viewers':0,
+ # Software WebRender is the stable path on the VNC desktop's software OpenGL.
+ 'gfx.webrender.software':True,
+ # A crash must not restore the crashing page on the next start.
+ 'browser.sessionstore.resume_from_crash':False,'browser.startup.page':0,'browser.startup.homepage':'about:blank',
+ 'browser.shell.checkDefaultBrowser':False,'browser.aboutwelcome.enabled':False,
+ 'datareporting.policy.dataSubmissionEnabled':False,'datareporting.healthreport.uploadEnabled':False,'toolkit.telemetry.enabled':False,
+ 'network.protocol-handler.external.roblox-studio-auth':True,
+ # Little memory for one sign-in page: Studio holds most of the phone's, and Android closes Boddy when it runs out.
+ 'browser.cache.memory.capacity':16384,'browser.cache.memory.enable':False,
+ # Its JavaScript compilers and smooth drawing cost memory and processor a sign-in page does not need.
+ 'javascript.options.ion':False,'javascript.options.baselinejit':False,'javascript.options.wasm_optimizingjit':False,
+ 'layout.frame_rate':20,'general.smoothScroll':False,'toolkit.cosmeticAnimations.enabled':False,
+ 'browser.toolbars.bookmarks.visibility':'never','extensions.pocket.enabled':False,'browser.newtabpage.enabled':False,'browser.cache.disk.enable':False,'image.mem.surfacecache.max_size_kb':32768,
+ 'browser.sessionhistory.max_entries':3,'browser.sessionstore.max_tabs_undo':0,'javascript.options.mem.gc_incremental_slice_ms':5,
+ # Only the sign-in page is needed while Studio runs: no fetching of pages, names or connections ahead of time
+ # (link prefetch, DNS prefetch, the network predictor, speculative connections from the address bar).
+ 'network.prefetch-next':False,'network.dns.disablePrefetch':True,'network.predictor.enabled':False,
+ 'network.predictor.enable-prefetch':False,'network.http.speculative-parallel-limit':0,
+ 'browser.urlbar.speculativeConnect.enabled':False,'browser.places.speculativeConnect.enabled':False}
+def browser_env():
+ env={k:v for k,v in os.environ.items() if not k.startswith(('WINE','BOX64_','FEX_')) and k not in ('LIBGL_ALWAYS_SOFTWARE','QT_X11_NO_MITSHM','BODDY_NOFILE_SOFT')}
+ preload=' '.join(p for p in env.get('LD_PRELOAD','').split() if EXECMOD_LIB_NAME not in p)
+ if preload:env['LD_PRELOAD']=preload
+ else:env.pop('LD_PRELOAD',None)
+ # Firefox's seccomp sandboxes conflict with proot; MOZ_FAKE_NO_SANDBOX covers the utility processes too.
+ env.update(MOZ_FAKE_NO_SANDBOX='1',MOZ_DISABLE_CONTENT_SANDBOX='1',MOZ_DISABLE_GMP_SANDBOX='1',MOZ_DISABLE_RDD_SANDBOX='1',MOZ_DISABLE_SOCKET_PROCESS_SANDBOX='1')
+ return env
+def reset_process_state(nofile):
+ # Runs in the browser's process before exec: undo blocked/ignored signals and Wine's raised file limit.
+ signal.pthread_sigmask(signal.SIG_SETMASK,[])
+ for n in range(1,signal.NSIG):
+  try:
+   if signal.getsignal(n)==signal.SIG_IGN:signal.signal(n,signal.SIG_DFL)
+  except (OSError,ValueError):pass
+ if nofile:
+  soft,hard=resource.getrlimit(resource.RLIMIT_NOFILE)
+  if soft>nofile:resource.setrlimit(resource.RLIMIT_NOFILE,(nofile,hard))
+def notify(text):
+ say(text)
+ if shutil.which('zenity'):subprocess.run(['zenity','--error','--width=460','--title=Roblox Studio sign-in','--text='+text],env=browser_env())
+def bring_to_front(proc,seconds=120):
+ """Puts the sign-in Firefox in front of Studio (it opened behind Studio's window, out of reach) and keeps
+ it above Studio while it is open; Studio comes back to the front when it closes."""
+ deadline=time.time()+seconds
+ while time.time()<deadline and proc.poll() is None:
+  ids=xdo('search','--onlyvisible','--pid',str(proc.pid)).split() or xdo('search','--onlyvisible','--class','firefox').split()
+  if ids:
+   time.sleep(2)  # let it finish opening, or the window manager may place Studio over it again
+   for wid in ids:
+    wm_state(wid,'add,above');xdo('windowactivate',wid)
+   say('Firefox is in front for signing in');return
+  time.sleep(1)
+def close_signin_browser():
+ """Ends the Firefox opened for signing in (by its profile), now that Studio has the sign-in."""
+ profile=str(ROOT/'firefox-profile')
+ for n in os.listdir('/proc'):
+  if not n.isdigit():continue
+  try:cmd=open('/proc/%s/cmdline'%n,'rb').read().split(b'\0')
+  except OSError:continue
+  if profile.encode() in cmd and any(b'firefox' in c for c in cmd[:1]):
+   try:os.kill(int(n),signal.SIGTERM)
+   except OSError:pass
+# Where "Login via Browser" signs in: Firefox in Boddy (the default), with Studio frozen meanwhile so the two
+# fit in the phone's memory (see studio_frozen), or the phone's own browser, chosen in the Studio menu
+# ("Sign-in browser"): roblox.com then sends that browser to a roblox-studio-auth: link, which the Boddy app
+# takes (StudioSignInActivity) and passes back here through run-in-desktop.sh.
+SIGNIN_FILE=ROOT/'signin-browser'
+BODDY_CTL='/opt/boddy/boddy-ctl'
+def signin_browser():
+ b=os.getenv('BODDY_STUDIO_SIGNIN') or (SIGNIN_FILE.read_text().strip() if SIGNIN_FILE.exists() else '')
+ return b if b in ('phone','firefox') else 'firefox'
+def open_on_phone(url):
+ """Opens the link in the phone's browser through the Boddy app; whether that worked."""
+ if not os.access(BODDY_CTL,os.X_OK):return False
+ try:r=subprocess.run([BODDY_CTL,'phone-open',url],capture_output=True,text=True,timeout=90,env=browser_env())
+ except Exception as e:say('Could not reach the phone: %s'%e);return False
+ if r.returncode:say('Could not open the sign-in on the phone: '+(r.stderr or r.stdout).strip()[:200])
+ return r.returncode==0
+def open_in_browser(url):
+ # Wine's winebrowser calls this for links Studio opens, e.g. "Login via Browser".
+ if not re.fullmatch(r'https?://[\x21-\x7e]+',url) or len(url)>16384:raise ValueError('Refusing to open link: '+url[:200])
+ if signin_browser()=='phone':
+  say('Sign-in page: '+url.split('?')[0])
+  if open_on_phone(url):
+   say('Opened on the phone\'s browser: '+url.split('?')[0]+'. After signing in there, Boddy hands the sign-in back to Studio.')
+   return
+  say('The phone\'s browser could not be used; signing in with Firefox in Boddy instead')
+ open_in_firefox(url)
+def studio_processes():
+ """Studio and the Wine processes it runs on (those of the launch, BODDY_STUDIO_SESSION), not this helper or
+ what started it (Wine's winebrowser), nor Firefox."""
+ mine={os.getpid()};p=os.getppid()
+ while p>1 and p not in mine:
+  mine.add(p)
+  try:p=int(open('/proc/%d/stat'%p).read().rsplit(')',1)[1].split()[1])
+  except (OSError,ValueError,IndexError):break
+ found=[]
+ for n in os.listdir('/proc'):
+  if not n.isdigit() or int(n) in mine:continue
+  try:
+   comm=open('/proc/%s/comm'%n).read().strip()
+   if not (comm.endswith('.exe') or comm.startswith(('wineserver','RobloxStudio'))):continue
+   if b'BODDY_STUDIO_SESSION=' in open('/proc/%s/environ'%n,'rb').read():found.append(int(n))
+  except OSError:pass
+ return found
+FROZEN_FILE=ROOT/'studio-frozen'  # Studio's frozen processes, so any later start can unfreeze them
+def freeze_studio():
+ """Stops Studio while the sign-in Firefox is open. Studio only waits for the sign-in meanwhile; stopped, its
+ memory goes unused, and Android can squeeze it into its compressed swap to make room for Firefox (Studio and
+ Firefox side by side ran the phone out of memory, and Android closed Boddy)."""
+ if os.getenv('BODDY_STUDIO_FREEZE')=='0':return
+ pids=studio_processes()
+ for pid in pids:
+  try:os.kill(pid,signal.SIGSTOP)
+  except OSError:pass
+ if pids:FROZEN_FILE.write_text(' '.join(map(str,pids)));say('Studio is paused while you sign in (%d processes)'%len(pids))
+def unfreeze_studio():
+ if not FROZEN_FILE.exists():return
+ for pid in FROZEN_FILE.read_text().split():
+  try:os.kill(int(pid),signal.SIGCONT)
+  except (OSError,ValueError):pass
+ FROZEN_FILE.unlink(missing_ok=True);say('Studio runs again')
+def open_in_firefox(url):
+ firefox=shutil.which('firefox-esr') or shutil.which('firefox')
+ if not firefox:raise RuntimeError('Firefox is not installed; install firefox-esr from Install Apps')
+ # Firefox adds about 3 processes. Studio and the desktop can leave too little room under Android's limit of
+ # 32, and going over makes Android close all of Boddy, Studio included: say so first.
+ n=process_count()
+ if n+FIREFOX_PROCESSES>PHANTOM_LIMIT and shutil.which('zenity'):
+  if subprocess.run(['zenity','--question','--width=480','--title=Roblox Studio sign-in','--ok-label=Sign in anyway',
+   '--cancel-label=Not now','--text=Signing in opens Firefox, which needs about %d more processes. %d of the 32 '
+   'Android allows are in use, so Android may close Boddy, Studio included.\n\nTo remove that limit (Android 14 or '
+   'newer): Settings > About phone > tap Build number 7 times, then Settings > System > Developer options > turn on '
+   '"Disable child process restrictions". Then choose Login via Browser again.'%(FIREFOX_PROCESSES,n)],
+   env=browser_env()).returncode:
+   raise RuntimeError('Sign-in not started: too many processes for Android (%d of %d)'%(n,PHANTOM_LIMIT))
+ profile=ROOT/'firefox-profile';profile.mkdir(parents=True,exist_ok=True)
+ (profile/'user.js').write_text(''.join('user_pref(%s, %s);\n'%(json.dumps(k),json.dumps(v)) for k,v in FIREFOX_PREFS.items()))
+ log=CACHE/'firefox.log';nofile=int(os.getenv('BODDY_NOFILE_SOFT') or 0)
+ say('Opening in Firefox: '+url.split('?')[0])
+ with log.open('w') as out:
+  # A window of 900x700 instead of the whole screen: less to draw and less memory for it.
+  proc=subprocess.Popen([firefox,'--profile',str(profile),'--width','900','--height','700',url],stdin=subprocess.DEVNULL,stdout=out,stderr=subprocess.STDOUT,
+   env=browser_env(),start_new_session=True,preexec_fn=lambda:reset_process_state(nofile))
+ threading.Thread(target=bring_to_front,args=(proc,),daemon=True).start()
+ # Once Firefox shows the page, Studio pauses until the sign-in comes back (pass_auth) or Firefox closes.
+ time.sleep(3);freeze_studio()
+ try:code=proc.wait()
+ finally:unfreeze_studio()
+ if code==0:return
+ saved=Path.home()/'Phone/Download'
+ if saved.is_dir():shutil.copy(log,saved/'Boddy-Studio-firefox.log');where='Downloads/Boddy-Studio-firefox.log'
+ else:where=str(log)
+ if code==-signal.SIGKILL:why='Android or Linux stopped it, most likely because the phone ran out of memory'
+ elif code<0:why='it crashed (%s)'%signal.Signals(-code).name
+ else:why='it exited with code %d'%code
+ notify('Firefox closed unexpectedly: %s.\n\nClose other apps and try "Login via Browser" again. Firefox log: %s'%(why,where))
+ raise RuntimeError('Firefox ended: '+why)
+def tune_prefix(wine,env,prefix):
+ # Bluetooth and USB drivers cannot work inside Boddy (no udev or libusb devices) and only add Wine
+ # driver work; Studio uses neither.
+ marker=prefix/'.boddy-tuned-1'
+ if not marker.exists():
+  for service in ('winebth','wineusb'):
+   command([*wine,'reg','add','HKLM\\System\\CurrentControlSet\\Services\\'+service,'/v','Start','/t','REG_DWORD','/d','4','/f'],600,env)
+  marker.touch()
+ # Sound: Boddy plays everything through PulseAudio to the phone; Wine tried ALSA, which has no card here
+ # ("cannot find card '0'"), so Studio was silent. Wine's pulse driver goes through Box64 to libpulse.
+ marker=prefix/'.boddy-tuned-sound'
+ if not marker.exists():
+  command([*wine,'reg','add','HKCU\\Software\\Wine\\Drivers','/v','Audio','/t','REG_SZ','/d','pulse','/f'],600,env)
+  marker.touch()
+# Studio's MCP plugin (mcp-plugin/, built into MCPStudioPlugin.rbxmx), which lets Claude Code work in Studio
+# through roblox-studio-mcp. Shipped with Boddy; downloaded, checked, if this Boddy predates it.
+MCP_PLUGIN_NAME='MCPStudioPlugin.rbxmx'
+MCP_PLUGIN_SHA256='e680d8d235fd8345c80d1ec7729786d89708b3e1c38cfe765463fe84cf5d1aa7'
+MCP_PLUGIN_URL='https://raw.githubusercontent.com/pijsosk-sys/Jjzk/ccr-f8458f15-i347hd/boddy/'+MCP_PLUGIN_NAME
+def install_mcp_plugin(prefix):
+ def good(p):
+  try:return hashlib.sha256(p.read_bytes()).hexdigest()==MCP_PLUGIN_SHA256
+  except OSError:return False
+ src=next((p for p in (Path('/opt/boddy')/MCP_PLUGIN_NAME,ROOT/MCP_PLUGIN_NAME) if good(p)),None)
+ if not src:
+  try:download(MCP_PLUGIN_URL,ROOT/MCP_PLUGIN_NAME,sha256=MCP_PLUGIN_SHA256);src=ROOT/MCP_PLUGIN_NAME
+  except Exception as e:say('Could not get the Claude Code plugin for Studio: %s'%e);return
+ users=[u for u in (prefix/'drive_c'/'users').glob('*') if u.is_dir() and u.name!='Public'] or [prefix/'drive_c'/'users'/'root']
+ for user in users:
+  plugins=user/'AppData'/'Local'/'Roblox'/'Plugins';plugins.mkdir(parents=True,exist_ok=True)
+  (plugins/'MCPStudioPlugin.rbxm').unlink(missing_ok=True)  # the official installer's copy, if any: not twice
+  dst=plugins/MCP_PLUGIN_NAME
+  if not good(dst):shutil.copyfile(src,dst);say('Installed the Claude Code (MCP) plugin into Studio')
+# Studio's pop-ups (notifications, the loading box, menus) are layered, partly transparent windows.
+# Boddy's desktop has no compositor, so drawn as separate X windows their transparent parts come out
+# black, and Studio's panels redraw badly. Inside a Wine virtual desktop Wine draws every Studio window
+# into one X window itself. HKCU\Software\Wine\Explorer\Desktop names the desktop (explorer reads it
+# when the wineserver starts) and ...\Desktops holds its size.
+WINDOW_MODE_FILE=ROOT/'window-mode'
+STUDIO_SHARE=0.64  # of the screen's width for Studio in Studio Mode; Claude Code gets the rest
+DESKTOP_NAME='RobloxStudio'
+def window_mode():
+ m=os.getenv('BODDY_STUDIO_WINDOWS') or (WINDOW_MODE_FILE.read_text().strip() if WINDOW_MODE_FILE.exists() else '')
+ return m if m in ('desktop','separate') else 'desktop'
+def screen_size():
+ try:out=xrandr().stdout
+ except Exception:return None
+ m=re.search(r'current (\d+) x (\d+)',out)
+ return (int(m.group(1)),int(m.group(2))) if m else None
+WINE_DRIVERS_OFF=('winebus','wineusb','winebth')
+DESKTOP_BACKGROUND='0 0 0'  # black instead of the classic Windows blue around Studio's window
+def set_window_mode(wine,env,prefix):
+ """Puts Studio in a Wine virtual desktop that fills the screen above Boddy's taskbar, or takes it out,
+ and gives the desktop its black background. Runs on every launch (see apply_desktop_settings)."""
+ size=screen_size() if window_mode()=='desktop' else None
+ # Room for the window's title bar and Boddy's taskbar, so the whole desktop stays on screen.
+ # Studio Mode puts Claude Code beside Studio: the desktop then takes the left part of the screen.
+ share=STUDIO_SHARE if os.getenv('BODDY_STUDIO_LAYOUT')=='split' else 1.0
+ want='%dx%d'%(int(size[0]*share)-8,size[1]-72) if size else ''
+ # What the window manager leaves free above Boddy's taskbar, less the window's title bar: so Studio never
+ # covers the taskbar and Boddy's apps (Firefox for signing in among them) stay one tap away.
+ area=work_area() if size else None
+ if area:want='%dx%d'%(int(area[2]*share)-8,area[3]-32)
+ apply_desktop_settings(wine,env,prefix,want)
+ say('Studio windows: '+('one Wine window of %s'%want if want else 'separate windows'))
+def wineserver(wine):
+ """The command that runs this Wine's wineserver (through Box64 when Wine runs through it), or None."""
+ server=Path(wine[-1]).parent/'wineserver'
+ return [*wine[:-1],str(server)] if server.exists() else None
+def apply_desktop_settings(wine,env,prefix,want=None):
+ """Writes Studio's desktop settings and the black background into the prefix, makes sure the wineserver has
+ saved them to disk, and checks they are there. `want` is the desktop size ('' for separate windows, None to
+ leave the window mode as it is: only the background and the desktop's look)."""
+ # The background used to be written once, with a marker in the prefix saying so. Wine keeps the registry in
+ # the wineserver's memory and writes it to disk when the wineserver ends cleanly; ended at once with -k
+ # (under Box64 and proot on a phone it does not get to save), the change was lost but the marker was still
+ # written, so every later start skipped it and the desktop stayed blue. Now it is written on every launch,
+ # saved, and read back. The marker (v3) now only records what the last launch applied; nothing skips on it.
+ marker=prefix/'.boddy-window-mode'
+ lines=['REGEDIT4','']
+ if want is not None:
+  lines+=['[HKEY_CURRENT_USER\\Software\\Wine\\Explorer]',
+   '"Desktop"="%s"'%DESKTOP_NAME if want else '"Desktop"=-','']
+  if want:
+   lines+=['[HKEY_CURRENT_USER\\Software\\Wine\\Explorer\\Desktops]','"%s"="%s"'%(DESKTOP_NAME,want),'',
+    # A Windows-style taskbar in the desktop: without one, a minimized or hidden Studio window could not be
+    # brought back, leaving only the desktop's background until Studio was restarted.
+    '[HKEY_CURRENT_USER\\Software\\Wine\\Explorer\\Desktops\\%s]'%DESKTOP_NAME,'"EnableShell"=dword:00000001','']
+ # The desktop's colour (Windows' "Background" system colour), with no wallpaper or pattern drawn over it.
+ lines+=['[HKEY_CURRENT_USER\\Control Panel\\Colors]','"Background"="%s"'%DESKTOP_BACKGROUND,'',
+  '[HKEY_CURRENT_USER\\Control Panel\\Desktop]','"Wallpaper"=""','"Pattern"="(None)"','']
+ # Wine's USB, Bluetooth and gamepad drivers cannot work in Boddy (no udev or USB devices) and only cost a
+ # driver process (winedevice.exe) under Android's limit of 32; mouse and keyboard do not go through them.
+ # tune_prefix() set this once, but like the background it was lost when the wineserver was ended unsaved.
+ for service in WINE_DRIVERS_OFF:
+  lines+=['[HKEY_LOCAL_MACHINE\\System\\CurrentControlSet\\Services\\%s]'%service,'"Start"=dword:00000004','']
+ reg=CACHE/'window-mode.reg';reg.write_text('\r\n'.join(lines)+'\r\n')
+ command([*wine,'regedit','/S','Z:'+str(reg).replace('/','\\')],600,env)
+ server=wineserver(wine)
+ # explorer only reads the desktop settings when the wineserver starts, so end this one and let Studio start a
+ # fresh one. First wait for it to end by itself (-w): it then writes the registry to disk. -k afterwards only
+ # stops one that is still running after that.
+ def end_server():
+  if not server:return
+  try:subprocess.run([*server,'-w'],env=env,timeout=180)
+  except subprocess.TimeoutExpired:say('Warning: Wine took over 3 minutes to save its settings; stopping it')
+  subprocess.run([*server,'-k'],env=env,timeout=120,stderr=subprocess.DEVNULL)
+ end_server()
+ # Read it back from what was saved (a new wineserver loads the registry from disk).
+ got=desktop_background(wine,env)
+ if got!=DESKTOP_BACKGROUND:
+  say('Warning: the desktop background did not save (it is %s); writing it again'%(got or 'missing'))
+  command([*wine,'reg','add','HKCU\\Control Panel\\Colors','/v','Background','/t','REG_SZ','/d',DESKTOP_BACKGROUND,'/f'],600,env)
+  end_server();got=desktop_background(wine,env)
+ end_server()
+ marker.write_text('v3 %s background=%s'%('unchanged' if want is None else want or 'separate',got or 'missing'))
+ say('Studio desktop background: %s'%('black' if got==DESKTOP_BACKGROUND else 'NOT black (%s); Studio may show a blue desktop'%(got or 'missing')))
+def desktop_background(wine,env):
+ """HKCU\\Control Panel\\Colors\\Background as Wine reads it, or None."""
+ try:r=subprocess.run([*wine,'reg','query','HKCU\\Control Panel\\Colors','/v','Background'],env=env,capture_output=True,text=True,errors='replace',timeout=600)
+ except subprocess.TimeoutExpired:return None
+ m=re.search(r'Background\s+REG_SZ\s+(.*?)\s*$',r.stdout,re.M)
+ return m.group(1) if m else None
+def xdo(*args,timeout=20):
+ """Runs xdotool (Boddy installs it); its output, or '' when it is missing or fails."""
+ if not shutil.which('xdotool'):return ''
+ try:return subprocess.run(['xdotool',*args],capture_output=True,text=True,errors='replace',timeout=timeout).stdout
+ except Exception:return ''
+def wm_state(wid,change):
+ """Asks the window manager to change a window's state, e.g. 'remove,fullscreen' or 'add,above'. Debian's
+ xdotool is too old for this; wmctrl does it."""
+ if not shutil.which('wmctrl'):return
+ try:subprocess.run(['wmctrl','-i','-r',wid,'-b',change],capture_output=True,timeout=20)
+ except Exception:pass
+def work_area():
+ """(x, y, width, height) of the screen not taken by Boddy's taskbar, from the window manager, or None."""
+ try:out=subprocess.run(['xprop','-root','_NET_WORKAREA'],capture_output=True,text=True,timeout=10).stdout
+ except Exception:return None
+ m=re.search(r'=\s*(\d+), (\d+), (\d+), (\d+)',out)
+ return tuple(int(v) for v in m.groups()) if m else None
+def keep_studio_above_taskbar(stop):
+ """While Studio runs, puts its Wine desktop window back inside the work area whenever it covers Boddy's
+ taskbar (Wine can make it full screen), so the taskbar and its apps stay reachable."""
+ share=STUDIO_SHARE if os.getenv('BODDY_STUDIO_LAYOUT')=='split' else 1.0
+ def run():
+  while not stop.wait(3):
+   area=work_area()
+   if not area:continue
+   ax,ay,aw,ah=area
+   for wid in xdo('search','--onlyvisible','--name','^%s - '%DESKTOP_NAME).split():
+    g=dict(re.findall(r'^(\w+)=(\d+)$',xdo('getwindowgeometry','--shell',wid),re.M))
+    if not g:continue
+    x,y,w,h=(int(g.get(k,0)) for k in ('X','Y','WIDTH','HEIGHT'))
+    if y+h<=ay+ah and y>=ay:continue  # inside: nothing to do
+    wm_state(wid,'remove,fullscreen');wm_state(wid,'remove,maximized_vert,maximized_horz')
+    xdo('windowsize',wid,str(int(aw*share)-8),str(ah-32));xdo('windowmove',wid,str(ax),str(ay))
+    say('Moved Studio\'s window off Boddy\'s taskbar')
+ if window_mode()!='desktop':return None
+ t=threading.Thread(target=run,daemon=True);t.start();return t
+# While Studio runs it covers the desktop, which still drew its icons and wallpaper and watched for files,
+# notifications and power events behind it: work for nothing, and processes under Android's limit of 32 (a
+# paused process still counts). They are ended while Studio runs and started again when it ends; the session
+# does not restart them by itself. The taskbar and the window manager keep running.
+DESKTOP_EXTRAS=('xfdesktop','xfce4-notifyd','tumblerd','xfce4-screensaver','light-locker','xfce4-power-manager','update-notifier')
+DBUS_STARTED=('xfce4-notifyd','tumblerd')  # D-Bus starts these again when something needs them
+PAUSED_FILE=ROOT/'desktop-paused'  # what was ended, to start it again even if this launcher was stopped
+def pause_desktop():
+ """Ends the desktop programs Studio hides; returns a function that starts them again."""
+ if os.getenv('BODDY_STUDIO_KEEP_DESKTOP')=='1':return resume_desktop
+ names={n[:15]:n for n in DESKTOP_EXTRAS}  # /proc/N/comm holds the first 15 characters of a name
+ ended=set()
+ for n in os.listdir('/proc'):
+  if not n.isdigit():continue
+  try:comm=open('/proc/%s/comm'%n).read().strip()
+  except OSError:continue
+  if comm in names:
+   try:os.kill(int(n),signal.SIGTERM);ended.add(names[comm])
+   except OSError:pass
+ if ended:
+  PAUSED_FILE.write_text(' '.join(sorted(ended)))
+  say('Closed while Studio runs (hidden behind it anyway): '+', '.join(sorted(ended)))
+ return resume_desktop
+def resume_desktop():
+ if not PAUSED_FILE.exists():return
+ names=PAUSED_FILE.read_text().split();PAUSED_FILE.unlink(missing_ok=True)
+ running=set()
+ for n in os.listdir('/proc'):
+  try:
+   # An ended process its parent has not collected yet ("Z") is not running.
+   if n.isdigit() and open('/proc/%s/stat'%n).read().rsplit(')',1)[1].split()[0]!='Z':running.add(open('/proc/%s/comm'%n).read().strip())
+  except (OSError,IndexError):pass
+ for name in names:
+  if name in DBUS_STARTED or name[:15] in running or not shutil.which(name):continue
+  subprocess.Popen([name],env=browser_env(),stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+ say('Desktop started again')
+PHANTOM_LIMIT=32
+def process_count():
+ return sum(1 for n in os.listdir('/proc') if n.isdigit())
+def memory_summary(top=5):
+ """The processes using the most memory: 'name 1234MB, ...' (resident memory, from /proc)."""
+ used=collections.Counter()
+ for n in os.listdir('/proc'):
+  if not n.isdigit():continue
+  try:
+   status=open('/proc/%s/status'%n).read()
+   m=re.search(r'^VmRSS:\s+(\d+) kB',status,re.M)
+   if m:used[re.search(r'^Name:\s*(.*)$',status,re.M).group(1)]+=int(m.group(1))//1024
+  except (OSError,AttributeError):pass
+ return ', '.join('%s %dMB'%(k,v) for k,v in used.most_common(top))
+def process_summary(top=8):
+ """'N of 32 (name x count, ...)': how many processes run and which, to see what to close under Android's limit."""
+ names=collections.Counter()
+ for n in os.listdir('/proc'):
+  if not n.isdigit():continue
+  try:names[open('/proc/%s/comm'%n).read().strip() or '?']+=1
+  except OSError:pass
+ total=sum(names.values())
+ return '%d of %d (%s)'%(total,PHANTOM_LIMIT,', '.join('%s x%d'%(k,v) if v>1 else k for k,v in names.most_common(top)))
+def mem_available_mb():
+ try:
+  with open('/proc/meminfo') as f:
+   for line in f:
+    if line.startswith('MemAvailable:'):return int(line.split()[1])//1024
+ except OSError:pass
+ return -1
+MOST_PROCESSES=[0]  # the most processes the session monitor saw at once
+LEAST_MEMORY=[1<<30]  # the least available memory it saw, in MB
+def start_monitor(stop):
+ # Android can stop Boddy without warning (more than 32 processes, or low memory). Boddy then restarts the
+ # desktop and this launcher dies with it, so record the state every 15 s; the last line shows what it was.
+ downloads=Path.home()/'Phone/Download';path=(downloads if downloads.is_dir() else CACHE)/'Boddy-Studio-monitor.log'
+ def run():
+  # When Android kills proot, every system call of the processes it ran fails with ENOSYS ("Function not
+  # implemented"), so nothing more can be read or written; the lines already written are what remains.
+  try:record()
+  except OSError:pass
+ def record():
+  with path.open('w') as f:
+   f.write('Roblox Studio session monitor. If Boddy restarts, the last line shows the state just before.\n'
+    'processes = Linux processes of the Boddy app (Android 12+ stops apps above %d); mem = available memory.\n'%PHANTOM_LIMIT)
+   warned=False;last=None
+   while True:
+    n=process_count();MOST_PROCESSES[0]=max(MOST_PROCESSES[0],n);LEAST_MEMORY[0]=min(LEAST_MEMORY[0],mem_available_mb())
+    f.write('%s processes=%d mem=%dMB step: %s\n'%(time.strftime('%H:%M:%S'),n,mem_available_mb(),last_said[:120]))
+    # Which processes, when their number changed: what to close (or not start) to stay under the limit.
+    if n!=last:f.write('         running: %s\n'%process_summary(12));last=n
+    # What holds the memory (Android closes Boddy when the phone runs out), every minute.
+    if not int(time.time())//10%6:f.write('         memory: %s\n'%memory_summary())
+    f.flush();os.fsync(f.fileno())
+    if n>=PHANTOM_LIMIT-4 and not warned:
+     warned=True
+     say('Note: %d Linux processes are running. Fine if Android\'s child process limit is off (Developer options > '
+      'Disable child process restrictions); with it on, Android stops Boddy above %d.'%(n,PHANTOM_LIMIT))
+    if stop.wait(10):break
+   f.write('%s Launcher finished\n'%time.strftime('%H:%M:%S'))
+ thread=threading.Thread(target=run,daemon=True);thread.start()
+ return path,thread
+STUDIO_MIN_HEIGHT=int(os.getenv('BODDY_STUDIO_HEIGHT') or 768)
+def xrandr(*args):
+ return subprocess.run(['xrandr',*args],capture_output=True,text=True,timeout=30)
+def fit_display():
+ # Boddy sizes its desktop to the phone's shape from a 1100-1600 px width, so it is often only 500-720 px
+ # tall and Studio's windows and login dialog get cut off. While Studio runs, enlarge the desktop to at
+ # least STUDIO_MIN_HEIGHT with the same shape, so the phone still shows all of it, just smaller.
+ # Returns a function that puts the previous size back.
+ keep=lambda:None
+ if not shutil.which('xrandr'):
+  say('Installing xrandr so Studio fits on the desktop')
+  subprocess.run(['apt-get','install','-y','--no-install-recommends','x11-xserver-utils'],env=dict(os.environ,DEBIAN_FRONTEND='noninteractive'))
+  if not shutil.which('xrandr'):say('xrandr is not available; Studio windows may not fit the desktop');return keep
+ out=xrandr().stdout
+ screen=re.search(r'^(\S+) connected (?:primary )?(\d+)x(\d+)\+0\+0',out,re.M);mode=re.search(r'^\s+(\S+)\s+[0-9.]+\*',out,re.M)
+ if not screen or not mode:say('Could not read the desktop size; leaving it unchanged');return keep
+ output,w,h=screen.group(1),int(screen.group(2)),int(screen.group(3))
+ if h>=STUDIO_MIN_HEIGHT:return keep
+ nh=STUDIO_MIN_HEIGHT;nw=round(w*nh/h/2)*2;name='boddy-%dx%d'%(nw,nh)
+ xrandr('--newmode',name,'0',*[str(nw)]*4,*[str(nh)]*4)  # fails harmlessly if it already exists
+ xrandr('--addmode',output,name)
+ r=xrandr('--output',output,'--mode',name)
+ if r.returncode:say('Could not enlarge the desktop: '+r.stderr.strip());return keep
+ say('Desktop enlarged from %dx%d to %dx%d while Studio runs, so its windows fit'%(w,h,nw,nh))
+ def restore():
+  r=xrandr('--output',output,'--mode',mode.group(1))
+  say('Desktop size restored to %dx%d'%(w,h) if not r.returncode else 'Could not restore the desktop size: '+r.stderr.strip())
+ return restore
+def pass_auth(link):
+ # Called by the browser through the desktop handler; Studio is already running, so no install lock.
+ if len(link)>16384 or not re.fullmatch(r'roblox-studio-auth:[\x21-\x7e]+',link):raise ValueError('Invalid Studio sign-in link')
+ wine=installed_wine_command();studio=ROOT/'Studio'
+ if not wine or not (studio/'RobloxStudioBeta.exe').exists():raise RuntimeError('Studio is not installed; open Studio from the desktop first')
+ unfreeze_studio()  # Studio has to run to take the sign-in
+ say('Passing browser sign-in to Roblox Studio')
+ # This second Studio process only forwards the link to the running one; its exit code says nothing about the sign-in.
+ r=subprocess.run([*wine,str(studio/'RobloxStudioBeta.exe'),link],cwd=studio,env=wine_env(prefix_dir()))
+ say('Sign-in forwarded to Studio (forwarding process exit code %d)'%r.returncode)
+ if shutil.which('zenity'):
+  subprocess.Popen(['zenity','--info','--width=440','--title=Roblox Studio sign-in','--timeout=30','--text=The sign-in was '
+   'passed to Studio. If Studio still shows its sign-in screen after a minute, choose Copy log in the Studio menu '
+   'and send it.'],env=browser_env(),stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+ # Firefox has done its job: close it, so its memory goes back to Studio and Studio is in front again.
+ close_signin_browser()
+def main():
+ ROOT.mkdir(parents=True,exist_ok=True);CACHE.mkdir(parents=True,exist_ok=True);prune_logs()
+ arg=sys.argv[1] if len(sys.argv)>1 else ''
+ if arg.startswith(AUTH_SCHEME):pass_auth(arg);return
+ if arg=='--open-url':open_in_browser(sys.argv[2] if len(sys.argv)>2 else '');return
+ lock=(ROOT/'launcher.lock').open('w')
+ try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+ except BlockingIOError:raise RuntimeError('A Studio launcher is already running')
+ unfreeze_studio()  # left frozen by a sign-in helper that was stopped
+ resume_desktop()  # left paused by a launcher that was stopped (e.g. by Android) before Studio ended
+ if arg=='--diagnose':diagnose();return
+ if arg.startswith('--use-renderer='):
+  want=arg.split('=',1)[1]
+  GPU_FAILED_FILE.unlink(missing_ok=True)  # choosing a mode again means trying the GPU again too
+  if want=='Automatic':RENDERER_FILE.unlink(missing_ok=True);say('Studio will now choose its graphics mode itself');return
+  if want not in GRAPHICS:raise RuntimeError('Graphics mode must be Automatic or one of: '+', '.join(GRAPHICS))
+  RENDERER_FILE.write_text(want);say('Studio will now draw with '+GRAPHICS[want])
+  if want=='GPU' and kgsl_device():say('Note: %s, so Studio will draw on the processor until it is there.'%kgsl_device())
+  return
+ if arg.startswith('--use-preset='):
+  want=arg.split('=',1)[1]
+  if want not in PRESETS:raise RuntimeError('Performance preset must be one of: '+', '.join(PRESETS))
+  PRESET_FILE.write_text(want);v=PRESETS[want]
+  say('Studio will now use the %s preset: %d fps, 3D view at %d thousand pixels'%(
+   want,v['DFIntTaskSchedulerTargetFps'],v['DFIntDebugDynamicRenderKiloPixels']));return
+ if arg.startswith('--use-signin='):
+  want=arg.split('=',1)[1]
+  if want not in ('phone','firefox'):raise RuntimeError('Sign-in browser must be phone or firefox')
+  SIGNIN_FILE.write_text(want)
+  say('Studio will now sign in with '+("the phone's browser" if want=='phone' else 'Firefox in Boddy'));return
+ if arg.startswith('--use-windows='):
+  want=arg.split('=',1)[1]
+  if want not in ('desktop','separate'):raise RuntimeError('Window mode must be desktop or separate')
+  WINDOW_MODE_FILE.write_text(want);say('Studio will now use '+('one Wine window' if want=='desktop' else 'separate windows'));return
+ if arg in ('--use-box64','--use-hangover'):
+  RUNTIME_FILE.write_text(arg[6:]);say('Studio will now run with '+arg[6:]);return
+ if arg.startswith('--use-wine'):
+  want=arg[len('--use-wine'):].lstrip('=')
+  if want and not re.fullmatch(r'\d+',want):raise RuntimeError('Wine version must be a number, e.g. --use-wine10')
+  WINE_MAJOR_FILE.write_text(want)
+  say('Studio will now install Wine %s'%(want or 'newest'));return
+ if arg=='--reset':
+  p=prefix_dir()
+  if p.exists():p.rename(ROOT/('prefix-backup-'+str(time.time_ns())))
+ if arg=='--cleanup':cleanup();return
+ if arg=='--uninstall':raise RuntimeError('Automatic deletion disabled. Remove installations manually after exporting projects.')
+ if not os.getenv('DISPLAY'):raise RuntimeError('Open this launcher inside the Boddy desktop so DISPLAY is set')
+ preflight()
+ # The previous version switched Wine (and so saved Hangover) whenever Studio crashed, though Studio's
+ # crashes come from its 3D drawing. Forget that saved choice once, so Box64 with the newest Wine comes first.
+ migrated=ROOT/'.choice-v2'
+ if not migrated.exists():
+  for f in (RUNTIME_FILE,WINE_MAJOR_FILE):f.unlink(missing_ok=True)
+  migrated.touch()
+ # The previous version also wrote the graphics mode it moved to after a crash into the file that now
+ # means a mode chosen by hand; the setup ladder below replaces that.
+ migrated=ROOT/'.choice-v3'
+ if not migrated.exists():
+  RENDERER_FILE.unlink(missing_ok=True);migrated.touch()
+ # The graphics ladder changed from graphics APIs (Studio ignored them) to Direct3D back ends: start it over.
+ migrated=ROOT/'.choice-v4'
+ if not migrated.exists():
+  for f in (RENDERER_FILE,SETUP_FILE):f.unlink(missing_ok=True)
+  migrated.touch()
+ # Wine's DirectX crashed on a phone at the same point on OpenGL and Vulkan, and DXVK got furthest: go back
+ # to DXVK once, now that the exception Studio crashes on is recorded.
+ migrated=ROOT/'.choice-v5'
+ if not migrated.exists():
+  SETUP_FILE.unlink(missing_ok=True);migrated.touch()
+ # Every back end died the same way, from Mesa's LLVM emitting SVE (now fixed): start again at DXVK.
+ migrated=ROOT/'.choice-v6'
+ if not migrated.exists():
+  SETUP_FILE.unlink(missing_ok=True);migrated.touch()
+ # The previous version took a normal close (exit code -9 from Wine after Studio's own shutdown) for a
+ # crash and moved the setup on from DXVK, which works: back to it once.
+ migrated=ROOT/'.choice-v7'
+ if not migrated.exists():
+  SETUP_FILE.unlink(missing_ok=True);migrated.touch()
+ # A faster emulation setup now comes first, and the saved step numbers mean other setups than before: start
+ # the ladder over once, at the fastest.
+ migrated=ROOT/'.choice-v8'
+ if not migrated.exists():
+  SETUP_FILE.unlink(missing_ok=True);migrated.touch()
+ place=None
+ if arg and not arg.startswith('--'):
+  place=Path(arg).resolve()
+  if not place.is_file():raise RuntimeError('Place file does not exist')
+ # Try every way of running Windows there is, the saved choice first, until Studio starts; the one that
+ # works is saved so the next start goes straight to it.
+ stop=threading.Event();monitor,monitor_thread=start_monitor(stop)
+ say('Session monitor: %s'%monitor)
+ try:try_every_way(place)
+ finally:stop.set();monitor_thread.join(5)
+def try_every_way(place):
+ tried=[];todo=combinations()
+ for i,(rt,major) in enumerate(todo):
+  FORCED.update(runtime=rt,wine=major)
+  name=combination_name(rt,major)
+  say('Trying %s (%d of %d)'%(name,i+1,len(todo)))
+  try:wine,env,prefix=start_windows()
+  except Exception as e:
+   if offline(e):raise  # no internet: the other versions could not download either
+   say('%s did not work: %s'%(name,e));tried.append((name,str(e).strip().splitlines()[0] if str(e).strip() else type(e).__name__))
+   continue
+  save_combination(rt,major)
+  setup=current_setup();renderer=setup['renderer'];icd=None
+  if renderer=='GPU':
+   # The GPU mode needs the phone's Adreno GPU and a driver that reaches it; without them Studio draws on the
+   # processor (DXVK on lavapipe) this time, as it did before the GPU mode existed.
+   ensure_graphics(renderer);icd,why=gpu_driver()
+   if not icd:say('Warning: not using the GPU: %s. Drawing on the processor instead.'%why);setup['renderer']=renderer='DXVK'
+  elif (RENDERER_FILE.read_text().strip() if RENDERER_FILE.exists() else '')=='GPU':
+   say('Warning: Studio crashed on the GPU last time, so it draws on the processor. Choose the GPU graphics mode again to retry it.')
+  say('Studio setup %d of %d: %s'%(setup['step']+1,len(SETUPS),describe_setup(setup)))
+  studio=install_studio();ensure_graphics(renderer);write_studio_settings(studio,renderer);setup_browser_login(wine,env,prefix);tune_prefix(wine,env,prefix);install_mcp_plugin(prefix);args=[*wine,str(studio/'RobloxStudioBeta.exe')]
+  env=prepare_graphics(renderer,prefix,env,icd)
+  if place:args.append('Z:'+str(place).replace('/','\\'))
+  say('Launching real Roblox Studio. A process start alone does not prove the editor works.')
+  say('Studio\'s built-in login does not work here: choose "Login via Browser" and sign in in the browser that opens,')
+  say('then allow it to open the Roblox Studio sign-in link (on the phone: open it with Boddy).')
+  # Keeping Studio's window off the taskbar and the sign-in browser in front of Studio uses these two.
+  missing=[t for t in ('xdotool','wmctrl') if not shutil.which(t)]
+  if missing:
+   try:apt_install(*missing)
+   except Exception as e:say('Warning: could not install %s: %s'%(' '.join(missing),str(e).splitlines()[0]))
+  restore_display=fit_display();set_window_mode(wine,env,prefix)
+  say('Processes before Studio starts: '+process_summary())
+  say('Memory: %d MB available; most used by %s'%(mem_available_mb(),memory_summary()))
+  # Vulkan presents nothing on a 16-bit screen (Boddy's "Screen colours"), so Studio's 3D view would stay black.
+  try:depth=Path('/tmp/boddy-vnc-depth').read_text().strip()
+  except OSError:depth=''
+  if depth=='16' and renderer!='WineOpenGL':
+   say('Warning: the desktop uses 16-bit colours, where Studio\'s 3D view stays black. In the Studio menu choose '
+    'Screen colours > 24-bit, then restart Boddy.')
+  if process_count()>PHANTOM_LIMIT-12:
+   say('Note: %d Linux processes are already running. Fine if Android\'s child process limit is off; with it on, '
+    'Android stops Boddy above %d.'%(process_count(),PHANTOM_LIMIT))
+  say('Roblox Studio is starting (%s, %s); its window can take several minutes to appear on a phone.'%(name,GRAPHICS[renderer]))
+  began=time.time()
+  resume=pause_desktop();placed=threading.Event();keep_studio_above_taskbar(placed)
+  try:code,notable=run_studio(args,studio,env)
+  finally:placed.set();resume();restore_display()
+  ran=time.time()-began
+  say('Studio process exited with code %d after %d s'%(code,ran))
+  say('Processes at the end: %s; most while it ran: %d'%(process_summary(),MOST_PROCESSES[0]))
+  say('Memory at the end: %d MB available; least while it ran: %d MB'%(mem_available_mb(),LEAST_MEMORY[0]))
+  if not code:DIAGNOSE_FILE.unlink(missing_ok=True);sys.exit(0)
+  # Windows started, so this Wine works: a crash once Studio runs comes from how it is run (its CPU
+  # features, emulation speed or 3D drawing), so the next start uses the next setup rather than another Wine.
+  errors,closed=studio_log(prefix,began-5)
+  # Studio that finished its own shutdown was closed (its window, or the Wine desktop window around it);
+  # Wine may still end the process by force afterwards (exit code -9), which is no crash.
+  if closed:
+   say('Studio closed normally (its log ends with "End of main. Return value 0")')
+   DIAGNOSE_FILE.unlink(missing_ok=True);sys.exit(0)
+  DIAGNOSE_FILE.touch()  # the next start records the details of a crash like this one
+  crashed_itself=any('RobloxCrashHandler' in l for l in notable) or bool(errors)
+  dump=studio_crash_dump(prefix,began-5,30 if crashed_itself else 0)
+  why=('Studio hit an error and closed itself' if crashed_itself else
+   'an instruction the emulator could not run (SIGILL)' if code in (-4,132) else 'code %d'%code)
+  exception=next((l for l in notable if l.startswith('Exception: ')),None)
+  notable=([('Crash: %s in %s'%dump)] if dump else [])+([exception] if exception else [])+[
+   l for l in notable if 'Unimplemented' in l or 'Signal 4:' in l or 'Unhandled' in l or l.startswith('err:')]+[
+   'Studio log: '+l[l.find('[')if '[' in l else 0:][:200] for l in errors]
+  if dump:why='Studio crashed: %s in %s'%dump
+  elif exception:why='Studio crashed: '+exception[len('Exception: '):]
+  details='\n\nWhat failed:\n'+'\n'.join('  '+l[:200] for l in notable[:6]) if notable else ''
+  if renderer=='GPU':
+   # The GPU driver is the newest part, so it goes first; the emulation setup stays for the next start.
+   GPU_FAILED_FILE.write_text(why)
+   raise RuntimeError('Roblox Studio crashed after %d s on the phone\'s GPU: %s.\n\nNext time Boddy draws on the processor '
+    '(DXVK on lavapipe) instead, which is slower but works on more phones: choose Open Studio again. To try the GPU '
+    'again later, choose it in Graphics mode.%s'%(ran,why,details))
+  if setup['step']+1<len(SETUPS):
+   SETUP_FILE.write_text(str(setup['step']+1));nxt=current_setup()
+   raise RuntimeError('Roblox Studio crashed after %d s: %s. It was using %s.\n\nNext time Boddy will use %s, '
+    'which may work on this phone: choose Open Studio again (it records more details this time).%s'%(
+    ran,why,describe_setup(setup),describe_setup(nxt),details))
+  SETUP_FILE.write_text('0')
+  raise RuntimeError('Roblox Studio crashed (%s) with every setup Boddy has (%d). Choose "Copy log" and send '
+   'the log.%s'%(why,len(SETUPS),details))
+ raise RuntimeError('Tried every way Boddy has of running Windows, and none could start Roblox Studio on this phone:\n'+
+  '\n'.join('  %s: %s'%t for t in tried)+
+  '\n\nChoose "Copy log" and send the log; it shows why each one stopped. Roblox Tools > "Start a new game I can '
+  'edit with an AI agent" still works without Studio.')
+# Studio always draws with Direct3D 11 (on a phone it ignored the FFlags preferring OpenGL or Vulkan), so
+# what can change is what turns Direct3D 11 into drawing on the phone's processor:
+#  DXVK        Direct3D 11 to Vulkan (as Proton and Vinegar use), on Mesa's software Vulkan, lavapipe
+#  WineVulkan  Wine's own Direct3D (wined3d) on its Vulkan back end, also lavapipe
+#  WineOpenGL  wined3d on OpenGL and Mesa llvmpipe: Studio crashed in it creating its 3D view
+#  GPU         DXVK on the phone's own GPU (Adreno) through Mesa's Turnip driver: experimental, only when chosen in
+#              the menu. Falls back to DXVK on lavapipe by itself when the GPU cannot be reached or Studio crashes.
+GRAPHICS={'DXVK':'DXVK (DirectX on Vulkan)','WineVulkan':"Wine's DirectX on Vulkan",'WineOpenGL':"Wine's DirectX on OpenGL",
+ 'GPU':"DXVK on the phone's GPU (Adreno, experimental)"}
+RENDERER_FILE=ROOT/'renderer'  # a graphics mode chosen in the menu; it replaces the ladder's
+# The ways to run Studio once Windows starts, fastest first; each crash moves the next start one step down.
+# The first is the fastest emulation; a crash there goes on to the same with memory barriers, then as before.
+# All but the last hide AVX.
+SETUPS=(('DXVK',False,'fast'),('DXVK',False,'strongmem'),('WineVulkan',False,'strongmem'),('WineOpenGL',False,'strongmem'),
+ ('DXVK',False,'safe'),('WineOpenGL',False,'safe'),('WineOpenGL',True,'safe'))
+SETUP_FILE=ROOT/'studio-setup'
+def current_setup():
+ try:step=int(SETUP_FILE.read_text())
+ except (OSError,ValueError):step=0
+ step=step if 0<=step<len(SETUPS) else 0
+ renderer,avx,speed=SETUPS[step]
+ chosen=os.getenv('BODDY_STUDIO_RENDERER') or (RENDERER_FILE.read_text().strip() if RENDERER_FILE.exists() else '')
+ if chosen in GRAPHICS:renderer=chosen
+ # The GPU mode goes back to drawing on the processor (DXVK on lavapipe) when Studio crashed on it last time.
+ if renderer=='GPU' and GPU_FAILED_FILE.exists():renderer='DXVK'
+ return {'step':step,'renderer':renderer,'avx':avx,'speed':speed}
+SPEED_NAMES={'fast':'fast','strongmem':'fast with memory barriers','safe':'safe'}
+def describe_setup(s):
+ return '%s, %s emulation%s'%(GRAPHICS[s['renderer']],SPEED_NAMES[s['speed']],'' if s['avx'] else ', AVX hidden')
+DXVK_VERSION='2.7.1'
+DXVK_URL='https://github.com/doitsujin/dxvk/releases/download/v%s/dxvk-%s.tar.gz'%(DXVK_VERSION,DXVK_VERSION)
+DXVK_SIZE=10310666
+DXVK_SHA256='d85ce7c79f57ecd765aaa1b9e7007cb875e6fde9f6d331df799bce73d513ce87'
+DXVK_DLLS=('d3d11','dxgi','d3d10core')
+# lavapipe reports itself as a software renderer with little memory; Studio sizes textures from what the
+# card reports, so report a modest NVIDIA card. Its memory comes from the performance preset (VIDEO_MB): with
+# software drawing that "video memory" is the phone's own, and 2 GB of it, as before, left too little for the
+# sign-in browser. One frame queued at a time saves memory; one shader compiler thread leaves the processor to
+# Studio (DXVK started one per core).
+DXVK_CONF="""# Written by Boddy's Roblox Studio launcher
+dxgi.customVendorId = 10de
+dxgi.customDeviceId = 1c81
+dxgi.customDeviceDesc = "NVIDIA GeForce GTX 1050"
+dxgi.maxDeviceMemory = %d
+dxgi.maxFrameLatency = 1
+dxvk.numCompilerThreads = 1
+# Boddy's screen is a VNC framebuffer with no refresh to wait for; Studio caps its own frame rate.
+dxgi.syncInterval = 0
+"""
+def install_dxvk():
+ d=ROOT/('dxvk-'+DXVK_VERSION)
+ if all((d/(n+'.dll')).is_file() for n in DXVK_DLLS):return d
+ say('Installing DXVK %s, which turns DirectX into Vulkan (one time)'%DXVK_VERSION)
+ archive=CACHE/('dxvk-%s.tar.gz'%DXVK_VERSION)
+ download(DXVK_URL,archive,DXVK_SIZE,sha256=DXVK_SHA256,progress=Progress('DXVK',DXVK_SIZE))
+ stage=ROOT/'dxvk-stage';shutil.rmtree(stage,ignore_errors=True);stage.mkdir()
+ with tarfile.open(archive) as t:
+  for n in DXVK_DLLS:
+   with t.extractfile('dxvk-%s/x64/%s.dll'%(DXVK_VERSION,n)) as src,(stage/(n+'.dll')).open('wb') as out:
+    shutil.copyfileobj(src,out)
+ shutil.rmtree(d,ignore_errors=True);stage.rename(d);archive.unlink(missing_ok=True)
+ return d
+# The phone's own GPU. Debian's Turnip (in mesa-vulkan-drivers) only talks to the Linux msm driver; an Android
+# kernel offers the GPU as /dev/kgsl-3d0 (Qualcomm's KGSL driver), which needs a Turnip built with its KGSL
+# back end. This build is for Debian 13 ARM64 (glibc) containers on Android, from mesa-for-android-container.
+TURNIP_VERSION='26.3.0-devel-20260824'
+TURNIP_URL=('https://github.com/lfdevs/mesa-for-android-container/releases/download/turnip-%s/'
+ 'turnip_%s_debian_trixie_arm64.tar.gz')%(TURNIP_VERSION,TURNIP_VERSION)
+TURNIP_SIZE=3535602
+TURNIP_SHA256='53be97370271e3f651b58b200c044bd4dc331a9aefde40d81b2faef44c0e3b01'
+TURNIP_LIB='usr/lib/aarch64-linux-gnu/libvulkan_freedreno.so'
+TURNIP_PACKAGES=('libwayland-client0','libx11-xcb1','libxcb-randr0','libxcb-shm0','libxcb-xfixes0','libzstd1','libexpat1','vulkan-tools')
+KGSL_DEVICE='/dev/kgsl-3d0'
+GPU_FAILED_FILE=ROOT/'gpu-failed'  # Studio crashed in the GPU mode: the next starts draw on the processor
+def kgsl_device():
+ """Why the GPU cannot be used from here, or None when its device is there to use."""
+ if not os.path.exists(KGSL_DEVICE):return 'this phone has no Adreno GPU device for apps (%s is missing)'%KGSL_DEVICE
+ if not os.access(KGSL_DEVICE,os.R_OK|os.W_OK):return 'Android does not let Boddy open %s'%KGSL_DEVICE
+ return None
+def install_turnip():
+ """Unpacks Turnip into ROOT and writes its own Vulkan driver file (ICD) pointing at it, so it neither
+ replaces nor is mixed up with Debian's freedreno driver. Returns the ICD file."""
+ d=ROOT/('turnip-'+TURNIP_VERSION);icd=d/'turnip_icd.json'
+ if icd.is_file() and (d/'libvulkan_freedreno.so').is_file():return icd
+ say('Installing Turnip %s, the Vulkan driver for Adreno GPUs (one time)'%TURNIP_VERSION)
+ archive=CACHE/Path(TURNIP_URL).name
+ download(TURNIP_URL,archive,TURNIP_SIZE,sha256=TURNIP_SHA256,progress=Progress('Turnip',TURNIP_SIZE))
+ stage=ROOT/'turnip-stage';shutil.rmtree(stage,ignore_errors=True);stage.mkdir()
+ with tarfile.open(archive) as t:
+  with t.extractfile('./'+TURNIP_LIB) as src,(stage/'libvulkan_freedreno.so').open('wb') as out:shutil.copyfileobj(src,out)
+ (stage/'libvulkan_freedreno.so').chmod(0o755)
+ (stage/'turnip_icd.json').write_text(json.dumps({'file_format_version':'1.0.1','ICD':{
+  'library_path':str(d/'libvulkan_freedreno.so'),'library_arch':'64','api_version':'1.4.0'}},indent=1))
+ shutil.rmtree(d,ignore_errors=True);stage.rename(d);archive.unlink(missing_ok=True)
+ return icd
+def gpu_driver():
+ """(Turnip's ICD file, None) when Studio can draw on the GPU, or (None, why not)."""
+ why=kgsl_device()
+ if why:return None,why
+ try:icd=install_turnip()
+ except Exception as e:return None,'could not install the GPU driver: %s'%str(e).splitlines()[0]
+ # vulkaninfo is a native ARM64 program (no emulation), so this takes seconds and shows the GPU really answers.
+ if shutil.which('vulkaninfo'):
+  try:r=subprocess.run(['vulkaninfo','--summary'],env=dict(os.environ,VK_ICD_FILENAMES=str(icd),VK_DRIVER_FILES=str(icd)),
+   capture_output=True,text=True,errors='replace',timeout=60)
+  except subprocess.TimeoutExpired:return None,'the GPU driver did not answer within a minute'
+  name=re.search(r'deviceName\s*=\s*(.+)',r.stdout)
+  if r.returncode or not name or 'llvmpipe' in name.group(1):
+   last=[l for l in (r.stderr or r.stdout).splitlines() if l.strip()]
+   return None,'the GPU driver did not start%s'%(': '+last[-1].strip()[:160] if last else '')
+  say('GPU: %s (Turnip %s)'%(name.group(1).strip(),TURNIP_VERSION))
+ return icd,None
+def fast_core_count():
+ """How many cores run at least 70% of the fastest core's top speed (a phone's big and prime
+ cores), or None when the speeds cannot be read."""
+ speeds=[]
+ for f in Path('/sys/devices/system/cpu').glob('cpu[0-9]*/cpufreq/cpuinfo_max_freq'):
+  try:speeds.append(int(f.read_text()))
+  except (OSError,ValueError):pass
+ if len(speeds)<2:return None
+ return sum(1 for v in speeds if v>=max(speeds)*0.7)
+def prepare_graphics(gfx,prefix,env,icd=None):
+ """Puts the Direct3D 11 back end `gfx` in place; returns Studio's environment for it. `icd` is the GPU
+ driver's Vulkan driver file for the GPU mode (see gpu_driver)."""
+ env=dict(env)
+ # Mesa draws each frame in as many pieces as it has threads, one per core by default, and the frame is
+ # done when the last piece is: pieces on a phone's slow cores hold every frame up. One per fast core.
+ fast=fast_core_count()
+ if fast:env.setdefault('LP_NUM_THREADS',str(fast))
+ over=[o for o in env.get('WINEDLLOVERRIDES','').split(';') if o and not o.startswith(('d3d11','dxgi','d3d10core'))]
+ if gfx=='GPU':
+  # Only Turnip, so Vulkan cannot pick lavapipe instead. Boddy's VNC screen has no DRI3, which Mesa's X11
+  # presentation of a GPU's frames normally uses: copy each finished frame into the window instead.
+  env.update(VK_DRIVER_FILES=str(icd),VK_ICD_FILENAMES=str(icd));env.setdefault('MESA_VK_WSI_DEBUG','sw')
+ elif gfx in ('DXVK','WineVulkan'):
+  # Only lavapipe: Mesa's hardware Vulkan drivers in the same package cannot reach the phone's GPU from here.
+  lvp=sorted(Path('/usr/share/vulkan/icd.d').glob('lvp_icd*.json'))
+  if lvp:env.setdefault('VK_DRIVER_FILES',str(lvp[0]));env.setdefault('VK_ICD_FILENAMES',str(lvp[0]))
+ if gfx in ('DXVK','GPU'):
+  d=install_dxvk();sys32=prefix/'drive_c'/'windows'/'system32';sys32.mkdir(parents=True,exist_ok=True)
+  for n in DXVK_DLLS:
+   src,dst=d/(n+'.dll'),sys32/(n+'.dll')
+   if not dst.exists() or dst.read_bytes()!=src.read_bytes():shutil.copyfile(src,dst)
+  over.append('d3d11,dxgi,d3d10core=n,b')
+  conf=ROOT/'dxvk.conf';conf.write_text(DXVK_CONF%VIDEO_MB[preset()])
+  env.update(DXVK_CONFIG_FILE=str(conf),DXVK_LOG_LEVEL='warn',DXVK_LOG_PATH='none',DXVK_HUD='0')
+ else:
+  # Wine's own: builtin even though DXVK's copies may sit in system32 from an earlier start.
+  over.append('d3d11,dxgi,d3d10core=b')
+  env['WINE_D3D_CONFIG']=('renderer=vulkan;' if gfx=='WineVulkan' else '')+'VideoMemorySize=%d'%VIDEO_MB[preset()]
+ env['WINEDLLOVERRIDES']=';'.join(over)
+ say('Studio graphics: %s%s'%(GRAPHICS[gfx],', %s drawing threads (fast cores)'%fast if fast else ''))
+ return env
+# Light settings for drawing on a phone's processor: every frame is drawn in software, so a 24 fps cap, the
+# lowest quality level and textures, and no shadows or post effects cut the work (and memory) the most.
+# Studio reads these from ClientSettings next to its program, like Roblox's player does.
+LIGHT_FLAGS={'DFIntTaskSchedulerTargetFps':24,'DFIntDebugFRMQualityLevelOverride':1,'FFlagDisablePostFx':True,
+ 'FIntRenderShadowIntensity':0,'DFFlagDebugRenderForceTechnologyVoxel':True,
+ 'DFFlagTextureQualityOverrideEnabled':True,'DFIntTextureQualityOverride':0,
+ # Wine handles Alt+Enter itself; Studio's own handling breaks the window under Wine (as Vinegar sets it).
+ 'FFlagHandleAltEnterFullscreenManually':False,
+ 'FIntDebugForceMSAASamples':1,  # no anti-aliasing: 1 sample per pixel
+ # no grass or wind animation, and fewer local-light updates per frame: less to draw for the same scene
+ 'FIntFRMMinGrassDistance':0,'FIntFRMMaxGrassDistance':0,'FIntRenderGrassDetailStrands':0,'FFlagGlobalWindRendering':False,
+ 'FIntRenderLocalLightUpdatesMax':1,'FIntRenderLocalLightUpdatesMin':1,'FIntRenderLocalLightFadeInMs':0,
+ # Draw the 3D view at about 240,000 pixels (a 1274x532 view is 678,000) and scale it up: on a
+ # processor-drawn view that cuts the work per frame by almost two thirds, for a softer picture.
+ 'DFIntDebugDynamicRenderKiloPixels':240}
+# Performance presets (the Studio menu's "Performance preset"): the frame rate Studio aims for and how many
+# thousand pixels it draws the 3D view at before scaling it up. Low is the light settings above; Lower and Potato
+# give up smoothness and sharpness for less work per second on slow phones (Potato draws about 37% of Low's
+# pixels, at 15 fps). Potato is the default: on a phone Studio is short of processor and memory first.
+PRESETS={'Low':{'DFIntTaskSchedulerTargetFps':24,'DFIntDebugDynamicRenderKiloPixels':240},
+ 'Lower':{'DFIntTaskSchedulerTargetFps':20,'DFIntDebugDynamicRenderKiloPixels':160},
+ 'Potato':{'DFIntTaskSchedulerTargetFps':15,'DFIntDebugDynamicRenderKiloPixels':90}}
+# The video memory Studio is told it has (DXVK and Wine's DirectX), in MB: with software drawing it is the
+# phone's memory, so lighter presets give Studio a smaller texture budget.
+VIDEO_MB={'Low':1024,'Lower':768,'Potato':512}
+PRESET_FILE=ROOT/'preset'
+def preset():
+ p=os.getenv('BODDY_STUDIO_PRESET') or (PRESET_FILE.read_text().strip() if PRESET_FILE.exists() else '')
+ return p if p in PRESETS else 'Potato'
+def write_studio_settings(studio,renderer):
+ path=studio/'ClientSettings'/'ClientAppSettings.json'
+ try:flags=json.loads(path.read_text()) if path.exists() else {}
+ except ValueError:flags={}  # not ours and not valid: replaced
+ if not isinstance(flags,dict):flags={}
+ full=os.getenv('BODDY_STUDIO_FULL_GRAPHICS')=='1'
+ if not full:flags.update(LIGHT_FLAGS);flags.update(PRESETS[preset()])
+ # Direct3D 11 is what Studio uses anyway; say so, so an earlier preference for another API is undone.
+ for r in ('OpenGL','Vulkan','D3D11FL10','D3D11'):flags['FFlagDebugGraphicsPrefer'+r]=r=='D3D11'
+ path.parent.mkdir(exist_ok=True);path.write_text(json.dumps(flags,indent=1))
+ if full:say('Studio settings: full graphics (BODDY_STUDIO_FULL_GRAPHICS=1)')
+ else:say('Studio settings: %s preset (%d fps, lowest quality, 3D view drawn at %d thousand pixels)'%(
+  preset(),flags['DFIntTaskSchedulerTargetFps'],flags['DFIntDebugDynamicRenderKiloPixels']))
+# Box64 names an instruction it cannot run ("Unimplemented Opcode") only at BOX64_LOG=1, which also logs
+# every unaligned access it fixes and every child-process signal. Studio runs at that level and this
+# drops the noise, keeping the lines that say why it crashed.
+STUDIO_NOISE=re.compile(r'Special unaligned case|Marked db .* as dirty|sigaction handler for sig (3|17)\b|Signal (3|17):|'
+ r'Using (native\(wrapped\)|emulated) |Applied settings from rcfile|BOX64ENV|^\s+BOX64_|'
+ # what Box64 says each time a Wine process starts
+ r'Parsing volatile metadata|Dynarec for ARM64|Running on .* cores|hardware counter|Wine preloader detected|Wine64 detected|'
+ r'48bits of address space|program break not found|prereserve|Detected running wine|Counted \d+ Env var|'
+ r'trying to Preload|cannot pre-load|Library search path|Binary search path|Looking for /|argv\[\d+\]=|Rename process|'
+ r'Unsupported libc Syscall 0x143|'
+ # Wine's write watches: a fault Box64 hands to Wine, which resumes; the register dump that follows it
+ r'Context has been changed in Sigactionhanlder|^RSP[-+:]|^RAX:|^ ?R(8|12):|^ES:|\(mmap\)|mmapped:3')
+STUDIO_NOTABLE=re.compile(r'^err: |Unimplemented|Signal (4|7|8|11):|SIGILL|SIGSEGV|Unhandled|unhandled|err:seh|wine: |NYI|Illegal|RobloxCrashHandler')
+# Faults on memory Wine watches for writes ("(mmap)", "mmapped:3"): Wine handles them and Studio carries on.
+BENIGN_FAULT=re.compile(r'\(mmap\)|mmapped:3')
+# When Studio hits an error it cannot recover from, it starts RobloxCrashHandler and ends itself (Box64
+# reports that as SIGILL). Why is in Studio's own log, in the Wine prefix.
+STUDIO_LOG_ERROR=re.compile(r'Error|error|Crash|crash|xception|ailed|Fatal|fatal|Assert|not supported|unsupported')
+def studio_log(prefix,since):
+ """Prints the end of the newest log Studio wrote since `since`. Returns (its error lines, whether
+ Studio ended normally: it logs "End of main. Return value 0" when it was closed)."""
+ logs=[p for p in prefix.glob('drive_c/users/*/AppData/Local/Roblox/logs/*.log')
+  if 'Studio' in p.name and p.stat().st_mtime>=since]
+ if not logs:say('Studio wrote no log of its own');return [],False
+ log=max(logs,key=lambda p:p.stat().st_mtime)
+ lines=[l.rstrip() for l in log.read_text(errors='replace').splitlines() if l.strip()]
+ say("Studio's own log (%s), last 60 lines:"%log.name)
+ for l in lines[-60:]:say('Studio log: '+l[:400])
+ closed='End of main. Return value 0' in '\n'.join(lines[-200:])
+ return [l for l in lines if STUDIO_LOG_ERROR.search(l) and not STUDIO_LOG_BENIGN.search(l)][-8:],closed
+# Errors Studio logs on every start under Wine that have nothing to do with a crash.
+STUDIO_LOG_BENIGN=re.compile(r"EnableNonClientDpiScaling|DAPClient|Secure Storage read failed|onResizeEvent|ThumbnailController|CreatorWarning|"
+ r"isn't defined in C\+\+ code|referenced from Lua")
+# What a Windows program crashed on, from the minidump its crash handler (Crashpad) writes.
+EXCEPTIONS={0xC0000005:'access violation',0xC000001D:'illegal instruction',0xC0000409:'fast fail (Studio stopped itself)',
+ 0x80000003:'breakpoint',0xE06D7363:'C++ exception',0xC00000FD:'stack overflow',0xC0000374:'heap corruption',
+ 0xC0000094:'division by zero',0xC0000096:'privileged instruction',0x40000015:'abort'}
+def read_minidump(path):
+ """(exception text, module text) from a Windows minidump, or None if it has no exception."""
+ d=path.read_bytes()
+ if len(d)<32 or d[:4]!=b'MDMP':return None
+ count,directory=struct.unpack_from('<II',d,8)
+ exc=None;modules=[]
+ for i in range(count):
+  kind,_,rva=struct.unpack_from('<III',d,directory+12*i)
+  if kind==6:  # ExceptionStream: thread id, alignment, then MINIDUMP_EXCEPTION
+   code,_,_,addr,nparams=struct.unpack_from('<IIQQI',d,rva+8)
+   exc=(code,addr,struct.unpack_from('<%dQ'%min(nparams,15),d,rva+40))
+  elif kind==4:  # ModuleListStream: count, then 108-byte MINIDUMP_MODULEs
+   for j in range(struct.unpack_from('<I',d,rva)[0]):
+    base,size,_,_,name_rva=struct.unpack_from('<QIIII',d,rva+4+108*j)
+    length=struct.unpack_from('<I',d,name_rva)[0]
+    modules.append((base,size,d[name_rva+4:name_rva+4+length].decode('utf-16-le',errors='replace')))
+ if not exc:return None
+ code,addr,params=exc
+ what=EXCEPTIONS.get(code,'exception 0x%08X'%code)
+ if code==0xC0000005 and len(params)>=2:
+  what+=' %s 0x%x'%({0:'reading',1:'writing',8:'executing'}.get(params[0],'at'),params[1])
+ where=next(('%s+0x%x'%(name.replace('/','\\').split('\\')[-1],addr-base) for base,size,name in modules
+  if base<=addr<base+size),'0x%x (in no loaded module)'%addr)
+ return what,where
+def studio_crash_dump(prefix,since,wait=30):
+ """The newest minidump Studio's crash handler wrote since `since`, read; waits for the handler to finish."""
+ deadline=time.time()+wait
+ while True:
+  dumps=[p for p in prefix.glob('drive_c/users/*/AppData/Local/Roblox/logs/crashes/**/*.dmp') if p.stat().st_mtime>=since]
+  if dumps or time.time()>deadline:break
+  time.sleep(2)
+ if not dumps:say('Studio wrote no crash dump');return None
+ dump=max(dumps,key=lambda p:p.stat().st_mtime)
+ try:found=read_minidump(dump)
+ except (OSError,struct.error,IndexError) as e:say('Could not read the crash dump %s: %s'%(dump.name,e));return None
+ if found:say('Studio crash dump %s: %s in %s'%(dump.name,*found))
+ return found
+# Wine logs every exception a program raises (+seh) and where each DLL is loaded (+loaddll). Studio's
+# crash handler leaves no dump under Wine, so the last serious exception before the handler starts,
+# placed in the DLL it happened in, is what says why Studio crashed.
+SEH_EXCEPTION=re.compile(r':seh:dispatch_exception code=([0-9a-fA-F]+) \(?(\w*)\)? ?flags=\w+ addr=(?:0x)?([0-9a-fA-F]+)')
+SEH_INFO=re.compile(r':seh:dispatch_exception\s+info\[(\d+)\]=(?:0x)?([0-9a-fA-F]+)')
+DLL_LOADED=re.compile(r':loaddll:\w+ Loaded L"(.+?)" at (?:0x)?([0-9a-fA-F]+)')
+SEVERE=(0xC0000005,0xC000001D,0xC0000409,0xC0000374,0xC00000FD,0x80000003,0xC0000096,0xC0000094,0xC000041D,0xC0000420)
+HARMLESS=(0x406D1388,0x40010006,0x4001000A,0xE06D7363,0x000006BA,0x80010108)  # thread names, debug prints, C++ throws, RPC
+class ExceptionLog:
+ def __init__(self):
+  self.dlls=[];self.exceptions=collections.deque(maxlen=300);self.handler_at=None;self.seq=0
+ def feed(self,line):
+  """Takes a Wine trace line; True if it was one (and so is not printed)."""
+  m=DLL_LOADED.search(line)
+  if m:self.seq+=1;self.dlls.append((self.seq,int(m.group(2),16),m.group(1).replace('\\\\','\\')));return True
+  m=SEH_EXCEPTION.search(line)
+  if m:self.seq+=1;self.exceptions.append([self.seq,int(m.group(1),16),m.group(2),int(m.group(3),16),{}]);return True
+  m=SEH_INFO.search(line)
+  if m:
+   if self.exceptions:self.exceptions[-1][4][int(m.group(1))]=int(m.group(2),16)
+   return True
+  return ':seh:' in line or ':loaddll:' in line or ':relay:' in line
+ def crash_handler_started(self):
+  if self.handler_at is None:self.handler_at=self.seq
+ def where(self,seq,addr):
+  # The DLL loaded before this exception with the highest base not above the address.
+  best=max(((base,name) for s,base,name in self.dlls if s<seq and base<=addr),default=None)
+  if not best or addr-best[0]>0x10000000:return '0x%x (not in a Windows DLL: Wine itself or a Linux library)'%addr
+  return '%s+0x%x'%(best[1].split('\\')[-1],addr-best[0])
+ def describe(self,e):
+  seq,code,name,addr,info=e
+  what=EXCEPTIONS.get(code) or name or 'exception 0x%08X'%code
+  if code==0xC0000005 and 1 in info:
+   what+=' %s 0x%x'%({0:'reading',1:'writing',8:'executing'}.get(info.get(0),'at'),info[1])
+  return '%s at %s (code %08x)'%(what,self.where(seq,addr),code)
+ def crash(self):
+  """The exception Studio most likely crashed on, described, or None."""
+  before=[e for e in self.exceptions if self.handler_at is None or e[0]<=self.handler_at]
+  pick=next((e for e in reversed(before) if e[1] in SEVERE),None) or next(
+   (e for e in reversed(before) if e[1] not in HARMLESS),None)
+  return self.describe(pick) if pick else None
+# After a crash the next start records what Studio does in detail (Box64's opcode and fault log, Wine's
+# exception and DLL-load log); those cost time, so ordinary starts leave them off.
+DIAGNOSE_FILE=ROOT/'diagnose-next-start'
+def run_studio(args,cwd,env):
+ """Runs Studio, printing what matters; with diagnostics on, with Box64's opcode log and Wine's
+ exception log. Returns (exit code, notable lines)."""
+ env=dict(env)
+ if DIAGNOSE_FILE.exists() or os.getenv('BODDY_STUDIO_DIAGNOSE')=='1':
+  say('Recording details of this run, because the last one crashed')
+  if 'BOX64_LOG' in env and not os.getenv('BODDY_BOX64_LOG'):env.update(BOX64_LOG='1',BOX64_SHOWSEGV='1')
+  if not os.getenv('BODDY_WINEDEBUG'):env['WINEDEBUG']=env.get('WINEDEBUG','-all,err+all')+',+seh,+loaddll'
+ notable=collections.deque(maxlen=20);exceptions=ExceptionLog()
+ proc=subprocess.Popen(args,cwd=cwd,env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,errors='replace',bufsize=1)
+ try:
+  for line in proc.stdout:
+   line=line.rstrip('\n')
+   if exceptions.feed(line):continue
+   # Box64's start-up line for the crash handler is noise like the rest, but it means Studio crashed.
+   if 'Detected running wine with "RobloxCrashHandler' in line:
+    notable.append('RobloxCrashHandler started: Studio crashed');exceptions.crash_handler_started()
+   if STUDIO_NOISE.search(line):continue
+   print(line,flush=True)
+   if STUDIO_NOTABLE.search(line) and not BENIGN_FAULT.search(line):notable.append(line.replace('\x1b[31m','').replace('\x1b[0m',''))
+  code=proc.wait()
+ finally:
+  if proc.poll() is None:proc.kill()
+ crash=exceptions.crash()
+ if crash:say('Last serious exception in Studio: '+crash);notable.appendleft('Exception: '+crash)
+ return code,list(notable)
+def size_of(path):
+ total=0
+ for root,_,files in os.walk(path):
+  for f in files:
+   try:total+=os.lstat(os.path.join(root,f)).st_size
+   except OSError:pass
+ return total
+def cleanup():
+ """Removes what Studio does not use: Windows setups and Wine downloads of other Wine versions (the
+ earlier launcher installed several after a crash), backups, half-finished downloads, Hangover."""
+ keep={prefix_dir().name}
+ doomed=[p for p in ROOT.glob('prefix*') if p.is_dir() and p.name not in keep]
+ doomed+=[p for p in ROOT.glob('Studio-backup-*')]+[p for p in ROOT.glob('stage-*')]+[ROOT/'wine-x64-stage',ROOT/'dxvk-stage',ROOT/'turnip-stage']
+ doomed+=[p for p in ROOT.glob('turnip-*') if p.is_dir() and p.name not in ('turnip-'+TURNIP_VERSION,'turnip-stage')]
+ doomed+=[p for p in CACHE.glob('*') if p.is_file() and p.suffix in ('.part','.deb','.zip','.tar','.gz','.xz')]
+ doomed=[p for p in doomed if p.exists()]
+ freed=0
+ for p in doomed:
+  freed+=size_of(p) if p.is_dir() else p.stat().st_size
+  shutil.rmtree(p,ignore_errors=True) if p.is_dir() else p.unlink(missing_ok=True)
+  say('Removed '+p.name)
+ if runtime()=='box64':
+  hangover=[p for p in ('hangover-wine','hangover-libarm64ecfex','hangover-libwow64fex','hangover-wowbox64')
+   if 'ok installed' in subprocess.run(['dpkg-query','-W','-f=${Status}',p],capture_output=True,text=True).stdout]
+  if hangover:
+   before=shutil.disk_usage('/').free
+   subprocess.run(['apt-get','purge','-y',*hangover],env=dict(os.environ,DEBIAN_FRONTEND='noninteractive'))
+   subprocess.run(['apt-get','autoremove','-y','--purge'],env=dict(os.environ,DEBIAN_FRONTEND='noninteractive'))
+   freed+=max(0,shutil.disk_usage('/').free-before);say('Removed Hangover (not used: Studio runs with Box64)')
+ say('Freed %s.'%size_text(freed) if freed else 'Nothing to remove: everything left is in use.')
+def offline(e):
+ """Whether an error means the internet is not reachable (rather than one Wine version failing)."""
+ if isinstance(e,(TlsError,OfflineError,ConnectionError,TimeoutError)):return True
+ return isinstance(e,urllib.error.URLError) and not isinstance(e,urllib.error.HTTPError)
+WINE_MAJORS=('','10','9','8')  # '' is the newest WineHQ offers
+def combinations():
+ """Every runtime and Wine version to try: the saved one first, then Box64 with each Wine, then Hangover."""
+ saved=(runtime(),wine_major() if runtime()=='box64' else '')
+ rest=[('box64',m) for m in WINE_MAJORS]+[('hangover','')]
+ return [saved]+[c for c in rest if c!=saved]
+def combination_name(rt,major):
+ return 'Hangover' if rt=='hangover' else 'Box64 with Wine '+(major or 'newest')
+def save_combination(rt,major):
+ RUNTIME_FILE.write_text(rt)
+ if rt=='box64':WINE_MAJOR_FILE.write_text(major)
+def start_windows():
+ """Installs the Wine being tried and checks Windows starts in its prefix. Returns (wine, env, prefix)."""
+ say('Runtime: %s'%runtime())
+ wine=wine_command();prefix=prefix_dir()
+ env=wine_env(prefix)
+ command([*wine,'--version'],120,env)
+ if (prefix/'.boddy-tested').exists():return wine,env,prefix
+ existed=prefix.exists()
+ while True:
+  say('Testing Windows command execution before downloading Studio')
+  # Creating the Wine prefix under x86 emulation can take several minutes on a phone.
+  code,out=run_logged([*wine,'cmd.exe','/c','echo','BODDY_WINE_STARTUP_OK'],1800,env)
+  if not code:
+   # The prefix was just made: give it the black desktop background now, so nothing that starts in it
+   # (Studio's installer windows, the first Studio start) ever shows the classic Windows blue. Studio's
+   # launch applies it again with the desktop's size.
+   apply_desktop_settings(wine,env,prefix)
+   (prefix/'.boddy-tested').touch();return wine,env,prefix
+  # A Windows setup left half-made by an earlier, stopped attempt can be the problem: start it again once.
+  if not existed:raise RuntimeError(startup_reason(code,out)+'\n'+startup_help(out))
+  say('Windows did not start in the existing setup; trying once more with a fresh one (the old one is kept as a backup)')
+  prefix.rename(ROOT/('prefix-backup-'+str(time.time_ns())));existed=False
+def start_log():
+ """Copies everything this launcher and the programs it runs write into the log (BODDY_LOG), as `tee` did,
+ from a thread instead of two more processes. Returns finish(exit code), which ends it as the shell did:
+ the log's path, a copy in Downloads, and the exit code in BODDY_STUDIO_STATUS for studio-app.sh."""
+ path=os.getenv('BODDY_LOG');helper=os.getenv('BODDY_HELPER')=='1'
+ out=os.dup(1)
+ log=open(path,'ab',buffering=0) if path else None
+ if log:
+  r,w=os.pipe();os.dup2(w,1);os.dup2(w,2);os.close(w)
+  def pump():
+   while True:
+    try:b=os.read(r,65536)
+    except OSError:break
+    if not b:break
+    try:os.write(out,b)
+    except OSError:pass  # nobody reads the screen side any more (the progress window ended): keep logging
+    log.write(b)
+  thread=threading.Thread(target=pump,daemon=True);thread.start()
+ def finish(code):
+  status=os.getenv('BODDY_STUDIO_STATUS')
+  if status:
+   try:Path(status).write_text('%d\n'%code)
+   except OSError:pass
+  if not log:return
+  sys.stdout.flush();sys.stderr.flush()
+  os.dup2(out,1);os.dup2(out,2)
+  # Wine's background processes can keep the log's pipe open after Studio: wait a little, not for them.
+  thread.join(5)
+  def tell(line):
+   try:os.write(out,(line+'\n').encode())
+   except OSError:pass
+  tell('Launcher log: '+path)
+  downloads=Path.home()/'Phone/Download'
+  if downloads.is_dir() and not helper:
+   try:shutil.copyfile(path,downloads/'Boddy-Studio-launch.log');tell('Log copied to Downloads/Boddy-Studio-launch.log')
+   except OSError:pass
+ return finish
+if __name__=='__main__':
+ finish=start_log();code=0
+ try:main()
+ except SystemExit as e:code=e.code if isinstance(e.code,int) else (0 if e.code is None else 1)
+ except Exception as e:say('LAUNCH FAILED: '+str(e));code=1
+ finish(code);sys.exit(code)
+
+BODDY_PY
