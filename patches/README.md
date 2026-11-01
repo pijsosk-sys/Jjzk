@@ -5,9 +5,10 @@ against the copy shipped in `Boddy-studio-fix.apk`:
 
 1. `studio-selective-install.patch` — install less (below)
 2. `studio-gpu-default.patch` — draw on the phone's GPU by default ([below](#2-gpu-by-default))
+3. `studio-dead-fflags.patch` — drop the FFlags Studio has no variable for ([below](#3-dead-fflags))
 
-`patches/studio` is the launcher with both applied, as a drop-in. The two
-patches apply in that order and reproduce it byte for byte.
+`patches/studio` is the launcher with all three applied, as a drop-in. They
+apply in that order and reproduce it byte for byte.
 
 ---
 
@@ -175,15 +176,89 @@ against a device.
 
 ---
 
+# 3. Dead FFlags
+
+## How a flag can be checked
+
+Roblox registers a fast variable with a macro that stores the name **without**
+its type prefix, so `DFIntTaskSchedulerTargetFps` leaves `TaskSchedulerTargetFps`
+in the binary as a NUL-terminated string. A name that does not appear at all is
+not a variable Studio has, and a setting for it in `ClientAppSettings.json` is
+read and discarded.
+
+Checked against `RobloxStudioBeta.exe` from `0.745.0.7451137` (222 MB, PE32+
+x86-64), looking for `b'<Name>\x00'`. Note that `strings` gives false negatives
+here: `DebugForceMSAASamples` sits directly after a float in `.rdata` and comes
+out glued to the preceding byte, so the raw byte search is the one to trust.
+
+## Seven of the launcher's flags do not exist
+
+```
+FFlagDisablePostFx                     FIntRenderGrassDetailStrands
+FIntRenderShadowIntensity              FFlagGlobalWindRendering
+DFFlagDebugRenderForceTechnologyVoxel  DFIntTextureQualityOverride
+DFFlagTextureQualityOverrideEnabled
+```
+
+None appear in the binary, and none appear among the 26,878 prefixed flags
+Roblox pushes across `PCStudioApp`, `PCDesktopClient`, `PCClientBootstrapper`
+and `StudioAppSettings`. Removing them changes no behaviour — they never had
+any — but two of them were load-bearing in intent:
+
+- **the lighting was never forced to voxel.** `DFFlagDebugRenderForceTechnologyVoxel`
+  was meant to pin Studio to the cheapest lighting technology. It does nothing,
+  so a place opens on whatever its own `Lighting.Technology` says, which can be
+  ShadowMap or Future — far more expensive than voxel on a phone.
+- **textures were never pinned to the lowest quality.** Both halves of that
+  override are dead.
+
+No replacement for either is in the binary. `Lighting.Technology` is a property
+of a place now, not a fast variable, so forcing it would mean editing the place
+rather than a flag.
+
+## Candidates found, not wired in
+
+These names **are** in the binary and look directly useful, but Roblox pushes no
+value for them on any endpoint, so their type prefix cannot be confirmed — and a
+wrong prefix is silently ignored, which looks identical to a flag that did
+nothing:
+
+```
+RenderForceVideoMemorySize                       (would replace the DXVK maxDeviceMemory guess)
+PerformanceControlLowPowerTextureQualityEnabled  (the modern texture-quality lever)
+PerformanceControlLowPowerTextureQualityPercent
+RenderShadowResolutionScaling
+RenderPostFxBasePixelCount
+```
+
+Worth trying one at a time on a device, not worth guessing into the default
+config.
+
+## What the launcher writes now
+
+14 flags in both GPU and CPU mode, every one verified present in the binary.
+`DFIntTextureQualityOverride` also came out of `GPU_FLAGS`.
+
+## Not verified
+
+The prefixes on the flags that are kept (`DFInt` on `TaskSchedulerTargetFps`
+and the rest) could not be confirmed from any endpoint either — Roblox pushes no
+value for the debug and override class. Those come from the launcher as it was
+and are left alone; only names absent from the binary were removed. Whether
+removing the dead seven changes anything visible on a phone is untested, and the
+expectation is that it does not.
+
+---
+
 # Built APK
 
-`Boddy-studio-fix-patched.apk` — the uploaded `Boddy-studio-fix.apk` with both
-patches applied, md5 `ef8fe2c20d99f5287706830d70ac6871`.
+`Boddy-studio-fix-patched.apk` — the uploaded `Boddy-studio-fix.apk` with all
+three patches applied, md5 `d0b922ead6f73370277cba22cc56dfb5`.
 
 Rebuilt from the APK, not from source: the only changed file is the asset
 `assets/boddy/studio`. All 600 entries keep their original compression
 (`resources.arsc` stays STORED), the old `META-INF` signatures are stripped,
-then `zipalign -p -f 4` and `apksigner sign`. v1, v2 and v3 all verify.
+then `zipalign -p -f 4` and `apksigner sign`. v2 and v3 verify.
 
 `Installer.copyScripts()` in `classes.dex` is called from
 `BoddyService.startDesktop` unconditionally: it lists the `boddy` asset

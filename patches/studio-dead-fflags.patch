@@ -1,0 +1,43 @@
+--- a/assets/boddy/studio
++++ b/assets/boddy/studio
+@@ -1664,14 +1664,26 @@
+ # Light settings for drawing on a phone's processor: every frame is drawn in software, so a 24 fps cap, the
+ # lowest quality level and textures, and no shadows or post effects cut the work (and memory) the most.
+ # Studio reads these from ClientSettings next to its program, like Roblox's player does.
+-LIGHT_FLAGS={'DFIntTaskSchedulerTargetFps':24,'DFIntDebugFRMQualityLevelOverride':1,'FFlagDisablePostFx':True,
+- 'FIntRenderShadowIntensity':0,'DFFlagDebugRenderForceTechnologyVoxel':True,
+- 'DFFlagTextureQualityOverrideEnabled':True,'DFIntTextureQualityOverride':0,
++# Every name here was checked against RobloxStudioBeta.exe of 0.745.0.7451137: a registered fast variable
++# leaves its name in the binary as a NUL-terminated string without the type prefix, so b'<Name>\x00' must
++# appear. Seven names that used to be in this list do not appear at all and were removed, because Studio
++# ignores a setting it has no variable for:
++#   FFlagDisablePostFx, FIntRenderShadowIntensity, DFFlagDebugRenderForceTechnologyVoxel,
++#   DFFlagTextureQualityOverrideEnabled, DFIntTextureQualityOverride, FIntRenderGrassDetailStrands,
++#   FFlagGlobalWindRendering
++# Two of those mattered: the lighting was never forced to voxel (the cheapest technology), and textures were
++# never pinned to the lowest quality. No replacement flag for either is in the binary -- Lighting.Technology
++# is a property of a place now, not a fast variable. Candidates the binary does have, whose type prefix cannot
++# be confirmed (Roblox pushes no value for them on any clientsettings endpoint, so the prefix would be a
++# guess, and a wrong prefix is silently ignored): RenderForceVideoMemorySize,
++# PerformanceControlLowPowerTextureQualityEnabled/Percent, RenderShadowResolutionScaling,
++# RenderPostFxBasePixelCount. Worth trying one at a time on a device, not worth guessing into the default.
++LIGHT_FLAGS={'DFIntTaskSchedulerTargetFps':24,'DFIntDebugFRMQualityLevelOverride':1,
+  # Wine handles Alt+Enter itself; Studio's own handling breaks the window under Wine (as Vinegar sets it).
+  'FFlagHandleAltEnterFullscreenManually':False,
+  'FIntDebugForceMSAASamples':1,  # no anti-aliasing: 1 sample per pixel
+- # no grass or wind animation, and fewer local-light updates per frame: less to draw for the same scene
+- 'FIntFRMMinGrassDistance':0,'FIntFRMMaxGrassDistance':0,'FIntRenderGrassDetailStrands':0,'FFlagGlobalWindRendering':False,
++ # no grass, and fewer local-light updates per frame: less to draw for the same scene
++ 'FIntFRMMinGrassDistance':0,'FIntFRMMaxGrassDistance':0,
+  'FIntRenderLocalLightUpdatesMax':1,'FIntRenderLocalLightUpdatesMin':1,'FIntRenderLocalLightFadeInMs':0,
+  # Draw the 3D view at about 240,000 pixels (a 1274x532 view is 678,000) and scale it up: on a
+  # processor-drawn view that cuts the work per frame by almost two thirds, for a softer picture.
+@@ -1693,7 +1705,7 @@
+ # Not measured on a phone: these are a starting point. A preset chosen by hand still wins over them, and
+ # BODDY_STUDIO_GPU_FLAGS=0 keeps the software settings on the GPU too.
+ GPU_FLAGS={'DFIntTaskSchedulerTargetFps':30,'DFIntDebugFRMQualityLevelOverride':5,
+- 'DFIntTextureQualityOverride':2,'DFIntDebugDynamicRenderKiloPixels':720}
++ 'DFIntDebugDynamicRenderKiloPixels':720}
+ VIDEO_MB_GPU=1536  # the GPU shares the phone's memory, so still not the 2 GB that starved the sign-in browser
+ PRESET_FILE=ROOT/'preset'
+ def preset():
