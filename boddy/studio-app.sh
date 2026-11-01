@@ -92,7 +92,7 @@ fi
 # The action can be given as an argument (e.g. from a desktop shortcut): studio-app.sh "Open Studio"
 choice=${1:-}
 [ -n "$choice" ] || choice=$(zenity --list --title="$TITLE" --width=420 --height=300 --column=Action \
-    "Open Studio" "Open a place file" "Graphics mode" "Window mode" "Free up space" "Diagnostics" "Wine version" "Compatibility mode" "Reset Studio" 2>/dev/null) || exit 0
+    "Open Studio" "Open a place file" "Graphics mode" "Window mode" "Free up space" "Diagnostics" "Wine version" "Compatibility mode" "Screen colours" "Reset Studio" 2>/dev/null) || exit 0
 case "$choice" in
     "Open Studio") args=() ;;
     "Open a place file")
@@ -174,6 +174,17 @@ case "$choice" in
             *) exit 0 ;;
         esac
         zenity --info --width=400 --title="$TITLE" --text="Compatibility mode set to $pick. Choose Open Studio to use it." 2>/dev/null
+        exit 0 ;;
+    "Screen colours")
+        # The whole desktop's colour depth (start-desktop.sh reads it when the desktop starts).
+        df=$HOME/.config/boddy/vnc-depth
+        now=$(cat "$df" 2>/dev/null); [ "$now" = 16 ] || now=24
+        pick=$(zenity --list --title="$TITLE" --width=560 --height=260 --column=Colours --column=Status \
+            "24-bit" "$([ "$now" = 24 ] && echo 'in use, ' )needed for Studio's 3D view" \
+            "16-bit" "$([ "$now" = 16 ] && echo 'in use, ' )lighter desktop; Studio's 3D view stays black" 2>/dev/null) || exit 0
+        case "$pick" in 24-bit) echo 24 >"$df" ;; 16-bit) echo 16 >"$df" ;; *) exit 0 ;; esac
+        zenity --info --width=420 --title="$TITLE" \
+            --text="Screen colours set to $pick. It applies the next time Boddy starts its desktop." 2>/dev/null
         exit 0 ;;
     "Reset Studio")
         zenity --question --width=420 --title="$TITLE" --ok-label="Reset" \

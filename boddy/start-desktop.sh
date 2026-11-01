@@ -24,8 +24,17 @@ export PULSE_SERVER=unix:/tmp/pulse.sock
 mkdir -p /etc/pulse/client.conf.d
 printf 'default-server = unix:/tmp/pulse.sock\nenable-shm = no\nautospawn = no\n' > /etc/pulse/client.conf.d/boddy.conf
 
-Xvnc :1 -geometry "${W}x${H}" -depth 24 -SecurityTypes None -localhost -nolisten tcp \
-     -rfbport 5901 -AlwaysShared -AcceptSetDesktopSize=0 &
+# Colour depth: 24-bit by default. 16-bit (/root/.config/boddy/vnc-depth holding 16, or BODDY_VNC_DEPTH=16; set
+# from the Roblox Studio menu, "Screen colours") halves the memory of the screen and of what every program draws
+# into it, for coarser colours. Vulkan draws nothing on a 16-bit screen, so Studio's DirectX (DXVK, WineVulkan,
+# GPU) needs 24-bit; the Studio launcher warns about it. The choice is kept here for the launcher to read.
+DEPTH=${BODDY_VNC_DEPTH:-$(cat /root/.config/boddy/vnc-depth 2>/dev/null)}
+case "$DEPTH" in 16) FORMAT=(-pixelformat rgb565) ;; *) DEPTH=24 FORMAT=() ;; esac
+echo "$DEPTH" > /tmp/boddy-vnc-depth
+# The Boddy app asks for ZRLE (see Zrle.java): level 1 compresses well enough on the phone's own loopback and
+# costs Xvnc the least processor time.
+Xvnc :1 -geometry "${W}x${H}" -depth "$DEPTH" "${FORMAT[@]}" -SecurityTypes None -localhost -nolisten tcp \
+     -rfbport 5901 -AlwaysShared -AcceptSetDesktopSize=0 -ZlibLevel=1 &
 for _ in $(seq 50); do [ -e /tmp/.X11-unix/X1 ] && break; sleep 0.2; done
 
 # Desktop tools (boddy-screen etc.) need these even from separate terminals.

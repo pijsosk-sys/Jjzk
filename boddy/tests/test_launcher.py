@@ -102,6 +102,18 @@ class BackgroundLoad(unittest.TestCase):
   self.assertRegex(lines[2],r'^[0-9:]+ processes=\d+ mem=');self.assertTrue(lines[3].lstrip().startswith('running: '))
   self.assertGreater(L.MOST_PROCESSES[0],0)
 
+class ScreenDepth(unittest.TestCase):
+ def setUp(self):reset()
+ def tearDown(self):
+  try:os.unlink('/tmp/boddy-vnc-depth')
+  except OSError:pass
+ def launch(self,depth):
+  open('/tmp/boddy-vnc-depth','w').write(depth+'\n');run=Launch([0]);run.go();return run.said
+ def test_warns_on_16_bit_screen(self):
+  self.assertTrue(any('16-bit colours' in s for s in self.launch('16')))
+ def test_quiet_on_24_bit_screen(self):
+  self.assertFalse(any('16-bit colours' in s for s in self.launch('24')))
+
 TURNIP_ARCHIVE=os.getenv('BODDY_TEST_TURNIP')  # the downloaded Turnip archive, so no test needs the internet
 class GpuMode(unittest.TestCase):
  def setUp(self):

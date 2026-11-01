@@ -23,4 +23,9 @@ menu "Graphics mode" "GPU (Adreno, experimental)"
 check "Graphics mode lists the GPU mode" 'grep -q "GPU (Adreno, experimental)" "$HOME/zenity.log"'
 check "picking it saves renderer=GPU" '[ "$(cat "$HOME/$DATA/renderer" 2>/dev/null)" = GPU ]'
 check "and confirms it" 'grep -q "Graphics mode set to GPU" "$HOME/zenity.log"'
+menu "Screen colours" "16-bit"
+check "Screen colours warns that 16-bit leaves Studio's 3D view black" 'grep -q "3D view stays black" "$HOME/zenity.log"'
+check "picking 16-bit saves it for start-desktop.sh" '[ "$(cat "$HOME/.config/boddy/vnc-depth")" = 16 ]'
+menu "Screen colours" "24-bit"
+check "picking 24-bit saves it" '[ "$(cat "$HOME/.config/boddy/vnc-depth")" = 24 ]'
 echo "$fails failed"; exit $((fails>0))

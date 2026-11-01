@@ -1029,6 +1029,12 @@ def try_every_way(place):
   say('then allow Firefox to open the Roblox Studio sign-in link.')
   restore_display=fit_display();set_window_mode(wine,env,prefix)
   say('Processes before Studio starts: '+process_summary())
+  # Vulkan presents nothing on a 16-bit screen (Boddy's "Screen colours"), so Studio's 3D view would stay black.
+  try:depth=Path('/tmp/boddy-vnc-depth').read_text().strip()
+  except OSError:depth=''
+  if depth=='16' and renderer!='WineOpenGL':
+   say('Warning: the desktop uses 16-bit colours, where Studio\'s 3D view stays black. In the Studio menu choose '
+    'Screen colours > 24-bit, then restart Boddy.')
   if process_count()>PHANTOM_LIMIT-12:
    say('Note: %d Linux processes are already running. Fine if Android\'s child process limit is off; with it on, '
     'Android stops Boddy above %d.'%(process_count(),PHANTOM_LIMIT))
