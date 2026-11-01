@@ -149,6 +149,31 @@ class SignIn(unittest.TestCase):
   L.close_signin_browser()
   self.assertIsNotNone(signin.wait(5));self.assertIsNone(other.poll());other.kill()
 
+class SignInBrowser(unittest.TestCase):
+ URL='https://www.roblox.com/login?returnUrl=x'
+ def setUp(self):
+  reset();L.SIGNIN_FILE.unlink(missing_ok=True)
+  self.firefox=[];L.open_in_firefox=lambda url:self.firefox.append(url)
+  self.ctl=os.path.join(tempfile.mkdtemp(),'boddy-ctl');L.BODDY_CTL=self.ctl
+  L.say=lambda s:None
+ def make_ctl(self,code):
+  open(self.ctl,'w').write('#!/bin/sh\necho "$@" >"%s.args"\necho ok\nexit %d\n'%(self.ctl,code));os.chmod(self.ctl,0o755)
+ def test_phone_browser_by_default(self):
+  self.make_ctl(0);L.open_in_browser(self.URL)
+  self.assertEqual(open(self.ctl+'.args').read().split(),['phone-open',self.URL]);self.assertEqual(self.firefox,[])
+ def test_firefox_when_the_phone_cannot_be_reached(self):
+  self.make_ctl(1);L.open_in_browser(self.URL);self.assertEqual(self.firefox,[self.URL])
+  os.unlink(self.ctl);L.open_in_browser(self.URL);self.assertEqual(len(self.firefox),2)
+ def test_firefox_when_chosen(self):
+  self.make_ctl(0);sys.argv=['studio','--use-signin=firefox'];L.main()
+  L.open_in_browser(self.URL);self.assertEqual(self.firefox,[self.URL]);self.assertFalse(os.path.exists(self.ctl+'.args'))
+  sys.argv=['studio','--use-signin=phone'];L.main();L.open_in_browser(self.URL);self.assertTrue(os.path.exists(self.ctl+'.args'))
+ def test_bad_links_refused(self):
+  self.make_ctl(0)
+  for bad in ('file:///etc/passwd','javascript:alert(1)','https://x y'):
+   with self.assertRaises(ValueError):L.open_in_browser(bad)
+  self.assertFalse(os.path.exists(self.ctl+'.args'))
+
 class ScreenDepth(unittest.TestCase):
  def setUp(self):reset()
  def tearDown(self):

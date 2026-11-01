@@ -35,6 +35,10 @@ done
 check "Performance preset lists Potato (default), Lower and Low" 'grep -q "Potato.*default.*Lower.*Low" "$HOME/zenity.log"'
 menu "" "Performance preset"
 check "main menu offers Performance preset" 'grep -q "Performance preset" "$HOME/zenity.log"'
+menu "Sign-in browser" "Firefox in Boddy"
+check "Sign-in browser: Firefox saved" '[ "$(cat "$HOME/$DATA/signin-browser")" = firefox ]'
+menu "Sign-in browser" "Phone browser"
+check "Sign-in browser: phone saved" '[ "$(cat "$HOME/$DATA/signin-browser")" = phone ]'
 # Open Studio with a stand-in launcher: the shell studio-app.sh starts becomes the launcher (exec), which
 # writes its own exit status.
 stub=$(mktemp)

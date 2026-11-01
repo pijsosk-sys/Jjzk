@@ -730,9 +730,33 @@ def close_signin_browser():
   if profile.encode() in cmd and any(b'firefox' in c for c in cmd[:1]):
    try:os.kill(int(n),signal.SIGTERM)
    except OSError:pass
+# Where "Login via Browser" signs in. The phone's own browser keeps Firefox's memory out of Boddy: Studio and
+# a Firefox inside Boddy together ran the phone out of memory, and Android closed Boddy. When the sign-in is
+# done, roblox.com sends the browser to a roblox-studio-auth: link, which the Boddy app takes
+# (StudioSignInActivity) and passes back here through run-in-desktop.sh. Firefox inside Boddy stays the way
+# when the phone cannot be reached, or when chosen in the Studio menu ("Sign-in browser").
+SIGNIN_FILE=ROOT/'signin-browser'
+BODDY_CTL='/opt/boddy/boddy-ctl'
+def signin_browser():
+ b=os.getenv('BODDY_STUDIO_SIGNIN') or (SIGNIN_FILE.read_text().strip() if SIGNIN_FILE.exists() else '')
+ return b if b in ('phone','firefox') else 'phone'
+def open_on_phone(url):
+ """Opens the link in the phone's browser through the Boddy app; whether that worked."""
+ if not os.access(BODDY_CTL,os.X_OK):return False
+ try:r=subprocess.run([BODDY_CTL,'phone-open',url],capture_output=True,text=True,timeout=90,env=browser_env())
+ except Exception as e:say('Could not reach the phone: %s'%e);return False
+ if r.returncode:say('Could not open the sign-in on the phone: '+(r.stderr or r.stdout).strip()[:200])
+ return r.returncode==0
 def open_in_browser(url):
  # Wine's winebrowser calls this for links Studio opens, e.g. "Login via Browser".
  if not re.fullmatch(r'https?://[\x21-\x7e]+',url) or len(url)>16384:raise ValueError('Refusing to open link: '+url[:200])
+ if signin_browser()=='phone':
+  if open_on_phone(url):
+   say('Opened on the phone\'s browser: '+url.split('?')[0]+'. After signing in there, Boddy hands the sign-in back to Studio.')
+   return
+  say('The phone\'s browser could not be used; signing in with Firefox in Boddy instead')
+ open_in_firefox(url)
+def open_in_firefox(url):
  firefox=shutil.which('firefox-esr') or shutil.which('firefox')
  if not firefox:raise RuntimeError('Firefox is not installed; install firefox-esr from Install Apps')
  # Firefox adds about 3 processes. Studio and the desktop can leave too little room under Android's limit of
@@ -1084,6 +1108,11 @@ def main():
   PRESET_FILE.write_text(want);v=PRESETS[want]
   say('Studio will now use the %s preset: %d fps, 3D view at %d thousand pixels'%(
    want,v['DFIntTaskSchedulerTargetFps'],v['DFIntDebugDynamicRenderKiloPixels']));return
+ if arg.startswith('--use-signin='):
+  want=arg.split('=',1)[1]
+  if want not in ('phone','firefox'):raise RuntimeError('Sign-in browser must be phone or firefox')
+  SIGNIN_FILE.write_text(want)
+  say('Studio will now sign in with '+("the phone's browser" if want=='phone' else 'Firefox in Boddy'));return
  if arg.startswith('--use-windows='):
   want=arg.split('=',1)[1]
   if want not in ('desktop','separate'):raise RuntimeError('Window mode must be desktop or separate')
@@ -1172,8 +1201,8 @@ def try_every_way(place):
   env=prepare_graphics(renderer,prefix,env,icd)
   if place:args.append('Z:'+str(place).replace('/','\\'))
   say('Launching real Roblox Studio. A process start alone does not prove the editor works.')
-  say('Studio\'s built-in login does not work here: choose "Login via Browser", sign in in the Firefox window that opens,')
-  say('then allow Firefox to open the Roblox Studio sign-in link.')
+  say('Studio\'s built-in login does not work here: choose "Login via Browser" and sign in in the browser that opens,')
+  say('then allow it to open the Roblox Studio sign-in link (on the phone: open it with Boddy).')
   # Keeping Studio's window off the taskbar and the sign-in browser in front of Studio uses these two.
   missing=[t for t in ('xdotool','wmctrl') if not shutil.which(t)]
   if missing:

@@ -1,6 +1,12 @@
 #!/bin/bash
 # Opens a Boddy app inside the running desktop. Argument: launcher id (e.g. claude-signin).
 export DISPLAY=:1 HOME=/root XDG_RUNTIME_DIR=/tmp/runtime-root
+# Roblox Studio's sign-in, handed over by the phone's browser (the app's StudioSignInActivity): give it to the
+# Studio launcher, which checks the link and passes it to the running Studio.
+case "$1" in roblox-studio-auth:*)
+    setsid /opt/boddy/studio "$1" >/dev/null 2>&1 &
+    exit 0 ;;
+esac
 f=/usr/share/applications/boddy-$1.desktop
 [ -f "$f" ] || exit 1
 cmd=$(sed -n 's/^Exec=//p' "$f" | sed 's/ %[uUfF]//')

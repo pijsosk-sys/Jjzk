@@ -31,5 +31,11 @@ rm -f "$T"/*.log; printf 'y\n\n' | PATH="$T/bin:$PATH" bash "$BODDY/codex.sh" >"
 check "launcher: Studio running, answer y -> Codex starts" 'grep -q "codex --no-daemon" "$T/codex.log"'
 kill "$(cat $running)"; rm -f $running "$T"/*.log; printf '\n' | PATH="$T/bin:$PATH" bash "$BODDY/codex.sh" >"$T/out" 2>&1
 check "launcher: Studio not running -> Codex starts without asking" 'grep -q "codex --no-daemon" "$T/codex.log" && ! grep -q "Roblox Studio is running" "$T/out"'
+# Studio's sign-in, handed back by the phone's browser through the app: goes to the Studio launcher.
+had_studio=0; [ -e /opt/boddy/studio ] && had_studio=1 && cp /opt/boddy/studio "$T/studio.bak"
+mkdir -p /opt/boddy; printf '#!/bin/bash\necho "$@" >%s/studio.args\n' "$T" >/opt/boddy/studio; chmod +x /opt/boddy/studio
+bash "$BODDY/run-in-desktop.sh" 'roblox-studio-auth:?code=abc&state=1'; sleep 1
+check "a sign-in link goes to the Studio launcher" '[ "$(cat "$T/studio.args" 2>/dev/null)" = "roblox-studio-auth:?code=abc&state=1" ]'
+if [ $had_studio = 1 ]; then cp "$T/studio.bak" /opt/boddy/studio; else rm -f /opt/boddy/studio; rmdir /opt/boddy 2>/dev/null; fi
 if [ $had_desktop = 1 ]; then cp "$T/desktop.bak" $desktop; else rm -f $desktop; fi
 echo "$fails failed"; exit $((fails>0))
