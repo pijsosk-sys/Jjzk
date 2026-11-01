@@ -1,8 +1,17 @@
-# Studio launcher: selective package install
+# Studio launcher patches
 
-Patch for `assets/boddy/studio` (the Boddy Linux compatibility launcher).
-Drop-in replacement: `patches/studio`. Diff against the launcher shipped in
-`Boddy-studio-fix.apk`: `patches/studio-selective-install.patch`.
+Two patches for `assets/boddy/studio` (the Boddy Linux compatibility launcher),
+against the copy shipped in `Boddy-studio-fix.apk`:
+
+1. `studio-selective-install.patch` — install less (below)
+2. `studio-gpu-default.patch` — draw on the phone's GPU by default ([below](#2-gpu-by-default))
+
+`patches/studio` is the launcher with both applied, as a drop-in. The two
+patches apply in that order and reproduce it byte for byte.
+
+---
+
+# 1. Selective package install
 
 ## What it changes
 
@@ -89,3 +98,76 @@ fetch, run coalescing, entry CRCs, byte-exact output, the no-Range fallback and
 rejection of a tampered entry. Not run on a phone, under proot, or through
 Box64/Wine into Studio itself — the install path is the only thing touched, but
 a real launch on device is untested.
+
+
+---
+
+# 2. GPU by default
+
+## The problem
+
+The launcher already had a complete Adreno GPU path: `/dev/kgsl-3d0` detection,
+a KGSL-capable Turnip build, its own Vulkan ICD, a `vulkaninfo` probe, the
+`MESA_VK_WSI_DEBUG=sw` workaround for VNC's missing DRI3, and
+`GPU_FAILED_FILE` to back out after a crash. None of it ran unless someone
+typed `--use-renderer=GPU`:
+
+```python
+GRAPHICS = {..., 'GPU': "DXVK on the phone's GPU (Adreno, experimental)"}
+SETUPS   = (('DXVK',False,'fast'), ('DXVK',False,'strongmem'), ...)   # no 'GPU'
+```
+
+`GRAPHICS` is what can be chosen; `SETUPS` is what is tried. Every ordinary
+launch rendered on the CPU through DXVK on lavapipe, on the same CPU already
+translating x86 under Box64.
+
+Second problem: `write_studio_settings(studio, renderer)` never read `renderer`.
+Even a manual `--use-renderer=GPU` still got the `Potato` FFlags — 15 fps, the
+3D view drawn at 90 thousand pixels and upscaled, quality level 1, texture
+quality 0. Those exist because the CPU was drawing. On the GPU they throttle it
+for nothing.
+
+## What it changes
+
+- `('GPU',False,'fast')` goes in at the head of `SETUPS`, so the GPU is tried
+  first and the existing ladder handles failure: no Adreno or no Turnip answer
+  → one line saying why, then DXVK this launch; a crash on it → `GPU_FAILED_FILE`
+  → CPU next launch. No new failure mode.
+- `kgsl_device()` is now checked **before** `ensure_graphics('GPU')`. That call
+  apt-installs `TURNIP_PACKAGES` plus `vulkan-tools`, and it ran before anything
+  looked for the device. Harmless while GPU was opt-in; with GPU leading the
+  ladder it would have made every non-Adreno phone install Turnip once and then
+  fall back. The check is two `os` calls and no network.
+- `GPU_FLAGS` lifts the software-rendering compromises when the GPU is drawing:
+  30 fps, quality level 5, texture quality 2, the 3D view at 720 thousand pixels
+  instead of 90. The CPU still runs Lua, physics and the x86 translation, so the
+  target stays well under 60.
+- `VIDEO_MB_GPU = 1536` instead of the preset's 512, for `dxvk.conf`'s
+  `dxgi.maxDeviceMemory` and wined3d's `VideoMemorySize`.
+- `LP_NUM_THREADS` is no longer set in GPU mode — lavapipe is not drawing.
+- `.choice-v6` resets the saved ladder step once, since a step number now names
+  the setup below the one it used to.
+
+A preset chosen by hand still wins, and `BODDY_STUDIO_GPU_FLAGS=0` keeps the
+software settings on the GPU too.
+
+## What is not changed, and why
+
+`WINEESYNC` / `WINEFSYNC` would cut Wine's per-synchronisation server round
+trips, which would help a thread-heavy program like Studio. They are
+wine-staging patches and `WINE_BRANCH = 'stable'`, so setting them does
+nothing. They would need a staging build first.
+
+## Not verified
+
+Checked here: the ladder order, that step 0 is GPU, that `GPU_FAILED_FILE`
+demotes to DXVK, that a machine with no `/dev/kgsl-3d0` falls back without
+touching apt or the network, that GPU mode writes 30 fps / 720 kpx, that DXVK
+mode still writes 15 fps / 90 kpx, that a hand-picked preset and
+`BODDY_STUDIO_GPU_FLAGS=0` both override it, and that `FFlagDebugGraphicsPreferD3D11`
+is still forced.
+
+Not checked: any of it on an actual Adreno phone. There is no GPU in this
+container, so the framerate gain is reasoned from what the code does, not
+measured. The `GPU_FLAGS` numbers are a starting point in one place, not tuned
+against a device.

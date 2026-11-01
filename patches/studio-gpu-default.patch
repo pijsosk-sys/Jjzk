@@ -1,0 +1,108 @@
+--- a/assets/boddy/studio
++++ b/assets/boddy/studio
+@@ -1378,6 +1378,11 @@
+   migrated.touch()
+  # Wine's DirectX crashed on a phone at the same point on OpenGL and Vulkan, and DXVK got furthest: go back
+  # to DXVK once, now that the exception Studio crashes on is recorded.
++ # The GPU went in at the front of the ladder, so a saved step number now names the setup below the one it
++ # meant. Start the ladder over once, from the GPU.
++ migrated=ROOT/'.choice-v6'
++ if not migrated.exists():
++  SETUP_FILE.unlink(missing_ok=True);GPU_FAILED_FILE.unlink(missing_ok=True);migrated.touch()
+  migrated=ROOT/'.choice-v5'
+  if not migrated.exists():
+   SETUP_FILE.unlink(missing_ok=True);migrated.touch()
+@@ -1420,9 +1425,12 @@
+   setup=current_setup();renderer=setup['renderer'];icd=None
+   if renderer=='GPU':
+    # The GPU mode needs the phone's Adreno GPU and a driver that reaches it; without them Studio draws on the
+-   # processor (DXVK on lavapipe) this time, as it did before the GPU mode existed.
+-   ensure_graphics(renderer);icd,why=gpu_driver()
+-   if not icd:say('Warning: not using the GPU: %s. Drawing on the processor instead.'%why);setup['renderer']=renderer='DXVK'
++   # processor (DXVK on lavapipe) this time, as it did before the GPU mode existed. The device is looked at
++   # first (two calls, no network): the GPU mode leads the ladder now, so a phone without an Adreno must not
++   # install Turnip's packages only to fall back.
++   why=kgsl_device()
++   if not why:ensure_graphics(renderer);icd,why=gpu_driver()
++   if not icd:say('Not using the GPU: %s. Drawing on the processor instead.'%why);setup['renderer']=renderer='DXVK'
+   elif (RENDERER_FILE.read_text().strip() if RENDERER_FILE.exists() else '')=='GPU':
+    say('Warning: Studio crashed on the GPU last time, so it draws on the processor. Choose the GPU graphics mode again to retry it.')
+   say('Studio setup %d of %d: %s'%(setup['step']+1,len(SETUPS),describe_setup(setup)))
+@@ -1508,10 +1516,12 @@
+  'GPU':"DXVK on the phone's GPU (Adreno, experimental)"}
+ RENDERER_FILE=ROOT/'renderer'  # a graphics mode chosen in the menu; it replaces the ladder's
+ # The ways to run Studio once Windows starts, fastest first; each crash moves the next start one step down.
+-# The first is the fastest emulation; a crash there goes on to the same with memory barriers, then as before.
+-# All but the last hide AVX.
+-SETUPS=(('DXVK',False,'fast'),('DXVK',False,'strongmem'),('WineVulkan',False,'strongmem'),('WineOpenGL',False,'strongmem'),
+- ('DXVK',False,'safe'),('WineOpenGL',False,'safe'),('WineOpenGL',True,'safe'))
++# The first is the phone's own GPU, which costs nothing to try: without /dev/kgsl-3d0, or if Turnip does not
++# answer, main() reports why and uses the step below instead, and a crash on it writes GPU_FAILED_FILE so the
++# next start draws on the processor. Everything from there down draws in software, fastest emulation first,
++# then the same with memory barriers, then as before. All but the last hide AVX.
++SETUPS=(('GPU',False,'fast'),('DXVK',False,'fast'),('DXVK',False,'strongmem'),('WineVulkan',False,'strongmem'),
++ ('WineOpenGL',False,'strongmem'),('DXVK',False,'safe'),('WineOpenGL',False,'safe'),('WineOpenGL',True,'safe'))
+ SETUP_FILE=ROOT/'studio-setup'
+ def current_setup():
+  try:step=int(SETUP_FILE.read_text())
+@@ -1624,8 +1634,9 @@
+  env=dict(env)
+  # Mesa draws each frame in as many pieces as it has threads, one per core by default, and the frame is
+  # done when the last piece is: pieces on a phone's slow cores hold every frame up. One per fast core.
+- fast=fast_core_count()
++ fast=fast_core_count() if gfx!='GPU' else None  # lavapipe is not drawing in the GPU mode
+  if fast:env.setdefault('LP_NUM_THREADS',str(fast))
++ video_mb=VIDEO_MB_GPU if gfx=='GPU' else VIDEO_MB[preset()]
+  over=[o for o in env.get('WINEDLLOVERRIDES','').split(';') if o and not o.startswith(('d3d11','dxgi','d3d10core'))]
+  if gfx=='GPU':
+   # Only Turnip, so Vulkan cannot pick lavapipe instead. Boddy's VNC screen has no DRI3, which Mesa's X11
+@@ -1641,12 +1652,12 @@
+    src,dst=d/(n+'.dll'),sys32/(n+'.dll')
+    if not dst.exists() or dst.read_bytes()!=src.read_bytes():shutil.copyfile(src,dst)
+   over.append('d3d11,dxgi,d3d10core=n,b')
+-  conf=ROOT/'dxvk.conf';conf.write_text(DXVK_CONF%VIDEO_MB[preset()])
++  conf=ROOT/'dxvk.conf';conf.write_text(DXVK_CONF%video_mb)
+   env.update(DXVK_CONFIG_FILE=str(conf),DXVK_LOG_LEVEL='warn',DXVK_LOG_PATH='none',DXVK_HUD='0')
+  else:
+   # Wine's own: builtin even though DXVK's copies may sit in system32 from an earlier start.
+   over.append('d3d11,dxgi,d3d10core=b')
+-  env['WINE_D3D_CONFIG']=('renderer=vulkan;' if gfx=='WineVulkan' else '')+'VideoMemorySize=%d'%VIDEO_MB[preset()]
++  env['WINE_D3D_CONFIG']=('renderer=vulkan;' if gfx=='WineVulkan' else '')+'VideoMemorySize=%d'%video_mb
+  env['WINEDLLOVERRIDES']=';'.join(over)
+  say('Studio graphics: %s%s'%(GRAPHICS[gfx],', %s drawing threads (fast cores)'%fast if fast else ''))
+  return env
+@@ -1675,6 +1686,15 @@
+ # The video memory Studio is told it has (DXVK and Wine's DirectX), in MB: with software drawing it is the
+ # phone's memory, so lighter presets give Studio a smaller texture budget.
+ VIDEO_MB={'Low':1024,'Lower':768,'Potato':512}
++# On the GPU the pixels are not the processor's work any more, so the settings that exist only for software
++# drawing come off: the frame rate target, the quality level, the texture quality and the downscaled 3D view.
++# The processor still runs Lua, physics and the x86 translation, so the target stays well under 60, and the
++# view is drawn at its own size (a 1274x532 view is 678 thousand pixels) instead of 90 thousand upscaled.
++# Not measured on a phone: these are a starting point. A preset chosen by hand still wins over them, and
++# BODDY_STUDIO_GPU_FLAGS=0 keeps the software settings on the GPU too.
++GPU_FLAGS={'DFIntTaskSchedulerTargetFps':30,'DFIntDebugFRMQualityLevelOverride':5,
++ 'DFIntTextureQualityOverride':2,'DFIntDebugDynamicRenderKiloPixels':720}
++VIDEO_MB_GPU=1536  # the GPU shares the phone's memory, so still not the 2 GB that starved the sign-in browser
+ PRESET_FILE=ROOT/'preset'
+ def preset():
+  p=os.getenv('BODDY_STUDIO_PRESET') or (PRESET_FILE.read_text().strip() if PRESET_FILE.exists() else '')
+@@ -1685,11 +1705,17 @@
+  except ValueError:flags={}  # not ours and not valid: replaced
+  if not isinstance(flags,dict):flags={}
+  full=os.getenv('BODDY_STUDIO_FULL_GRAPHICS')=='1'
+- if not full:flags.update(LIGHT_FLAGS);flags.update(PRESETS[preset()])
++ chosen_preset=bool(os.getenv('BODDY_STUDIO_PRESET') or PRESET_FILE.exists())
++ gpu=renderer=='GPU' and not chosen_preset and os.getenv('BODDY_STUDIO_GPU_FLAGS')!='0'
++ if not full:
++  flags.update(LIGHT_FLAGS);flags.update(PRESETS[preset()])
++  if gpu:flags.update(GPU_FLAGS)
+  # Direct3D 11 is what Studio uses anyway; say so, so an earlier preference for another API is undone.
+  for r in ('OpenGL','Vulkan','D3D11FL10','D3D11'):flags['FFlagDebugGraphicsPrefer'+r]=r=='D3D11'
+  path.parent.mkdir(exist_ok=True);path.write_text(json.dumps(flags,indent=1))
+  if full:say('Studio settings: full graphics (BODDY_STUDIO_FULL_GRAPHICS=1)')
++ elif gpu:say('Studio settings: GPU (%d fps, 3D view drawn at %d thousand pixels; set a preset by hand to override)'%(
++  flags['DFIntTaskSchedulerTargetFps'],flags['DFIntDebugDynamicRenderKiloPixels']))
+  else:say('Studio settings: %s preset (%d fps, lowest quality, 3D view drawn at %d thousand pixels)'%(
+   preset(),flags['DFIntTaskSchedulerTargetFps'],flags['DFIntDebugDynamicRenderKiloPixels']))
+ # Box64 names an instruction it cannot run ("Unimplemented Opcode") only at BOX64_LOG=1, which also logs
