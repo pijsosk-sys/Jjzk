@@ -20,6 +20,7 @@ and three outside the launcher, for Studio Mode:
 and one new file:
 
 - `roblox-publish` — upload a place to Roblox with no Studio sign-in ([below](#6-publishing-without-signing-studio-in))
+- `publish-app.sh` — the same thing as a desktop app, with a `--wizard` that looks up every id
 
 Each patch has its file beside it as a drop-in (`patches/studio`,
 `patches/roblox-studio-mcp`, `patches/studio-app.sh`, `patches/studio-mode.sh`).
@@ -482,6 +483,21 @@ updated, and the game is unchanged — a silent and very confusing failure.
 `games.roblox.com/v1/games?universeIds={id}` gives the root place and needs no key, so `--setup`,
 `--check` and every publish compare against it and warn when they differ.
 
+**`--wizard`: no ids typed at all.** Three public endpoints, none needing a key, remove every number a
+person had to hunt for: `users.roblox.com/v1/usernames/users` turns a username into a user id,
+`games.roblox.com/v2/users/{id}/games` lists the experiences that account owns, and
+`games.roblox.com/v1/games?universeIds=` gives the chosen one's starting place. So the wizard asks for
+a username, shows a numbered list of experiences, and then asks only for the API key — the one thing
+the website still has to hand over. `publish-app.sh` wraps that and the publish itself in zenity, as a
+"Publish to Roblox" desktop icon.
+
+**Confirming a publish actually landed.** A `200` from the publish endpoint means Roblox accepted the
+file, not that players will see it: a `Saved` version and a publish to a place nothing loads both
+answer `200` and change nothing. After a live publish the tool now reads the experience's `updated`
+time before and after and polls for a minute, and says plainly whether it moved. That is the only
+check that distinguishes a real publish from the kind that looks successful everywhere except in the
+game — which is exactly the failure this session spent an evening on.
+
 **What still needs the website once:** creating the experience, and making the key. Both work in the
 phone's own browser at `create.roblox.com`. After that, publishing never touches it again.
 
@@ -527,7 +543,7 @@ Also from the session monitor: 29 of Android's 32 processes in use, with three `
 # Built APK
 
 `Boddy-studio-fix-patched.apk` — the uploaded `Boddy-studio-fix.apk` with every patch applied,
-md5 `8853df147bf0ab04a42ad9b48ef5dc83`. 601 entries: five assets replaced (`studio`,
+md5 `460290b9d4ff4d2afd8b241a1a574fa5`. 601 entries: five assets replaced (`studio`,
 `roblox-studio-mcp`, `studio-app.sh`, `studio-mode.sh`, `make-launchers.sh`) and one added
 (`roblox-publish`).
 

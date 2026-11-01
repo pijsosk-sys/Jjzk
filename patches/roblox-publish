@@ -28,6 +28,11 @@ UNIVERSE_OF = 'https://apis.roblox.com/universes/v1/places/%s/universe'
 # several places, and publishing to one that is not this one changes a place nobody joins -- the upload
 # succeeds, the dashboard shows it updated, and the game still looks the same.
 GAME_INFO = 'https://games.roblox.com/v1/games?universeIds=%s'
+# Public too: a username resolves to a user id, and a user id lists the experiences they own. Between
+# these three, the only thing a person has to find on the website is the key itself -- no ids typed.
+USERNAME_TO_ID = 'https://users.roblox.com/v1/usernames/users'
+USER_GAMES = 'https://games.roblox.com/v2/users/%s/games?limit=50'
+KEY_PAGE = 'https://create.roblox.com/dashboard/credentials'
 CONFIG = Path(os.getenv('XDG_CONFIG_HOME') or Path.home() / '.config') / 'roblox-publish'
 CREDS = CONFIG / 'credentials'
 TYPES = {'.rbxl': 'application/octet-stream', '.rbxlx': 'application/xml'}
@@ -76,6 +81,108 @@ def warn_if_not_start_place(saved):
           '         The upload will succeed and the game will not change. Run --setup again with the '
           'start place,\n         or move the content there, unless you meant to publish a side place.'
           % (saved['universe_id'], root, saved['place_id']), file=sys.stderr)
+
+
+def get_json(url, data=None):
+    body = json.dumps(data).encode() if data is not None else None
+    headers = {'Content-Type': 'application/json'} if data is not None else {}
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, body, headers), timeout=30) as r:
+            return json.loads(r.read())
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+
+
+def user_id_of(username):
+    found = get_json(USERNAME_TO_ID, {'usernames': [username], 'excludeBannedUsers': False})
+    rows = (found or {}).get('data') or []
+    return rows[0]['id'] if rows else None
+
+
+def experiences_of(user_id):
+    """[(universeId, name)] for everything that user owns. Public, no key."""
+    found = get_json(USER_GAMES % user_id)
+    return [(str(g['id']), g.get('name') or '(unnamed)') for g in ((found or {}).get('data') or []) if g.get('id')]
+
+
+def wizard():
+    """Sets everything up from a username and a key: the ids are looked up, never typed."""
+    print('Setting up publishing. Nothing here is typed in by hand except your name and the key.\n')
+    while True:
+        username = input('Your Roblox username: ').strip()
+        if not username:
+            return 2
+        user_id = user_id_of(username)
+        if user_id:
+            break
+        print('No Roblox user by that name. Try again.\n')
+    games = experiences_of(user_id)
+    if not games:
+        print('That account owns no experiences yet. Make one at create.roblox.com first.', file=sys.stderr)
+        return 1
+    if len(games) == 1:
+        universe_id, name = games[0]
+        print('Found one experience: %s' % name)
+    else:
+        print('\nYour experiences:')
+        for n, (_, name) in enumerate(games, 1):
+            print('  %2d. %s' % (n, name))
+        while True:
+            pick = input('Which one? ').strip()
+            if pick.isdigit() and 1 <= int(pick) <= len(games):
+                universe_id, name = games[int(pick) - 1]
+                break
+            print('Enter a number from the list.')
+    place_id = root_place_of(universe_id)
+    if not place_id:
+        print('Could not find the starting place of that experience.', file=sys.stderr)
+        return 1
+    print('Starting place: %s\n' % place_id)
+    print('Now the one thing only you can get: an API key.')
+    print('  1. open %s' % KEY_PAGE)
+    print('  2. Create API Key (or edit one you have)')
+    print('  3. Access Permissions: add the system "universe-places"')
+    print('  4. turn its toggle on, then add the experience "%s"' % name)
+    print('  5. tick the write operation')
+    print('  6. Security: no IP restriction, No Expiration')
+    print('  7. Save Changes To Key, and copy the key\n')
+    api_key = input('Paste the API key: ').strip()
+    if not api_key:
+        return 2
+    save(api_key, universe_id, place_id)
+    saved = {'api_key': api_key, 'universe_id': universe_id, 'place_id': place_id}
+    code, body = post(saved, b'', 'application/octet-stream', 'Saved')
+    if code in (200, 400):
+        print('\nThe key works. Publish with:  roblox-publish <yourplace.rbxl>')
+        return 0
+    print('\n' + explain(code, body), file=sys.stderr)
+    return 1
+
+
+def updated_at(universe_id):
+    """When Roblox last recorded a change to the experience, as the games API reports it."""
+    found = get_json(GAME_INFO % universe_id)
+    rows = (found or {}).get('data') or []
+    return rows[0].get('updated') if rows else None
+
+
+def confirm_landed(universe_id, before, tries=10, gap=6):
+    """Waits for the experience's updated time to move. A 200 from the publish endpoint says Roblox
+    accepted the file, not that players will get it -- a Saved version, or a place nothing loads,
+    both answer 200 and change nothing. This is the only check that means anything."""
+    if before is None:
+        print('Could not read the experience before publishing, so cannot confirm it changed.')
+        return None
+    for _ in range(tries):
+        time.sleep(gap)
+        now = updated_at(universe_id)
+        if now and now != before:
+            print('Confirmed: the experience changed at %s (was %s).' % (now, before))
+            return True
+    print('Warning: Roblox accepted the upload but the experience still reads %s after %d s.\n'
+          '         Check it is the starting place, and that this was not a --save-only publish.'
+          % (before, tries * gap), file=sys.stderr)
+    return False
 
 
 def place_id_from(text):
@@ -142,11 +249,16 @@ def explain(code, body):
 def main():
     p = argparse.ArgumentParser(description='Publish a place file to Roblox without signing Studio in.')
     p.add_argument('file', nargs='?', help='the .rbxl or .rbxlx saved from Studio')
-    p.add_argument('--setup', action='store_true', help='save the API key, Universe ID and Place ID')
+    p.add_argument('--setup', action='store_true', help='save the API key and the place (one link is enough)')
+    p.add_argument('--wizard', action='store_true',
+                   help='set everything up from your username: the ids are looked up, not typed')
     p.add_argument('--check', action='store_true', help='check the saved key still works')
     p.add_argument('--save-only', action='store_true',
                    help='upload as a saved version: Studio sees it, players keep the live one')
     args = p.parse_args()
+
+    if args.wizard:
+        return wizard()
 
     if args.setup:
         print('Make a key at create.roblox.com/dashboard/credentials (open it in the phone\'s browser).')
@@ -201,15 +313,19 @@ def main():
     version_type = 'Saved' if args.save_only else 'Published'
     print('Uploading %s (%.1f MB) as a %s version of place %s...'
           % (path.name, len(data) / 1e6, version_type.lower(), saved['place_id']))
+    before = None if args.save_only else updated_at(saved['universe_id'])
     code, body = post(saved, data, content_type, version_type)
     if code == 200:
         try:
             number = json.loads(body).get('versionNumber')
         except ValueError:
             number = None
-        print('Done. Version %s is now %s.' % (number if number is not None else '?',
-                                               'saved' if args.save_only else 'live'))
-        return 0
+        print('Roblox accepted it: version %s.' % (number if number is not None else '?'))
+        if args.save_only:
+            print('That was a saved version: Studio will see it, players keep the live one.')
+            return 0
+        print('Checking the experience actually changed...')
+        return 0 if confirm_landed(saved['universe_id'], before) is not False else 1
     print(explain(code, body), file=sys.stderr)
     return 1
 

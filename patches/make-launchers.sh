@@ -45,6 +45,7 @@ launcher opencode "OpenCode" "xfce4-terminal --disable-server --title='OpenCode'
 launcher mcbot "Minecraft Bot" "/opt/boddy/mcbot-app.sh" applications-games
 launcher studio "Roblox Studio (experimental)" "/opt/boddy/studio-app.sh" applications-development
 launcher studio-mode "Roblox Studio + Claude" "bash /opt/boddy/studio-mode.sh" applications-development
+launcher publish "Publish to Roblox" "bash /opt/boddy/publish-app.sh" document-send
 launcher phone-apps "Phone Apps" "/opt/boddy/phone-apps-app.sh" phone
 launcher roblox-tools "Roblox Tools" "/opt/boddy/roblox-tools-app.sh" applications-games
 launcher deepseek "DeepSeek" "firefox-esr https://chat.deepseek.com" firefox-esr
