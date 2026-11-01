@@ -2,7 +2,7 @@
 """Unit tests for the Studio launcher's setup ladder and settings, run on a PC without Wine or Studio: the
 steps that install or run Windows programs are replaced by stand-ins, the decisions are the launcher's own.
 Usage: python3 test_launcher.py /path/to/studio"""
-import os,sys,json,tempfile,unittest
+import os,sys,json,tempfile,time,unittest
 sys.path.insert(0,os.path.dirname(os.path.abspath(__file__)))
 from launcher_module import load
 STUDIO=sys.argv.pop(1) if len(sys.argv)>1 else os.path.join(os.path.dirname(__file__),'..','studio')
@@ -79,6 +79,28 @@ class Box64Speed(unittest.TestCase):
   try:L.main()
   finally:L.try_every_way=orig
   self.assertEqual(seen,[0]);self.assertTrue((L.ROOT/'.choice-v8').exists())
+
+class BackgroundLoad(unittest.TestCase):
+ def setUp(self):reset()
+ def test_firefox_does_not_prefetch(self):
+  p=L.FIREFOX_PREFS
+  self.assertIs(p['network.prefetch-next'],False);self.assertIs(p['network.dns.disablePrefetch'],True)
+  self.assertIs(p['network.predictor.enabled'],False);self.assertEqual(p['network.http.speculative-parallel-limit'],0)
+  self.assertIs(p['browser.urlbar.speculativeConnect.enabled'],False)
+ def test_process_summary(self):
+  import re
+  m=re.fullmatch(r'(\d+) of 32 \((.+)\)',L.process_summary(top=1000))
+  self.assertTrue(m);self.assertGreater(int(m.group(1)),0);self.assertIn('python3',m.group(2))
+ def test_launch_logs_process_counts(self):
+  run=Launch([0]);run.go()
+  self.assertTrue(any(s.startswith('Processes before Studio starts: ') for s in run.said))
+  self.assertTrue(any(s.startswith('Processes at the end: ') and 'most while it ran' in s for s in run.said))
+ def test_monitor_lists_processes_when_their_number_changes(self):
+  import threading
+  stop=threading.Event();path,thread=L.start_monitor(stop);time.sleep(0.5);stop.set();thread.join(5)
+  lines=open(path).read().splitlines()
+  self.assertRegex(lines[2],r'^[0-9:]+ processes=\d+ mem=');self.assertTrue(lines[3].lstrip().startswith('running: '))
+  self.assertGreater(L.MOST_PROCESSES[0],0)
 
 TURNIP_ARCHIVE=os.getenv('BODDY_TEST_TURNIP')  # the downloaded Turnip archive, so no test needs the internet
 class GpuMode(unittest.TestCase):

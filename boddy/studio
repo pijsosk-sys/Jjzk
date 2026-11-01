@@ -540,7 +540,7 @@ def diagnose():
   except urllib.error.HTTPError:say('HTTPS OK: '+url)
   except Exception as e:say('HTTPS FAILED: '+url+'\n'+str(e))
  say('Memory available: %d MB'%mem_available_mb())
- say('Processes: %d (Android stops Boddy above about %d)'%(process_count(),PHANTOM_LIMIT))
+ say('Processes: %s (Android stops Boddy above about %d)'%(process_summary(12),PHANTOM_LIMIT))
  say('Page size: %d bytes%s'%(PAGE_SIZE,'' if PAGE_SIZE==4096 else '  <-- too big; Windows programs need 4096'))
  say('Execmod fix for Wine: '+(execmod_fix() or 'missing  <-- Wine cannot load Windows programs on Android without it'))
  try:features=next((l.split(':',1)[1].split() for l in open('/proc/cpuinfo') if l.startswith('Features')),[])
@@ -673,7 +673,12 @@ FIREFOX_PREFS={
  'browser.sessionstore.resume_from_crash':False,'browser.startup.page':0,'browser.startup.homepage':'about:blank',
  'browser.shell.checkDefaultBrowser':False,'browser.aboutwelcome.enabled':False,
  'datareporting.policy.dataSubmissionEnabled':False,'datareporting.healthreport.uploadEnabled':False,'toolkit.telemetry.enabled':False,
- 'network.protocol-handler.external.roblox-studio-auth':True}
+ 'network.protocol-handler.external.roblox-studio-auth':True,
+ # Only the sign-in page is needed while Studio runs: no fetching of pages, names or connections ahead of time
+ # (link prefetch, DNS prefetch, the network predictor, speculative connections from the address bar).
+ 'network.prefetch-next':False,'network.dns.disablePrefetch':True,'network.predictor.enabled':False,
+ 'network.predictor.enable-prefetch':False,'network.http.speculative-parallel-limit':0,
+ 'browser.urlbar.speculativeConnect.enabled':False,'browser.places.speculativeConnect.enabled':False}
 def browser_env():
  env={k:v for k,v in os.environ.items() if not k.startswith(('WINE','BOX64_','FEX_')) and k not in ('LIBGL_ALWAYS_SOFTWARE','QT_X11_NO_MITSHM','BODDY_NOFILE_SOFT')}
  preload=' '.join(p for p in env.get('LD_PRELOAD','').split() if EXECMOD_LIB_NAME not in p)
@@ -833,6 +838,15 @@ def desktop_background(wine,env):
 PHANTOM_LIMIT=32
 def process_count():
  return sum(1 for n in os.listdir('/proc') if n.isdigit())
+def process_summary(top=8):
+ """'N of 32 (name x count, ...)': how many processes run and which, to see what to close under Android's limit."""
+ names=collections.Counter()
+ for n in os.listdir('/proc'):
+  if not n.isdigit():continue
+  try:names[open('/proc/%s/comm'%n).read().strip() or '?']+=1
+  except OSError:pass
+ total=sum(names.values())
+ return '%d of %d (%s)'%(total,PHANTOM_LIMIT,', '.join('%s x%d'%(k,v) if v>1 else k for k,v in names.most_common(top)))
 def mem_available_mb():
  try:
   with open('/proc/meminfo') as f:
@@ -840,6 +854,7 @@ def mem_available_mb():
     if line.startswith('MemAvailable:'):return int(line.split()[1])//1024
  except OSError:pass
  return -1
+MOST_PROCESSES=[0]  # the most processes the session monitor saw at once
 def start_monitor(stop):
  # Android can stop Boddy without warning (more than 32 processes, or low memory). Boddy then restarts the
  # desktop and this launcher dies with it, so record the state every 15 s; the last line shows what it was.
@@ -853,10 +868,13 @@ def start_monitor(stop):
   with path.open('w') as f:
    f.write('Roblox Studio session monitor. If Boddy restarts, the last line shows the state just before.\n'
     'processes = Linux processes of the Boddy app (Android 12+ stops apps above %d); mem = available memory.\n'%PHANTOM_LIMIT)
-   warned=False
+   warned=False;last=None
    while True:
-    n=process_count()
-    f.write('%s processes=%d mem=%dMB step: %s\n'%(time.strftime('%H:%M:%S'),n,mem_available_mb(),last_said[:120]));f.flush();os.fsync(f.fileno())
+    n=process_count();MOST_PROCESSES[0]=max(MOST_PROCESSES[0],n)
+    f.write('%s processes=%d mem=%dMB step: %s\n'%(time.strftime('%H:%M:%S'),n,mem_available_mb(),last_said[:120]))
+    # Which processes, when their number changed: what to close (or not start) to stay under the limit.
+    if n!=last:f.write('         running: %s\n'%process_summary(12));last=n
+    f.flush();os.fsync(f.fileno())
     if n>=PHANTOM_LIMIT-4 and not warned:
      warned=True
      say('Note: %d Linux processes are running. Fine if Android\'s child process limit is off (Developer options > '
@@ -1010,6 +1028,7 @@ def try_every_way(place):
   say('Studio\'s built-in login does not work here: choose "Login via Browser", sign in in the Firefox window that opens,')
   say('then allow Firefox to open the Roblox Studio sign-in link.')
   restore_display=fit_display();set_window_mode(wine,env,prefix)
+  say('Processes before Studio starts: '+process_summary())
   if process_count()>PHANTOM_LIMIT-12:
    say('Note: %d Linux processes are already running. Fine if Android\'s child process limit is off; with it on, '
     'Android stops Boddy above %d.'%(process_count(),PHANTOM_LIMIT))
@@ -1019,6 +1038,7 @@ def try_every_way(place):
   finally:restore_display()
   ran=time.time()-began
   say('Studio process exited with code %d after %d s'%(code,ran))
+  say('Processes at the end: %s; most while it ran: %d'%(process_summary(),MOST_PROCESSES[0]))
   if not code:DIAGNOSE_FILE.unlink(missing_ok=True);sys.exit(0)
   # Windows started, so this Wine works: a crash once Studio runs comes from how it is run (its CPU
   # features, emulation speed or 3D drawing), so the next start uses the next setup rather than another Wine.
