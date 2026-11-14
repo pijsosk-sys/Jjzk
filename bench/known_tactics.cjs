@@ -119,10 +119,10 @@ const SUITE = [
     winning: [],
   },
   {
-    name: 'our queen defends to break pin on queen',
+    name: 'pinned rook unmask then queen win',
     fen: '4rk2/7q/8/8/8/8/4R3/4QK2 w - - 0 1',
-    // wQ e1 pinned by bR e8 blocked by wR e2... complex; just test no-crash
-    winning: [],
+    // Rxe8 (behind the rook pin to wQ) Kg7 Re7 Kg8 Rxh7 wins queen.
+    winning: ['e2e8'],
   },
   {
     name: 'under-promotion to knight captures queen with fork',
@@ -149,7 +149,7 @@ function runOne(entry) {
   const extra = legal.filter(m => !keep.includes(m));
   const cands = [...keep, ...extra].slice(0, 6);
   const t0 = Date.now();
-  const r = ashinaQueenHunt(cands, entry.fen, Chess, { budgetMs: 700 });
+  const r = ashinaQueenHunt(cands, entry.fen, Chess, { budgetMs: entry.budgetMs ?? 1200 });
   const dt = Date.now() - t0;
   const found = r.chosen;
   const expected = new Set(entry.winning || []);

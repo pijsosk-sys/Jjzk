@@ -66,9 +66,17 @@ function randomPosition(rng) {
   const fen = rows.join('/') + ' ' + turn + ' - - 0 1';
   try {
     const ch = new Chess(fen);
-    // reject if side-to-move has no moves, or king-in-check-and-illegal
-    if (ch.isCheck()) return null;
     if (ch.moves().length === 0) return null;
+    // Reject illegal positions: the side NOT to move must not be in check
+    // (that would mean they left their king in check on the previous move).
+    const parts = fen.split(' ');
+    const flipped = parts.slice();
+    flipped[1] = parts[1] === 'w' ? 'b' : 'w';
+    flipped[3] = '-';
+    try {
+      const other = new Chess(flipped.join(' '));
+      if (other.isCheck()) return null;
+    } catch (_) { return null; }
     return fen;
   } catch (_) { return null; }
 }

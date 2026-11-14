@@ -363,6 +363,36 @@ function search(state, depth, alpha, beta, pvOut) {
   return bestVal;
 }
 
+// Walk TT best-move chain up to `maxLen` plies and append any extra moves
+// found beyond those already in `pv`.
+function extendPvFromTT(ch, pv, maxLen = 16) {
+  const out = pv.slice();
+  const played = [];
+  for (const mv of out) {
+    const did = safeMove(ch, mv);
+    if (!did) break;
+    played.push(true);
+  }
+  while (out.length < maxLen) {
+    // Try depth entries from deepest to shallowest at this position.
+    const fenParts = ch.fen().split(' ');
+    const stem = fenParts[0] + '|' + fenParts[1] + '|' + fenParts[2] + '|' + (fenParts[3] === '-' ? '-' : fenParts[3][0]);
+    let picked = null;
+    for (let d = 16; d >= 1; d--) {
+      const entry = _TT.get(stem + '|' + d);
+      if (entry && entry.bestMove) { picked = entry.bestMove; break; }
+    }
+    if (!picked) break;
+    const did = safeMove(ch, picked);
+    if (!did) break;
+    played.push(true);
+    out.push(picked);
+  }
+  // Restore board.
+  for (let i = 0; i < played.length; i++) ch.undo();
+  return out;
+}
+
 // Drive a single candidate: play it, search deeper by iterative deepening.
 function huntCandidate(fen, firstUci, usColor, ChessCtor, budgetMs, tier) {
   const ch0 = new ChessCtor(fen);
@@ -388,6 +418,12 @@ function huntCandidate(fen, firstUci, usColor, ChessCtor, budgetMs, tier) {
     if (state.aborted) break;
     bestVal = v; bestPv = pv;
     if (v > SWING_CP + Q_VAL / 2) break;  // comfortable win found, no need deeper
+  }
+  // Try to extend PV from the TT if the search returned a short chain.
+  if (bestPv && bestPv.length < 4) {
+    const chExt = new ChessCtor(fen);
+    safeMove(chExt, first);
+    bestPv = extendPvFromTT(chExt, bestPv, 14);
   }
   ch.undo();
   if (!bestPv || bestVal < SWING_CP) return null;
@@ -466,19 +502,29 @@ function validate(fen, lineUci, usColor, ChessCtor) {
 
 // ---------- short-line full-width confirmation ----------
 // Re-run a conservative full-width search from the root with iterative
-// deepening, bailing on time. Keep the last completed depth's score.
+// deepening. Depth 2 is run without a time cap so it always completes;
+// deeper iterations stop on the deadline. Keeps the last completed
+// depth's score. Returns ok iff the best completed depth clears SWING_CP.
 function shortLineConfirm(fen, lineUci, usColor, ChessCtor, budgetMs = 400) {
   const ch = new ChessCtor(fen);
   const firstUci = lineUci[0];
   const first = uciToMove(firstUci);
   if (!safeMove(ch, first)) return { ok: false };
   const state = {
-    ch, usColor, deadline: Date.now() + budgetMs,
+    ch, usColor, deadline: Date.now() + Math.max(budgetMs, 1000), // depth-2 safety cushion
     killers: [], history: {}, aborted: false, plyRoot: 0, tier: 'FULL', ChessCtor,
   };
   let best = -INF;
   let completed = 0;
-  for (let d = 2; d <= 6; d += 2) {
+  // Depth 2 always runs; its deadline is widened.
+  {
+    state.aborted = false;
+    const v = fullWidthSearch(state, 2, -INF, INF);
+    if (!state.aborted) { best = v; completed = 2; }
+  }
+  // Tighter deadline for deeper iterations.
+  state.deadline = Date.now() + budgetMs;
+  for (let d = 4; d <= 6; d += 2) {
     state.aborted = false;
     const v = fullWidthSearch(state, d, -INF, INF);
     if (state.aborted) break;
@@ -566,7 +612,52 @@ function ashinaQueenHunt(moves, fen, ChessCtor, opts = {}) {
   const maxCand = opts.maxCandidates ?? 6;
 
   const start = Date.now();
-  const candidates = moves.slice(0, Math.min(moves.length, maxCand));
+  const rawCandidates = moves.slice(0, Math.min(moves.length, maxCand));
+  // Pre-score: rank candidates by how likely they are to win a queen.
+  // High priority: captures a queen now, promotes capturing queen, direct
+  // queen-attack-move. Medium: big capture, check that was not already
+  // attacking the queen. Low: everything else. Processing high-priority
+  // candidates first means the real winner still gets time when the
+  // raw list buries it.
+  const enemyAttackedBefore = safeIsAttacked(ch, enemyQSq, usColor);
+  const scored = [];
+  for (const uci of rawCandidates) {
+    const m = uciToMove(uci);
+    if (!m) continue;
+    const did = safeMove(ch, m);
+    if (!did) continue;
+    const isCheck = ch.isCheck();
+    const def = ch.turn();
+    const eq = queenSq(ch, def);
+    const us = def === 'w' ? 'b' : 'w';
+    const attacksQNow = eq ? safeIsAttacked(ch, eq, us) : false;
+    ch.undo();
+    let score = 0;
+    const bigCap = did.captured && (PV[did.captured] | 0) >= 300;
+    if (did.captured === 'q') score += 10000;
+    else if (bigCap) score += 2000;
+    if (did.promotion === 'q') score += 2000;
+    if (isCheck) score += 1500;
+    if (!eq) score += 5000; // enemy queen gone (captured by this move)
+    if (attacksQNow && !enemyAttackedBefore) score += 800;
+    if (attacksQNow && enemyAttackedBefore) score += 50; // neutral
+    scored.push({ uci, score });
+  }
+  // Order by score descending (stable within equal score: keep input order).
+  scored.sort((a, b) => b.score - a.score);
+  // Trim to the top candidates by score: keep anything that scored above
+  // zero (i.e. plausibly interesting for the hunt) plus the first few
+  // low-score moves as fallback.
+  let candidates;
+  {
+    const good = scored.filter(s => s.score > 0).map(s => s.uci);
+    const rest = scored.filter(s => s.score === 0).map(s => s.uci).slice(0, 2);
+    candidates = good.length ? good.concat(rest).slice(0, maxCand) : scored.slice(0, maxCand).map(s => s.uci);
+  }
+  if (!candidates.length) {
+    candidates = rawCandidates.slice(0, maxCand);
+  }
+
   let best = null;
   for (let i = 0; i < candidates.length; i++) {
     const uci = candidates[i];
@@ -574,7 +665,7 @@ function ashinaQueenHunt(moves, fen, ChessCtor, opts = {}) {
     const remain = budgetMs - (Date.now() - start);
     // Share the remaining budget among the candidates still to try.
     const left = candidates.length - i;
-    const slice = Math.max(40, Math.floor(remain / left));
+    const slice = Math.max(80, Math.floor(remain / left));
     const r = huntCandidate(fen, uci, usColor, ChessCtor, slice, 'TIER1');
     if (r && (!best || r.score > best.score)) best = r;
   }

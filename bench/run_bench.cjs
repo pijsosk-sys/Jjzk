@@ -6,6 +6,7 @@
 const { Chess } = require('chess.js');
 const { ashinaQueenHunt, ttClear } = require('../maintenance/queen-hunt-core.cjs');
 const { auditMat } = require('./matoracle.cjs');
+const { auditQ } = require('./queen_oracle.cjs');
 const { bestLine } = require('./oracle_tt.cjs');
 const { randomPosition, mulberry32 } = require('./mine_traps.cjs');
 
@@ -61,10 +62,15 @@ function run() {
     times.push(dt);
     if (!r.chosen) {
       huntSkipped++;
-      // Scan the candidates: does the oracle see a win the hunt missed?
+      // Scan the candidates: does the queen-specific oracle see a win the
+      // hunt missed? (any-material misses are outside the hunt's scope.)
       for (const c of cands) {
-        const a = auditMat(fen, c, opts.depth, 300);
-        if (a.ok) { missedWins++; break; }
+        const a = auditQ(fen, c, opts.depth, 300);
+        if (a.ok) {
+          missedWins++;
+          if (falsePosEntries.length < 10) falsePosEntries.push({ kind: 'MISSED_QUEEN', fen, move: c, swing: a.swing });
+          break;
+        }
       }
       continue;
     }
@@ -92,8 +98,8 @@ function run() {
   console.log('missed-wins:', missedWins, '(hunt said no but oracle found a win in cands)');
   console.log('latency ms p50/p90/p99:', pct(0.5), '/', pct(0.9), '/', pct(0.99));
   console.log('total:', total, 'ms');
-  if (falsePos) {
-    console.log('\nfirst false-positive samples:');
+  if (falsePosEntries.length) {
+    console.log('\nsample positions (false pos + missed wins):');
     for (const e of falsePosEntries) console.log('  ', e);
   }
   if (opts.timings) {
