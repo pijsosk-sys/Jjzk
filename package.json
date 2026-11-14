@@ -1,0 +1,23 @@
+{
+  "name": "jjzk",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pijsosk-sys/Jjzk.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/pijsosk-sys/Jjzk/issues"
+  },
+  "homepage": "https://github.com/pijsosk-sys/Jjzk#readme",
+  "dependencies": {
+    "chess.js": "^1.4.0"
+  }
+}

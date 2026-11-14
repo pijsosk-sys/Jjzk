@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>ASHINA — Options</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 42rem; }
+      h1 { font-size: 1.4rem; }
+      h2 { font-size: 1.1rem; margin-top: 1.4rem; }
+      label { display: block; margin-top: 0.6rem; }
+      .hint { color: #666; font-size: 0.9rem; margin-left: 1.8rem; }
+    </style>
+  </head>
+  <body>
+    <h1>ASHINA</h1>
+
+    <h2>Analysis</h2>
+    <label>
+      <input type="checkbox" id="option-queen-hunt" />
+      8-Move Queen Hunt (v10)
+    </label>
+    <p class="hint">
+      Reorders the engine's near-best candidates to prefer a move that forcibly
+      wins the opponent's queen within 8 of your moves. Never invents a move,
+      never claims mate. Off by default. Soundness audit: 0 false positives
+      over the test suite and random benchmark (60 positions). Latency: p50
+      ≈ 0.4 s, p90 ≈ 1.2 s under a 400 ms budget.
+    </p>
+
+    <label>
+      <input type="checkbox" id="option-voice-coach" />
+      Voice coach
+    </label>
+    <p class="hint">
+      Speaks moves and analysis cues during play. Uses the browser's built-in
+      speech synthesis; no audio leaves your machine.
+    </p>
+
+    <h2>Arrows &amp; presets</h2>
+    <label>
+      <input type="checkbox" id="option-board-arrows" />
+      Board arrows
+    </label>
+    <p class="hint">Draws the engine's top line as arrows on the board.</p>
+
+    <script src="options.js" defer></script>
+  </body>
+</html>

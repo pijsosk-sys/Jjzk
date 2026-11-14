@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "ASHINA",
+  "version": "10.0.0",
+  "description": "Voice coach, analysis presets, and the 8-Move Queen Hunt for chess.com and lichess.org.",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://www.chess.com/*",
+    "https://lichess.org/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://www.chess.com/*"],
+      "js": ["js/chess-lib.js", "js/Ashina.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://lichess.org/*"],
+      "js": ["js/chess-lib.js", "js/lichess.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_ui": {
+    "page": "html/options.html",
+    "open_in_tab": true
+  }
+}

@@ -1,0 +1,7 @@
+node_modules/
+bench/bench_result.json
+bench/known_tactics_result.json
+bench/traps.json
+scratchpad/
+.DS_Store
+*.log
