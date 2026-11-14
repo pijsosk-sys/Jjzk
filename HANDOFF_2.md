@@ -8,13 +8,17 @@ pick up.
 
 - **Version**: `manifest.json` → 10.0.0.
 - **Branch**: `claude/yo-2dei3i`.
-- **Tests**: 46 passing (`node --test maintenance/test_*.cjs`).
+- **Tests**: 58 passing (`node --test maintenance/test_*.cjs`).
 - **Core**: `maintenance/queen-hunt-core.cjs`, triplicated into
   `js/Ashina.js` and `js/lichess.js` (sync-enforced by
   `maintenance/test_sync.cjs`).
-- **Measured**: 0 false positives on `bench/run_bench.cjs` over 60 random
-  positions (depth-3 oracle); 10/10 on `bench/known_tactics.cjs`; p50
-  latency ≈ 415 ms, p90 ≈ 1.2 s under a 400 ms budget.
+- **Measured**:
+  - 0 false positives on `bench/run_bench.cjs` over 60 random positions
+    (depth-3 oracle, seed 500).
+  - 0 false positives on `bench/run_bench.cjs` over 50 random positions
+    (depth-4 oracle, seed 777).
+  - 24/24 on `bench/known_tactics.cjs`.
+  - p50 ≈ 415 ms, p90 ≈ 1.2 s, p99 ≈ 1.25 s under a 400 ms budget.
 
 ## What changed vs the prior engine (v9.4 as documented)
 

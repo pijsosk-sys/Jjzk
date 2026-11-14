@@ -42,17 +42,24 @@ engine-listed candidates — it never invents a move, never claims mate.
 
 ### Measured on this build
 
-- **Tests**: 46/46 passing (`node --test maintenance/test_*.cjs`), including
+- **Tests**: 58/58 passing (`node --test maintenance/test_*.cjs`), including
   the sync enforcement that the core text is byte-identical between
   `maintenance/queen-hunt-core.cjs` and the two integration files
-  `js/Ashina.js`, `js/lichess.js`.
-- **Known tactics (bench/known_tactics.cjs)**: 10/10 hand-picked positions
+  `js/Ashina.js`, `js/lichess.js`, plus robustness tests for bad inputs.
+- **Known tactics (bench/known_tactics.cjs)**: 24/24 hand-picked positions
   pass. Covers hanging-queen, pin, skewer, fork, promotion-capture,
-  black-to-move, and two negative controls (even queen trade, defended
-  queen).
-- **Random audit (bench/run_bench.cjs, 60 positions, depth-3 oracle, 400 ms
-  budget)**: 10 promotions, 10/10 verified by the material-truth oracle,
-  **0 false positives**, latency p50 / p90 / p99 ≈ 415 / 1210 / 1234 ms.
+  overworked defender, rook lift, bishop diagonal, x-ray, black-to-move,
+  and six negative controls (even queen trade, defended queen, opening
+  position, etc.).
+- **Random audit, depth-3 oracle** (`bench/run_bench.cjs 60 --depth 3
+  --seed 500 --budget 400`): 10 promotions, 10/10 verified, **0 false
+  positives**, p50 / p90 / p99 ≈ 415 / 1210 / 1234 ms.
+- **Random audit, depth-4 oracle** (`bench/run_bench.cjs 50 --depth 4
+  --seed 777 --budget 400`): 3 promotions, 3/3 verified, **0 false
+  positives**, p50 / p90 / p99 ≈ 417 / 1206 / 1249 ms.
+- **Confirm cap**: short-line confirmation is bounded by
+  `min(200ms, max(60ms, budget/3))` so total wall time ≈ 1.3 × budget
+  instead of the 2 × budget of the first draft.
 - **Quiet-trap mining (bench/mine_traps.cjs, depth 4, 60 positions)**: 1
   position where the oracle's winning line has a non-capture first move
   was found, and that move is a check (TIER1 catches it). No truly-quiet

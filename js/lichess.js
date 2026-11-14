@@ -618,7 +618,8 @@ function ashinaQueenHunt(moves, fen, ChessCtor, opts = {}) {
   if (!v.ok) return { moves, meta: { tension, skip: 'validate:' + v.why } };
 
   if (best.lineUci.length < 6) {
-    const conf = shortLineConfirm(fen, best.lineUci, usColor, ChessCtor, Math.min(400, budgetMs));
+    const confirmBudget = Math.min(200, Math.max(60, Math.floor(budgetMs / 3)));
+    const conf = shortLineConfirm(fen, best.lineUci, usColor, ChessCtor, confirmBudget);
     if (!conf.ok) return { moves, meta: { tension, skip: 'short-confirm' } };
   }
 

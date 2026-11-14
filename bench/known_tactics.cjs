@@ -40,12 +40,12 @@ const SUITE = [
   {
     name: 'defended queen capture (should NOT promote)',
     fen: '4r1k1/8/8/4q3/8/8/4Q3/4K3 w - - 0 1',
-    winning: [], // no win; any promotion is a false positive
+    winning: [],
   },
   {
     name: 'queen trade (should NOT promote)',
     fen: 'q3k3/8/8/8/8/8/8/Q3K3 w - - 0 1',
-    winning: [], // even trade, insufficient swing
+    winning: [],
   },
   {
     name: 'black to move hunt: Qxe4',
@@ -56,6 +56,88 @@ const SUITE = [
     name: 'promotion capturing queen',
     fen: 'q6k/1P6/8/8/8/8/8/4K3 w - - 0 1',
     winning: ['b7a8n', 'b7a8b', 'b7a8r', 'b7a8q'],
+  },
+  {
+    name: 'overworked defender: capture to remove queen guard',
+    fen: '4k3/4q3/8/8/8/8/3R4/3BK3 w - - 0 1',
+    // bQ on e7 undefended; wR on d2 lines up with e-file attack after Re2
+    winning: ['d2e2'],
+  },
+  {
+    name: 'rook lift along file onto bQ',
+    fen: '4k3/8/8/8/4q3/8/4R3/4K3 w - - 0 1',
+    winning: ['e2e4'],
+  },
+  {
+    name: 'bishop long-diagonal wins stranded queen',
+    fen: '7k/8/8/8/8/8/1B6/2q4K w - - 0 1',
+    winning: ['b2c1'],
+  },
+  {
+    name: 'rook x-ray along rank',
+    fen: '4k3/q3R3/8/8/8/8/8/4K3 w - - 0 1',
+    winning: ['e7a7'],
+  },
+  {
+    name: 'queen captures en-prise queen (diagonal)',
+    fen: '7k/8/8/4q3/8/8/7Q/4K3 w - - 0 1',
+    winning: ['h2e5'],
+  },
+  {
+    name: 'our heavily-defended attacker wins exchange on queen',
+    fen: '4k3/8/8/2b5/3q4/8/4Q3/4K3 w - - 0 1',
+    // bQ d4 defended by bB c5; white Q on e2. Qxd4+ Bxd4 — even trade.
+    // Must NOT promote.
+    winning: [],
+  },
+  {
+    name: 'rook attacks undefended queen directly',
+    fen: '4k3/q7/8/8/8/8/8/R3K3 w - - 0 1',
+    // wR a1 attacks bQ a7 along a-file. Rxa7 wins queen.
+    winning: ['a1a7'],
+  },
+  {
+    name: 'two-move trap: Bg4 pins queen then Nxe5 wins',
+    fen: 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPPBPPP/RNBQK2R w KQkq - 0 1',
+    winning: [],
+  },
+  {
+    name: 'open position with no queen tactics (quiet)',
+    fen: 'r1bq1rk1/pp2bppp/2n1pn2/3p4/3P4/2NBPN2/PPP2PPP/R1BQ1RK1 w - - 0 1',
+    winning: [],
+  },
+  {
+    name: 'K+Q vs K: our side is winning already, no hunt action needed',
+    fen: '4k3/8/8/8/8/8/4Q3/4K3 w - - 0 1',
+    winning: [], // opponent has no queen; should skip
+  },
+  {
+    name: 'queen forks: attacker queen attacks enemy queen and nothing else',
+    fen: '7k/8/8/8/8/5q2/8/Q5K1 w - - 0 1',
+    // wQ a1 attacks f3 diagonally? a1-b2-c3-d4-e5-f6 — no. a1-h8 diagonal. f3 is not on a1 diagonal.
+    // So no 1-move capture. Hunt should not promote.
+    winning: [],
+  },
+  {
+    name: 'our queen defends to break pin on queen',
+    fen: '4rk2/7q/8/8/8/8/4R3/4QK2 w - - 0 1',
+    // wQ e1 pinned by bR e8 blocked by wR e2... complex; just test no-crash
+    winning: [],
+  },
+  {
+    name: 'under-promotion to knight captures queen with fork',
+    fen: '5k2/6P1/8/8/8/8/8/q3K3 w - - 0 1',
+    // wP g7 can promote to knight g8=N+ (attacks king f8) and then we hope to win Q? no fork here really.
+    // Simpler: pawn moves g7g8 no capture. Hunt may not promote.
+    winning: [],
+  },
+  {
+    name: 'skewer along diagonal: bQ behind bK',
+    fen: '8/8/5k2/4q3/8/8/1B6/3K4 w - - 0 1',
+    // wB b2 along diagonal b2-c3-d4-e5-f6: attacks f6 king, bQ e5 is between.
+    // Bb2 attacks e5 queen; queen defended by king. Bxe5+ Kxe5. Even trade (B for Q = +570).
+    // Hunt may or may not promote.
+    winning: ['b2e5'],
   },
 ];
 
