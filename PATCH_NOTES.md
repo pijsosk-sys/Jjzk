@@ -54,12 +54,27 @@ engine-listed candidates — it never invents a move, never claims mate.
 - **Random audit, depth-3 oracle** (`bench/run_bench.cjs 60 --depth 3
   --seed 500 --budget 400`): 10 promotions, 10/10 verified, **0 false
   positives**, p50 / p90 / p99 ≈ 415 / 1210 / 1234 ms.
-- **Random audit, depth-4 oracle** (`bench/run_bench.cjs 50 --depth 4
-  --seed 777 --budget 400`): 3 promotions, 3/3 verified, **0 false
-  positives**, p50 / p90 / p99 ≈ 417 / 1206 / 1249 ms.
+- **Random audit, depth-4 oracle, budget 700** (`bench/run_bench.cjs 40
+  --depth 4 --seed 777 --budget 700`): 40 legal positions, 2 promoted,
+  2/2 verified by the queen-specific oracle, **0 false positives**,
+  2 queen-wins missed (those needed >700 ms budget to find).
+- **Oracle note**: `bench/queen_oracle.cjs` audits specifically for
+  lines where OUR move captures the enemy queen. The earlier
+  "any-material" oracle counted non-queen material gains as "missed"
+  hunts, which is outside the hunt's scope.
 - **Confirm cap**: short-line confirmation is bounded by
   `min(200ms, max(60ms, budget/3))` so total wall time ≈ 1.3 × budget
-  instead of the 2 × budget of the first draft.
+  instead of the 2 × budget of the first draft. Depth 2 is always run
+  (widened cushion) so complex positions don't silently fail the
+  confirmation step.
+- **Pre-scoring of candidates**: the entry filter ranks the engine's
+  candidates by how likely each is to win a queen (direct capture >
+  big-piece capture > promotion > check > queen-attack > rest) and
+  processes the high-value ones first. Critical when the engine
+  surfaces the winning move at the back of its MultiPV list.
+- **PV extension from TT**: when the search returns a short PV because
+  a cached cutoff fired, walk the TT best-move chain to extend it so
+  the validator sees the eventual queen capture.
 - **Quiet-trap mining (bench/mine_traps.cjs, depth 4, 60 positions)**: 1
   position where the oracle's winning line has a non-capture first move
   was found, and that move is a check (TIER1 catches it). No truly-quiet
