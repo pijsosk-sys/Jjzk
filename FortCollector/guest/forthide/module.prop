@@ -1,0 +1,6 @@
+id=forthide
+name=Fort Identity (S24 props)
+version=v1.0
+versionCode=1
+author=fc
+description=Spoofs device identity props to a certified S24 Ultra for in-guest use. Leave ro.build.fingerprint to PlayIntegrityFix. Pair with Zygisk DenyList+Shamiko.
