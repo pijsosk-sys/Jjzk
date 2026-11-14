@@ -608,8 +608,13 @@ function ashinaQueenHunt(moves, fen, ChessCtor, opts = {}) {
   }
 
   const tension = classifyTension(ch, moves, enemyQSq, usColor, ChessCtor);
-  const budgetMs = opts.budgetMs ?? (tension === 'HIGH' ? 700 : tension === 'MED' ? 300 : 140);
-  const maxCand = opts.maxCandidates ?? 6;
+  let budgetMs = opts.budgetMs ?? (tension === 'HIGH' ? 700 : tension === 'MED' ? 300 : 140);
+  // Clamp to sane bounds — defensive against caller bugs.
+  if (typeof budgetMs !== 'number' || !Number.isFinite(budgetMs) || budgetMs < 0) budgetMs = 300;
+  if (budgetMs > 5000) budgetMs = 5000;
+  let maxCand = opts.maxCandidates ?? 6;
+  if (typeof maxCand !== 'number' || !Number.isFinite(maxCand) || maxCand < 1) maxCand = 6;
+  if (maxCand > 20) maxCand = 20;
 
   const start = Date.now();
   const rawCandidates = moves.slice(0, Math.min(moves.length, maxCand));
