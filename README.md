@@ -13,8 +13,9 @@ and when it has no confident win it returns the input unchanged.
 - `maintenance/queen-hunt-core.cjs` — the selector. Single source of truth.
 - `maintenance/sync_core.cjs` — propagates the core body into the two
   integration files.
-- `maintenance/test_*.cjs` — 48 tests (core API, tactics, edge cases,
-  soundness, integration, regression, sync enforcement).
+- `maintenance/test_*.cjs` — 66 tests (core API, tactics, edge cases,
+  soundness, integration, regression, sync enforcement, robustness,
+  game replay, panic).
 - `bench/` — oracles (`matoracle.cjs`, `oracle.cjs`, `oracle_tt.cjs`),
   the known-tactics suite, the random auditor, the trap miner.
 - `js/Ashina.js`, `js/lichess.js` — content-script skeletons. Contain the
@@ -28,8 +29,8 @@ and when it has no confident win it returns the input unchanged.
 
 ```bash
 npm install                                 # chess.js dev dep
-node --test maintenance/test_*.cjs          # 48 must stay green
-node bench/known_tactics.cjs                # 10/10 hand-picked tactics
+node --test maintenance/test_*.cjs          # 66 must stay green
+node bench/known_tactics.cjs                # 24/24 hand-picked tactics
 node bench/run_bench.cjs 60 --depth 3 --seed 500   # fp must be 0
 node maintenance/sync_core.cjs              # propagate core to js/*.js
 ```

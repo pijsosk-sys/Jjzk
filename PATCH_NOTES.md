@@ -42,15 +42,16 @@ engine-listed candidates — it never invents a move, never claims mate.
 
 ### Measured on this build
 
-- **Tests**: 58/58 passing (`node --test maintenance/test_*.cjs`), including
-  the sync enforcement that the core text is byte-identical between
+- **Tests**: 66/66 passing (`node --test maintenance/test_*.cjs`), including
+  sync enforcement (the core text is byte-identical between
   `maintenance/queen-hunt-core.cjs` and the two integration files
-  `js/Ashina.js`, `js/lichess.js`, plus robustness tests for bad inputs.
+  `js/Ashina.js`, `js/lichess.js`), robustness and panic tests for bad
+  inputs, and a game-replay walkthrough of the Opera Game (1858).
 - **Known tactics (bench/known_tactics.cjs)**: 24/24 hand-picked positions
   pass. Covers hanging-queen, pin, skewer, fork, promotion-capture,
   overworked defender, rook lift, bishop diagonal, x-ray, black-to-move,
-  and six negative controls (even queen trade, defended queen, opening
-  position, etc.).
+  pinned-rook unmask, and six negative controls (even queen trade,
+  defended queen, opening position, etc.).
 - **Random audit, depth-3 oracle** (`bench/run_bench.cjs 60 --depth 3
   --seed 500 --budget 400`): 10 promotions, 10/10 verified, **0 false
   positives**, p50 / p90 / p99 ≈ 415 / 1210 / 1234 ms.

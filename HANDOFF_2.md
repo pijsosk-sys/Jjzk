@@ -8,7 +8,9 @@ pick up.
 
 - **Version**: `manifest.json` → 10.0.0.
 - **Branch**: `claude/yo-2dei3i`.
-- **Tests**: 58 passing (`node --test maintenance/test_*.cjs`).
+- **Tests**: 66 passing (`node --test maintenance/test_*.cjs`).
+  Covers core API, tactics, edge cases, soundness, integration,
+  regression, sync enforcement, robustness, game replay, and panic.
 - **Core**: `maintenance/queen-hunt-core.cjs`, triplicated into
   `js/Ashina.js` and `js/lichess.js` (sync-enforced by
   `maintenance/test_sync.cjs`).
@@ -17,8 +19,11 @@ pick up.
     (depth-3 oracle, seed 500).
   - 0 false positives on `bench/run_bench.cjs` over 50 random positions
     (depth-4 oracle, seed 777).
-  - 24/24 on `bench/known_tactics.cjs`.
-  - p50 ≈ 415 ms, p90 ≈ 1.2 s, p99 ≈ 1.25 s under a 400 ms budget.
+  - 24/24 on `bench/known_tactics.cjs` (1200 ms per position).
+  - p50 ≈ 415 ms, p90 ≈ 1.2 s, p99 ≈ 1.25 s under a 400 ms hunt budget.
+  - At budget 700 ms the random bench reports 2 promoted / 2 verified
+    out of 40 legal positions, still 0 false positives, and the two
+    remaining missed queen-wins each need > 700 ms to resolve.
 
 ## What changed vs the prior engine (v9.4 as documented)
 
@@ -67,9 +72,10 @@ See `IMPROVEMENT_PLAN.md` for the full list. The near-term items:
 ## Run the suite before any change
 
 ```
-node --test maintenance/test_*.cjs            # 46 must stay green
-node bench/known_tactics.cjs                  # 10/10
+node --test maintenance/test_*.cjs            # 66 must stay green
+node bench/known_tactics.cjs                  # 24/24
 node bench/run_bench.cjs 60 --depth 3 --budget 400 --seed 500   # fp=0
+node bench/run_bench.cjs 40 --depth 4 --budget 700 --seed 777   # fp=0
 node bench/mine_traps.cjs 100 --depth 4       # a trap density read
 ```
 
