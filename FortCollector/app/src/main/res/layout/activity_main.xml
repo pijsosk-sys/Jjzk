@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:padding="24dp">
+
+    <TextView
+        android:id="@+id/status"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="idle"
+        android:textSize="18sp"
+        android:layout_marginBottom="24dp" />
+
+    <EditText
+        android:id="@+id/sinkUrl"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="ws://10.0.2.2:8765"
+        android:text="ws://10.0.2.2:8765"
+        android:inputType="textUri"
+        android:layout_marginBottom="16dp" />
+
+    <Button
+        android:id="@+id/startBtn"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="START CAPTURE" />
+
+    <Button
+        android:id="@+id/stopBtn"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="STOP"
+        android:layout_marginTop="8dp" />
+</LinearLayout>
