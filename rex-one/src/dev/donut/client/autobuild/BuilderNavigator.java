@@ -30,11 +30,13 @@ public final class BuilderNavigator {
    private BuilderPathfinder.Route route = new BuilderPathfinder.Route(java.util.List.of(), Set.of(), false);
    private int index;
    private int stalled;
+   private int sameStep;
    private Vec3d lastPosition;
    private Object key;
    private BlockPos scaffold;
    private final Set<BuilderPathfinder.Cell> rejectedGoals = new HashSet<>();
    private final Map<BuilderPathfinder.Cell, Boolean> goalCache = new HashMap<>();
+   private final Set<BlockPos> bannedScaffolds = new HashSet<>();
 
    public void hold(MinecraftClient client, boolean sneak) {
       if (client.player != null) {
@@ -74,6 +76,7 @@ public final class BuilderNavigator {
       this.route = new BuilderPathfinder.Route(java.util.List.of(), Set.of(), false);
       this.index = 0;
       this.stalled = 0;
+      this.sameStep = 0;
       this.lastPosition = null;
       this.scaffold = null;
       this.goalCache.clear();
@@ -83,6 +86,7 @@ public final class BuilderNavigator {
       this.release();
       this.key = null;
       this.rejectedGoals.clear();
+      this.bannedScaffolds.clear();
    }
 
    public void rejectCurrent(MinecraftClient client) {
@@ -91,6 +95,17 @@ public final class BuilderNavigator {
       }
 
       this.replan();
+   }
+
+   /** The scaffold block asked for could not be placed: plan a route that does not need it. */
+   public void banScaffold(BlockPos floor) {
+      this.bannedScaffolds.add(floor.toImmutable());
+      this.replan();
+   }
+
+   public String describe() {
+      return "route " + this.index + "/" + this.route.cells().size() + " next=" + (this.index < this.route.cells().size() ? this.route.cells().get(this.index) : null)
+         + " scaffolds=" + this.route.scaffolds() + " stalled=" + this.stalled + " input fwd=" + this.steering.forward + " jump=" + this.steering.jump;
    }
 
    public int routeLength() {
@@ -121,6 +136,7 @@ public final class BuilderNavigator {
       if (!key.equals(this.key)) {
          this.key = key;
          this.rejectedGoals.clear();
+         this.bannedScaffolds.clear();
          this.replan();
       }
 
@@ -153,7 +169,8 @@ public final class BuilderNavigator {
 
             @Override
             public boolean scaffoldable(BuilderPathfinder.Cell from, BuilderPathfinder.Cell next) {
-               return this.headroom(next) && scaffoldAt.test(pos(next).down(), from);
+               BlockPos floor = pos(next).down();
+               return !BuilderNavigator.this.bannedScaffolds.contains(floor) && this.headroom(next) && scaffoldAt.test(floor, from);
             }
          };
          this.route = BuilderPathfinder.find(feet, cell(near), terrain, accept, 9000, 96);
@@ -177,6 +194,7 @@ public final class BuilderNavigator {
       double flat = (at.x - aim.x) * (at.x - aim.x) + (at.z - aim.z) * (at.z - aim.z);
       if (flat < 0.09 && Math.abs(at.y - aim.y) < 0.6) {
          this.index++;
+         this.sameStep = 0;
          if (this.index >= this.route.cells().size()) {
             this.replan();
             this.steering.forward = false;
@@ -186,6 +204,16 @@ public final class BuilderNavigator {
 
          next = this.route.cells().get(this.index);
          aim = new Vec3d(next.x() + 0.5, next.y(), next.z() + 0.5);
+      }
+
+      // The world changes under a planned route (we are the ones changing it): check the next step still exists.
+      boolean needsFloor = this.route.scaffolds().contains(next) && !solidFloor(client, pos(next).down());
+      if (!needsFloor && (!solidFloor(client, pos(next).down()) || !bodyFits(client, next)) || ++this.sameStep > 80) {
+         this.replan();
+         this.steering.forward = false;
+         this.steering.jump = false;
+         this.steering.tick();
+         return BuilderNavigator.Result.MOVING;
       }
 
       if (this.route.scaffolds().contains(next) && !solidFloor(client, pos(next).down())) {

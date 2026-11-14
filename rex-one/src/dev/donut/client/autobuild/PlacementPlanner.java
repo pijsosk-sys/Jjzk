@@ -376,6 +376,32 @@ public final class PlacementPlanner {
       return null;
    }
 
+   /** A visible face of the block at {@code pos}, for breaking it. */
+   public static PlacementPlanner.Plan planBreak(MinecraftClient client, BlockPos pos, Vec3d eye) {
+      if (client.world == null || client.player == null) {
+         return null;
+      }
+
+      BlockState state = client.world.getBlockState(pos);
+      List<BlockHitResult> hits = new ArrayList<>();
+      for (Direction face : Direction.values()) {
+         addFace(hits, pos, face, state, client);
+      }
+
+      double reach = client.player.getBlockInteractionRange() - 0.3;
+      for (BlockHitResult sample : hits) {
+         BlockHitResult hit = eye.squaredDistanceTo(sample.getPos()) <= reach * reach ? sight(client, eye, sample) : null;
+         if (hit != null) {
+            Vec3d delta = hit.getPos().subtract(eye);
+            float yaw = (float)Math.toDegrees(Math.atan2(-delta.x, delta.z));
+            float pitch = (float)Math.toDegrees(Math.atan2(-delta.y, Math.hypot(delta.x, delta.z)));
+            return new PlacementPlanner.Plan(hit, Blocks.AIR.getDefaultState(), yaw, pitch, false, false, false, true);
+         }
+      }
+
+      return null;
+   }
+
    private static boolean visible(MinecraftClient client, Vec3d eye, BlockHitResult hit) {
       return sight(client, eye, hit) != null;
    }

@@ -115,7 +115,15 @@ public final class AutoBuilderController {
    private boolean scanned;
    private boolean wantSneak;
    private String lastFailure = "";
+   private final Map<BlockPos, Integer> scoopedAt = new HashMap<>();
+   private boolean brokeThisTick;
+   private int idleTicks;
+   private int scoopCheckTick = -1;
+   private boolean scoopInReach;
    private int turnTick = -100;
+   private int steadyTicks;
+   private boolean breaking;
+   private int lastScoopTick = -1000;
    private float previousSentYaw = Float.NaN;
    private float previousSentPitch = Float.NaN;
    private int placedTotal;
@@ -222,7 +230,8 @@ public final class AutoBuilderController {
 
          BlockPos pos = this.transform.apply(block.pos());
          BlockState state = this.transform.apply(block.state());
-         int phase = isWater(state) ? 1 : (isWaterPlant(state) ? 2 : 0);
+         // Redstone dust goes in last so that nothing fires while the layer's water is still being poured.
+         int phase = isWater(state) ? 1 : (isWaterPlant(state) ? 2 : (state.isOf(Blocks.REDSTONE_WIRE) ? 3 : 0));
          values.add(new AutoBuilderController.Target(pos, state, values.size(), false, pos.getY() * 4 + phase));
       }
 
@@ -266,6 +275,7 @@ public final class AutoBuilderController {
       this.deferredRetries = 0;
       this.lastFailure = "";
       this.wantSneak = false;
+      this.scoopedAt.clear();
    }
 
    public void start() {
@@ -309,6 +319,12 @@ public final class AutoBuilderController {
          this.goal = null;
          this.navigator.release();
          this.restoreSlot();
+         MinecraftClient client = MinecraftClient.getInstance();
+         if (this.breaking && client.interactionManager != null) {
+            client.interactionManager.cancelBlockBreaking();
+         }
+
+         this.breaking = false;
       }
    }
 
@@ -455,11 +471,12 @@ public final class AutoBuilderController {
          return;
       }
 
-      // A rotation counts as known to the server once two movement updates in a row carried it.
+      // A rotation counts as known to the server once it has gone unchanged through three movement updates.
       BuilderLocalPlayerAccessor sentRotation = (BuilderLocalPlayerAccessor)client.player;
       float sentYaw = sentRotation.donut$lastSentYaw();
       float sentPitch = sentRotation.donut$lastSentPitch();
-      boolean steady = sentYaw == this.previousSentYaw && sentPitch == this.previousSentPitch;
+      this.steadyTicks = sentYaw == this.previousSentYaw && sentPitch == this.previousSentPitch ? this.steadyTicks + 1 : 0;
+      boolean steady = this.steadyTicks >= 2;
       PlacementPlanner.settledRotation(steady ? sentYaw : null, steady ? sentPitch : null);
       this.previousSentYaw = sentYaw;
       this.previousSentPitch = sentPitch;
@@ -511,10 +528,26 @@ public final class AutoBuilderController {
          return;
       }
 
-      AutoBuilderController.Outcome outcome = this.placeNearby(client);
+      AutoBuilderController.Outcome outcome = AutoBuilderController.Outcome.NONE;
+      if (this.budget > 0 && this.tick - this.lastScoopTick >= 8 && !CreativeBuildMode.canFetch(client) && this.hasItem(client, Items.BUCKET)) {
+         // Keep the buckets full whenever water that renews itself is within reach.
+         outcome = this.refill(client, false);
+      }
+
+      if (outcome == AutoBuilderController.Outcome.NONE) {
+         outcome = this.placeNearby(client);
+      }
+
       if (!this.isRunning()) {
          return;
       }
+
+      if (this.breaking && !this.brokeThisTick) {
+         client.interactionManager.cancelBlockBreaking();
+         this.breaking = false;
+      }
+
+      this.brokeThisTick = false;
 
       if (outcome == AutoBuilderController.Outcome.PLACED || outcome == AutoBuilderController.Outcome.BUSY) {
          this.navigator.hold(client, this.wantSneak);
@@ -730,7 +763,7 @@ public final class AutoBuilderController {
 
    /**
     * What may be worked on. Layers are finished bottom-up; within a layer blocks come first (order 4y),
-    * then water (4y+1), then water plants (4y+2). While a layer has only blocks left, the blocks of the
+    * then water (4y+1), then water plants (4y+2), then redstone dust (4y+3). While a layer has only blocks left, the blocks of the
     * layer above may be started too, and more layers open up when nothing below can be reached.
     */
    private boolean eligible(AutoBuilderController.Target target) {
@@ -755,7 +788,7 @@ public final class AutoBuilderController {
       if (this.widen == 0) {
          // The layer above only once this layer has no water or plants still to come.
          AutoBuilderController.Target later = this.work.ceiling(new AutoBuilderController.Target(BlockPos.ORIGIN, null, -1, false, lowest + 1));
-         return later == null || later.order > lowest + 2;
+         return later == null || later.order > lowest + 3;
       }
 
       return true;
@@ -818,6 +851,11 @@ public final class AutoBuilderController {
          return AutoBuilderController.Kind.LATER;
       }
 
+      if ((isWater(desired) || isWaterPlant(desired)) && this.tick - this.scoopedAt.getOrDefault(target.pos, -1000) < 40) {
+         // We just took a bucket from here; the source flows back by itself.
+         return AutoBuilderController.Kind.LATER;
+      }
+
       if (isWater(desired)) {
          if (desired.isOf(Blocks.LAVA)) {
             return AutoBuilderController.Kind.MANUAL;
@@ -857,7 +895,8 @@ public final class AutoBuilderController {
 
       boolean configuring = PlacementPlanner.needsConfiguration(desired, actual);
       if (!PlacementPlanner.canAdd(desired, actual) && !configuring) {
-         return AutoBuilderController.Kind.MANUAL;
+         boolean ours = desired.getBlock() == actual.getBlock() && actual.getHardness(client.world, target.pos) >= 0.0F && !actual.hasBlockEntity();
+         return ours ? AutoBuilderController.Kind.REPAIR : AutoBuilderController.Kind.MANUAL;
       }
 
       Item item = MaterialTracker.requirement(desired).item();
@@ -871,6 +910,14 @@ public final class AutoBuilderController {
 
       if (!desired.canPlaceAt(client.world, target.pos) || !hasNeighborSupport(client, target.pos)) {
          return AutoBuilderController.Kind.LATER;
+      }
+
+      if (desired.isOf(Blocks.HOPPER) && desired.get(Properties.HOPPER_FACING).getAxis().isHorizontal()) {
+         // A sideways hopper is placed by clicking the block it feeds, so that block comes first.
+         BlockPos fed = target.pos.offset(desired.get(Properties.HOPPER_FACING));
+         if (client.world.getBlockState(fed).isReplaceable()) {
+            return AutoBuilderController.Kind.LATER;
+         }
       }
 
       if (desired.getBlock() instanceof FallingBlock && client.world.getBlockState(target.pos.down()).isReplaceable()) {
@@ -964,9 +1011,25 @@ public final class AutoBuilderController {
          return AutoBuilderController.Outcome.NONE;
       }
 
+      // Water goes next to water already poured: three sources in a row make one that refills the bucket for ever.
+      Map<AutoBuilderController.Target, Integer> wet = new HashMap<>();
+      int bestWet = 0;
+      for (AutoBuilderController.Target target : near) {
+         if ((target.order & 3) != 0) {
+            int score = this.waterScore(client, target.pos);
+            wet.put(target, score);
+            bestWet = Math.max(bestWet, score);
+         }
+      }
+
+      // The last full bucket is only poured where it will leave a source to refill from.
+      boolean lastBucket = !CreativeBuildMode.canFetch(client) && this.countItem(client, Items.WATER_BUCKET) == 1;
+      int needWet = lastBucket && bestWet >= 2 ? 2 : 0;
+
       near.sort(
          Comparator.<AutoBuilderController.Target>comparingInt(t -> t == this.focus ? 0 : 1)
             .thenComparingInt(t -> t.order)
+            .thenComparingInt(t -> -wet.getOrDefault(t, 0))
             .thenComparingDouble(t -> eye.squaredDistanceTo(Vec3d.ofCenter(t.pos)))
       );
       // Finish what is within reach of the current layer before starting on the one above.
@@ -1013,6 +1076,15 @@ public final class AutoBuilderController {
             continue;
          }
 
+         if (kind == AutoBuilderController.Kind.WATER && wet.getOrDefault(target, 0) < needWet) {
+            continue;
+         }
+
+         if (kind == AutoBuilderController.Kind.BLOCK && isWaterPlant(target.state) && this.shouldFillBucketsFirst(client)) {
+            // Planting uses up the water the buckets are refilled from: fill them before it is gone.
+            continue;
+         }
+
          planned++;
          AutoBuilderController.Outcome outcome = this.attempt(client, target, kind, actual);
          if (!this.isRunning()) {
@@ -1047,9 +1119,31 @@ public final class AutoBuilderController {
          return this.pour(client, target);
       }
 
+      if (kind == AutoBuilderController.Kind.REPAIR) {
+         PlacementPlanner.Plan plan = PlacementPlanner.planBreak(client, target.pos, player.getEyePos());
+         if (plan == null) {
+            return AutoBuilderController.Outcome.NONE;
+         }
+
+         player.setYaw(plan.yaw());
+         player.setPitch(plan.pitch());
+         client.interactionManager.updateBlockBreakingProgress(target.pos, plan.hit().getSide());
+         player.swingHand(Hand.MAIN_HAND);
+         this.breaking = true;
+         this.brokeThisTick = true;
+         this.lastProgressTick = this.tick;
+         this.reason = "Removing a block that came out the wrong way round at " + coordinates(target.pos);
+         return AutoBuilderController.Outcome.BUSY;
+      }
+
       boolean configuring = !target.support && PlacementPlanner.needsConfiguration(target.state, actual);
       Item item = target.support ? target.state.getBlock().asItem() : MaterialTracker.requirement(target.state).item();
       if (!configuring) {
+         // Only reach for the item once it is certain the block can be placed from here.
+         if (PlacementPlanner.plan(client, target.pos, target.state, new ItemStack(item), player.getEyePos(), false) == null) {
+            return AutoBuilderController.Outcome.NONE;
+         }
+
          int slot = this.hotbarSlot(client, item);
          if (slot == -1) {
             this.pauseWith("Missing " + item.getName().getString() + ". Add materials, then Resume.");
@@ -1126,7 +1220,7 @@ public final class AutoBuilderController {
       } else if (plan.aim()) {
          // Turn once and wait for the server to have it. The plan is re-made every tick and stops asking
          // for a turn as soon as the rotation the server holds gives the right block.
-         boolean waiting = this.tick - this.turnTick <= 3 && !PlacementPlanner.isSettled(client.player.getYaw(), client.player.getPitch());
+         boolean waiting = this.tick - this.turnTick <= 5 && !PlacementPlanner.isSettled(client.player.getYaw(), client.player.getPitch());
          if (!waiting) {
             client.player.setYaw(plan.yaw());
             client.player.setPitch(plan.pitch());
@@ -1251,17 +1345,29 @@ public final class AutoBuilderController {
       this.look(client, plan);
       client.interactionManager.interactItem(player, Hand.MAIN_HAND);
       player.swingHand(Hand.MAIN_HAND);
+      this.debug("pour " + coordinates(target.pos) + " for " + target.state.getBlock().getName().getString() + " was " + before + " hit=" + plan.hit().getBlockPos().toShortString() + "/" + plan.hit().getSide()
+         + " full=" + this.countItem(client, Items.WATER_BUCKET) + " empty=" + this.countItem(client, Items.BUCKET));
       this.sent(client, target, before);
+      this.lastScoopTick = this.tick;
       this.reason = "Pouring water at " + coordinates(target.pos) + this.rateSuffix();
       return AutoBuilderController.Outcome.PLACED;
    }
 
    /** No full bucket: scoop from a water source that refills itself, or go and find one. */
    private AutoBuilderController.Outcome refill(MinecraftClient client) {
+      return this.refill(client, true);
+   }
+
+   /** @param required false: only top up if water is right here; never walk or pause for it */
+   private AutoBuilderController.Outcome refill(MinecraftClient client, boolean required) {
       ClientPlayerEntity player = client.player;
       boolean hasEmpty = false;
       for (int i = 0; i < 36; i++) {
          hasEmpty |= player.getInventory().getStack(i).isOf(Items.BUCKET);
+      }
+
+      if (!hasEmpty && !required) {
+         return AutoBuilderController.Outcome.NONE;
       }
 
       if (!hasEmpty) {
@@ -1290,10 +1396,20 @@ public final class AutoBuilderController {
          }
       }
 
+      if (best == null && !required) {
+         return AutoBuilderController.Outcome.NONE;
+      }
+
       if (best == null) {
          // Nothing to scoop from here: travel() will walk to water.
          this.waterHole = this.findWater(client);
          if (this.waterHole == null) {
+            // A source just scooped needs a moment to flow back before it can be taken again.
+            if (this.tick - this.lastScoopTick < 60) {
+               this.reason = "Waiting for water to flow back...";
+               return AutoBuilderController.Outcome.BUSY;
+            }
+
             this.pauseWith("Out of water. Make a 2x2 water pool beside the build or bring more water buckets, then Resume.");
             return AutoBuilderController.Outcome.BUSY;
          }
@@ -1330,7 +1446,10 @@ public final class AutoBuilderController {
       this.budget--;
       this.lastPlacementTick = this.tick;
       this.lastProgressTick = this.tick;
+      this.debug("scoop " + coordinates(best) + " full=" + this.countItem(client, Items.WATER_BUCKET) + " empty=" + this.countItem(client, Items.BUCKET));
       this.waterHole = best;
+      this.lastScoopTick = this.tick;
+      this.scoopedAt.put(best, this.tick);
       this.reason = "Refilling the bucket at " + coordinates(best);
       return AutoBuilderController.Outcome.PLACED;
    }
@@ -1388,9 +1507,13 @@ public final class AutoBuilderController {
             this.navigator.hold(client, false);
             if (!this.flights.isEmpty() || !this.watch.isEmpty()) {
                this.reason = "Waiting for the server...";
+            } else if (this.tick - this.lastScoopTick < 60 || ++this.idleTicks < 30) {
+               // Water flowing back, or a block about to become placeable: give it a moment.
+               this.reason = "Waiting for the layer to settle...";
             } else if (this.widen < 6) {
                this.debug("no goal; widen " + this.widen + " lowest=" + this.work.first().order + " " + coordinates(this.work.first().pos) + " unreachable=" + this.unreachableUntil.size());
                this.widen++;
+               this.idleTicks = 0;
             } else {
                this.giveUpOnLayer(client);
             }
@@ -1399,6 +1522,7 @@ public final class AutoBuilderController {
          }
       }
 
+      this.idleTicks = 0;
       AutoBuilderController.Target target = this.goal;
       BlockState actual = client.world.getBlockState(target.pos);
       AutoBuilderController.Kind kind = this.classify(client, target, actual);
@@ -1414,6 +1538,12 @@ public final class AutoBuilderController {
          }
 
          BlockPos water = this.findWater(client);
+         if (water == null && this.tick - this.lastScoopTick < 60) {
+            this.navigator.hold(client, false);
+            this.reason = "Waiting for water to flow back...";
+            return;
+         }
+
          if (water == null) {
             this.pauseWith("Out of water. Make a 2x2 water pool beside the build or bring more water buckets, then Resume.");
             return;
@@ -1436,6 +1566,10 @@ public final class AutoBuilderController {
             Vec3d eye = new Vec3d(cell.x() + 0.5, cell.y() + 1.62, cell.z() + 0.5);
             if (eye.squaredDistanceTo(Vec3d.ofCenter(target.pos)) > (reach + 1.0) * (reach + 1.0)) {
                return false;
+            }
+
+            if (kind == AutoBuilderController.Kind.REPAIR) {
+               return PlacementPlanner.planBreak(client, target.pos, eye) != null;
             }
 
             return kind == AutoBuilderController.Kind.WATER
@@ -1475,10 +1609,15 @@ public final class AutoBuilderController {
                this.reason = "Waiting for scaffolding...";
             } else {
                AutoBuilderController.Outcome outcome = this.attempt(client, support, AutoBuilderController.Kind.BLOCK, client.world.getBlockState(floor));
+               this.reason = "Placing scaffolding at " + coordinates(floor);
+               if (DEBUG && this.tick % 20 == 0) {
+                  this.debug("scaffold " + coordinates(floor) + " outcome=" + outcome + " state=" + client.world.getBlockState(floor) + " from " + player.getEntityPos() + " " + this.navigator.describe());
+               }
                if (outcome == AutoBuilderController.Outcome.NONE) {
-                  if (++this.arrivedTicks > 10) {
+                  if (++this.arrivedTicks > 6) {
                      this.arrivedTicks = 0;
-                     this.navigator.rejectCurrent(client);
+                     this.debug("cannot scaffold " + coordinates(floor) + " from " + player.getEntityPos());
+                     this.navigator.banScaffold(floor);
                   }
                } else if (outcome == AutoBuilderController.Outcome.PLACED) {
                   this.supportBlocks.add(floor);
@@ -1489,6 +1628,9 @@ public final class AutoBuilderController {
          default -> {
             this.arrivedTicks = 0;
             this.reason = (needWater ? "Fetching water at " : "Walking to ") + coordinates(near) + " / " + this.navigator.routeLength() + " steps";
+            if (DEBUG && this.tick % 100 == 0) {
+               this.debug("walking to " + coordinates(near) + " " + target.state + " at " + player.getEntityPos() + " onGround=" + player.isOnGround() + " " + this.navigator.describe());
+            }
          }
       }
    }
@@ -1508,7 +1650,9 @@ public final class AutoBuilderController {
       }
 
       AutoBuilderController.Kind kind = this.classify(client, target, actual);
-      return kind == AutoBuilderController.Kind.WATER || kind == AutoBuilderController.Kind.BLOCK && !(isWaterPlant(target.state) && this.waterStillNeeded(client));
+      return kind == AutoBuilderController.Kind.WATER
+         || kind == AutoBuilderController.Kind.REPAIR
+         || kind == AutoBuilderController.Kind.BLOCK && !(isWaterPlant(target.state) && this.waterStillNeeded(client));
    }
 
    /** Nearest block that could be placed right now if the player stood in the right spot. */
@@ -1527,8 +1671,16 @@ public final class AutoBuilderController {
       }
 
       // The current layer always wins over the one above, however far away it is.
+      Map<AutoBuilderController.Target, Integer> wet = new HashMap<>();
+      if ((this.work.first().order & 3) != 0 && candidates.size() <= 2000) {
+         for (AutoBuilderController.Target target : candidates) {
+            wet.put(target, this.waterScore(client, target.pos));
+         }
+      }
+
       candidates.sort(
          Comparator.<AutoBuilderController.Target>comparingInt(t -> this.inLowestLayer(t) ? 0 : 1)
+            .thenComparingInt(t -> -Math.min(2, wet.getOrDefault(t, 0)))
             .thenComparingDouble(t -> at.squaredDistanceTo(Vec3d.ofCenter(t.pos)))
       );
       int examined = 0;
@@ -1549,7 +1701,9 @@ public final class AutoBuilderController {
             continue;
          }
 
-         if (kind == AutoBuilderController.Kind.WATER || kind == AutoBuilderController.Kind.BLOCK && !(isWaterPlant(target.state) && this.waterStillNeeded(client))) {
+         if (kind == AutoBuilderController.Kind.WATER
+            || kind == AutoBuilderController.Kind.REPAIR
+            || kind == AutoBuilderController.Kind.BLOCK && !(isWaterPlant(target.state) && this.waterStillNeeded(client))) {
             return target;
          }
 
@@ -1593,6 +1747,64 @@ public final class AutoBuilderController {
       this.unreachableUntil.clear();
    }
 
+   /**
+    * How well a bucket poured here builds towards a renewable source: 2 for each source right beside
+    * it, 3 for a source two blocks away with a gap between (the gap fills itself).
+    */
+   private int waterScore(MinecraftClient client, BlockPos pos) {
+      int score = 0;
+      for (Direction direction : Direction.Type.HORIZONTAL) {
+         BlockPos one = pos.offset(direction);
+         FluidState beside = client.world.getFluidState(one);
+         if (beside.isStill() && beside.isOf(Fluids.WATER)) {
+            score += 2;
+         } else if (client.world.getBlockState(one).isReplaceable()) {
+            FluidState beyond = client.world.getFluidState(one.offset(direction));
+            if (beyond.isStill() && beyond.isOf(Fluids.WATER)) {
+               score += 3;
+            }
+         }
+      }
+
+      return score;
+   }
+
+   private boolean shouldFillBucketsFirst(MinecraftClient client) {
+      if (CreativeBuildMode.canFetch(client) || !this.hasItem(client, Items.BUCKET)) {
+         return false;
+      }
+
+      if (this.tick - this.lastScoopTick < 14) {
+         return true;
+      }
+
+      if (this.scoopCheckTick != this.tick) {
+         this.scoopCheckTick = this.tick;
+         this.scoopInReach = false;
+         Vec3d eye = client.player.getEyePos();
+         for (BlockPos pos : BlockPos.iterateOutwards(client.player.getBlockPos(), 5, 5, 5)) {
+            if (this.scoopable(client, pos) && PlacementPlanner.planScoop(client, pos, eye) != null) {
+               this.scoopInReach = true;
+               break;
+            }
+         }
+      }
+
+      return this.scoopInReach;
+   }
+
+   private int countItem(MinecraftClient client, Item item) {
+      int count = 0;
+      for (int i = 0; i < 36; i++) {
+         ItemStack stack = client.player.getInventory().getStack(i);
+         if (stack.isOf(item)) {
+            count += stack.getCount();
+         }
+      }
+
+      return count;
+   }
+
    private boolean hasItem(MinecraftClient client, Item item) {
       for (int i = 0; i < 36; i++) {
          if (client.player.getInventory().getStack(i).isOf(item)) {
@@ -1627,30 +1839,18 @@ public final class AutoBuilderController {
          return false;
       }
 
-      BlockPos below = floor.down();
-      if (client.world.getBlockState(below).isSideSolidFullSquare(client.world, below, Direction.UP)) {
-         return true;
-      }
-
-      if (floor.getY() != from.y()) {
+      // Only where the block can really be clicked into place from the cell before it.
+      Item item = this.scaffoldItem(client);
+      if (!(item instanceof BlockItem block)) {
          return false;
       }
 
-      for (Direction direction : Direction.Type.HORIZONTAL) {
-         BlockPos side = floor.offset(direction);
-         if (side.getX() == from.x() && side.getZ() == from.z()) {
-            continue;
-         }
-
-         if (client.world.getBlockState(side).isSideSolidFullSquare(client.world, side, direction.getOpposite())) {
-            return true;
-         }
-      }
-
-      return false;
+      Vec3d eye = new Vec3d(from.x() + 0.5, from.y() + 1.62, from.z() + 0.5);
+      return PlacementPlanner.plan(client, floor, block.getBlock().getDefaultState(), new ItemStack(item), eye, true) != null;
    }
 
    private void defer(AutoBuilderController.Target target, String message) {
+      this.debug("DEFER " + message);
       this.lastFailure = message;
       if (!target.support) {
          this.deferred.add(target.index);
@@ -1824,6 +2024,8 @@ public final class AutoBuilderController {
       WATER,
       /** Cannot be placed yet; something it depends on is missing. */
       LATER,
+      /** The right block in the wrong state: break it and place it again. */
+      REPAIR,
       /** The player has to do this one. */
       MANUAL,
       DONE;
@@ -1845,7 +2047,7 @@ public final class AutoBuilderController {
       COMPLETED;
    }
 
-   /** @param order layer and phase: 4 * y + (0 block, 1 water, 2 water plant) */
+   /** @param order layer and phase: 4 * y + (0 block, 1 water, 2 water plant, 3 redstone dust) */
    @Environment(EnvType.CLIENT)
    private record Target(BlockPos pos, BlockState state, int index, boolean support, int order) {
    }
