@@ -1,0 +1,2 @@
+{ "schemaVersion": 1, "id": "rexsmoke", "version": "1.0.0", "environment": "client",
+  "mixins": ["rexsmoke.mixins.json"], "depends": { "fabricloader": "*", "krypton": "*" } }

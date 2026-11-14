@@ -1,0 +1,3 @@
+{ "schemaVersion": 1, "id": "rexworldgen", "version": "1.0.0", "environment": "client",
+  "entrypoints": { "fabric-client-gametest": ["rexworldgen.MakeWorld"] },
+  "depends": { "fabricloader": "*" } }
