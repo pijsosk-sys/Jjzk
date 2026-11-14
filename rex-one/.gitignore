@@ -2,3 +2,5 @@
 .runtime/
 out/
 __pycache__/
+logs/
+hs_err_pid*.log
