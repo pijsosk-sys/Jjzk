@@ -1,40 +1,37 @@
 package com.redcore.booster.ui
 
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Battery5Bar
-import androidx.compose.material.icons.filled.Bolt
-import androidx.compose.material.icons.filled.Memory
-import androidx.compose.material.icons.filled.MonitorHeart
-import androidx.compose.material.icons.filled.NetworkCheck
-import androidx.compose.material.icons.filled.PhoneAndroid
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.SportsEsports
-import androidx.compose.material.icons.filled.Storage
-import androidx.compose.material.icons.filled.Thermostat
-import androidx.compose.material.icons.filled.TouchApp
-import androidx.compose.material.icons.filled.SpaceDashboard
+import androidx.annotation.DrawableRes
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.vectorResource
+import com.redcore.booster.R
 
-enum class Dest(val title: String, val icon: ImageVector) {
-    HOME("Home", Icons.Default.SpaceDashboard),
-    GAMES("Game Space", Icons.Default.SportsEsports),
-    BOOST("Boost", Icons.Default.Bolt),
-    MONITOR("Monitor", Icons.Default.MonitorHeart),
-    DEVICE("Device", Icons.Default.PhoneAndroid),
-    COOLING("Cooling", Icons.Default.Thermostat),
-    NETWORK("Network", Icons.Default.NetworkCheck),
-    BATTERY("Battery", Icons.Default.Battery5Bar),
-    STORAGE("Storage", Icons.Default.Storage),
-    TOUCH("Touch", Icons.Default.TouchApp),
-    SETTINGS("Settings", Icons.Default.Settings),
-    GAME_DETAIL("Game", Icons.Default.SportsEsports),
-    ADD_GAMES("Add Games", Icons.Default.SportsEsports),
-    PROCESSOR("Processor", Icons.Default.Memory);
+enum class Dest(val title: String, @DrawableRes val iconRes: Int) {
+    HOME("Home", R.drawable.ic_rc_home),
+    GAMES("Game Space", R.drawable.ic_rc_gamepad),
+    BOOST("Performance", R.drawable.ic_rc_gauge),
+    MONITOR("Monitor", R.drawable.ic_rc_monitor),
+    DEVICE("Device", R.drawable.ic_rc_device),
+    COOLING("Cooling", R.drawable.ic_rc_fan),
+    NETWORK("Network", R.drawable.ic_rc_network),
+    BATTERY("Battery", R.drawable.ic_rc_battery),
+    STORAGE("Storage", R.drawable.ic_rc_storage),
+    TOUCH("Touch", R.drawable.ic_rc_touch),
+    SETTINGS("Settings", R.drawable.ic_rc_settings),
+    GAME_DETAIL("Game", R.drawable.ic_rc_gamepad),
+    ADD_GAMES("Add Games", R.drawable.ic_rc_gamepad),
+    PROCESSOR("Processor", R.drawable.ic_rc_cpu);
 
     companion object {
         val bottom = listOf(HOME, GAMES, BOOST, MONITOR, DEVICE)
-        val rail = listOf(HOME, GAMES, BOOST, MONITOR, COOLING, NETWORK, BATTERY, STORAGE, TOUCH, DEVICE, SETTINGS)
+        val rail = listOf(HOME, GAMES, BOOST, MONITOR, COOLING, BATTERY, NETWORK, TOUCH, STORAGE, DEVICE, SETTINGS)
     }
 }
+
+@Composable
+fun Dest.vector(): ImageVector = ImageVector.vectorResource(iconRes)
+
+@Composable
+fun rcIcon(@DrawableRes id: Int): ImageVector = ImageVector.vectorResource(id)
 
 data class Route(val dest: Dest, val arg: String? = null)

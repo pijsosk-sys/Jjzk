@@ -19,7 +19,7 @@ enum class Perm(val title: String, val why: String) {
     DND("Do Not Disturb access", "Lets gaming modes silence notifications during play."),
     WRITE_SETTINGS("Modify system settings", "Lets modes and the toolkit change screen brightness."),
     NOTIFICATIONS("Notifications", "Shows the active-session notification with quick controls."),
-    ACCESSIBILITY("Screenshot shortcut", "Optional accessibility service used only to take screenshots from the toolkit."),
+    ACCESSIBILITY("Screenshot & triggers", "Optional accessibility service for the toolkit's screenshot button and volume-key triggers. Never reads screen content."),
     MEDIA("Media & files", "Lets the storage analyzer find large photos, videos and audio files."),
     MICROPHONE("Microphone", "Optional: include your voice in screen recordings."),
     SECURE_SETTINGS("Refresh-rate control (ADB)", "Needed on most phones to change refresh rate. Can only be granted from a computer via ADB.");

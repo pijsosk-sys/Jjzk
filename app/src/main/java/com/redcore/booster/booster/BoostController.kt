@@ -150,6 +150,13 @@ class BoostController(
             if (Settings.canDrawOverlays(context)) ActionResult("Keep screen awake", ActionState.APPLIED, "Screen stays on while the toolkit is active.")
             else ActionResult("Keep screen awake", ActionState.BLOCKED, "Needs \"Display over other apps\".")
         } else ActionResult("Keep screen awake", ActionState.SKIPPED, "Uses normal screen timeout.")
+        val cfg = settings.current()
+        if (cfg.edgeGuard) results += if (com.redcore.booster.overlay.EdgeGuard.show(context, cfg.edgeWidthDp))
+            ActionResult("Edge touch guard", ActionState.APPLIED, "Palm touches on the side edges are blocked (${cfg.edgeWidthDp} dp).")
+        else ActionResult("Edge touch guard", ActionState.BLOCKED, "Needs \"Display over other apps\".")
+        if (cfg.triggers) results += if (Permissions.accessibilityEnabled(context))
+            ActionResult("Volume-key triggers", ActionState.APPLIED, "Vol− taps L1, Vol+ taps R1.")
+        else ActionResult("Volume-key triggers", ActionState.BLOCKED, "Enable the REDCORE accessibility service in Settings › Permissions.")
         val s = GameSession(pkg, pkg?.let { games.label(it) } ?: "Gaming session", mode, spec, System.currentTimeMillis(), results)
         _session.value = s
         return s
@@ -157,6 +164,7 @@ class BoostController(
 
     suspend fun endSession(): List<ActionResult> {
         val out = mutableListOf<ActionResult>()
+        com.redcore.booster.overlay.EdgeGuard.hide(context)
         if (settings.current().restoreOnExit) out += restore()
         _session.value = null
         return out

@@ -47,6 +47,7 @@ import com.redcore.booster.data.LiveStats
 import com.redcore.booster.data.ModeSpec
 import com.redcore.booster.data.RefreshTarget
 import com.redcore.booster.data.fmtBytes
+import com.redcore.booster.data.temp
 import com.redcore.booster.ui.components.Chip
 import com.redcore.booster.ui.components.Divider
 import com.redcore.booster.ui.components.GameIcon
@@ -64,6 +65,9 @@ data class BgApp(val pkg: String, val label: String, val lastUsedAgo: String)
 @Composable
 fun BoostScreen(
     stats: LiveStats,
+    history: List<LiveStats>,
+    gpuName: String?,
+    settings: com.redcore.booster.data.AppSettings,
     mode: GameMode,
     session: GameSession?,
     perms: Map<Perm, Boolean>,
@@ -77,16 +81,29 @@ fun BoostScreen(
 ) {
     HudBackdrop {
         com.redcore.booster.ui.components.Panes(1f, 1f, left = {
-            ModeSelector(mode, onMode)
+            PerformanceRings(stats, mode, gpuName)
             Spacer(Modifier.height(12.dp))
-            ModePlan(mode, perms, onGrant)
+            ModeSelector(mode, onMode)
             Spacer(Modifier.height(12.dp))
             if (session == null) GlowButton("Activate ${mode.title} mode", Modifier.fillMaxWidth(), Icons.Default.Bolt, onClick = onBoost)
             else Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 GlowButton("Re-apply", Modifier.weight(1f), Icons.Default.Bolt, onClick = onBoost)
                 GlowButton("Restore", Modifier.weight(1f), Icons.Default.PowerSettingsNew, primary = false, onClick = onEnd)
             }
-
+            Spacer(Modifier.height(12.dp))
+            QuickStrip(stats, settings)
+            Spacer(Modifier.height(12.dp))
+            GlassPanel(Modifier.fillMaxWidth(), padding = 10.dp) {
+                Row {
+                    Text("CPU CLOCK LEVEL", style = RCType.label.copy(fontSize = 8.sp), modifier = Modifier.weight(1f))
+                    Text("LAST ${history.size}s", style = RCType.label.copy(fontSize = 8.sp))
+                }
+                Spacer(Modifier.height(4.dp))
+                com.redcore.booster.ui.components.LineChart(history.map { it.clockLevel?.times(100) }, Modifier.fillMaxWidth().height(70.dp), minY = 0f, maxY = 100f, gridLines = 2)
+            }
+        }, right = {
+            SectionHeader("What ${mode.title} mode does")
+            ModePlan(mode, perms, onGrant)
             if (session != null) {
                 SectionHeader("Active session")
                 GlassPanel(Modifier.fillMaxWidth(), accent = true) {
@@ -107,7 +124,6 @@ fun BoostScreen(
                 }
             }
 
-        }, right = {
             SectionHeader("Memory")
             GlassPanel(Modifier.fillMaxWidth()) {
                 Row(verticalAlignment = Alignment.Bottom) {
@@ -206,6 +222,64 @@ private fun ModePlan(mode: GameMode, perms: Map<Perm, Boolean>, onGrant: (Perm) 
                     else -> Box(Modifier.clip(RoundedCornerShape(4.dp)).background(RC.Amber.copy(alpha = 0.15f)).border(1.dp, RC.Amber, RoundedCornerShape(4.dp))) {
                         Text("GRANT", style = RCType.label.copy(fontSize = 8.sp, color = RC.Amber), modifier = Modifier.clickable { it.perm?.let(onGrant) }.padding(horizontal = 8.dp, vertical = 4.dp))
                     }
+                }
+            }
+        }
+    }
+}
+
+
+@Composable
+private fun PerformanceRings(stats: LiveStats, mode: GameMode, gpuName: String?) {
+    GlassPanel(Modifier.fillMaxWidth(), accent = true, padding = 12.dp) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceEvenly) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                com.redcore.booster.ui.components.RingGauge(
+                    stats.clockLevel, stats.peakCurMHz?.let { "%.2f".format(it / 1000f) } ?: "—", "GHz", "CPU",
+                    size = 128.dp, color = RC.Red, secondary = Color(0xFFFF8A1E)
+                )
+                Text(stats.clockLevel?.let { "${(it * 100).toInt()}% clock" } ?: "Clock restricted", style = RCType.bodyDim.copy(fontSize = 11.sp))
+            }
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                com.redcore.booster.ui.RedcoreLogo(34.dp)
+                Spacer(Modifier.height(6.dp))
+                Text("REDCORE", style = RCType.title.copy(fontSize = 11.sp, letterSpacing = 3.sp))
+                Text(mode.title.uppercase(), style = RCType.label.copy(fontSize = 9.sp, color = mode.accent(), letterSpacing = 3.sp))
+            }
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                val gpuLive = stats.gpuMHz != null
+                com.redcore.booster.ui.components.RingGauge(
+                    if (gpuLive) (stats.gpuLoad ?: 0) / 100f else null,
+                    if (gpuLive) "${stats.gpuMHz}" else "—", if (gpuLive) "MHz" else "N/A", "GPU",
+                    size = 128.dp, color = RC.Violet, secondary = RC.Red
+                )
+                Text(if (gpuLive) stats.gpuLoad?.let { "$it% load" } ?: "Live clock" else (gpuName ?: "Live data restricted"),
+                    style = RCType.bodyDim.copy(fontSize = 11.sp), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(130.dp),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuickStrip(stats: LiveStats, settings: com.redcore.booster.data.AppSettings) {
+    val shape = RoundedCornerShape(10.dp)
+    Row(
+        Modifier.fillMaxWidth().clip(shape).background(RC.Panel).border(1.dp, RC.Stroke, shape).padding(vertical = 10.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly
+    ) {
+        listOf(
+            Triple(com.redcore.booster.R.drawable.ic_rc_thermo, settings.temp(stats.batteryTempC), "Temp"),
+            Triple(com.redcore.booster.R.drawable.ic_rc_cpu, "${(stats.ramFraction * 100).toInt()}%", "RAM"),
+            Triple(com.redcore.booster.R.drawable.ic_rc_battery, stats.batteryPct?.let { "$it%" } ?: "—", "Battery"),
+            Triple(com.redcore.booster.R.drawable.ic_rc_monitor, stats.refreshHz?.let { "${it}Hz" } ?: "—", "Display"),
+        ).forEach { (icon, v, l) ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(com.redcore.booster.ui.rcIcon(icon), null, tint = RC.Red, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Column {
+                    Text(v, style = RCType.strong.copy(fontSize = 14.sp))
+                    Text(l.uppercase(), style = RCType.label.copy(fontSize = 7.sp))
                 }
             }
         }

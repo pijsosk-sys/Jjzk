@@ -145,7 +145,8 @@ object Routes {
                 val bg by vm.background.collectAsStateWithLifecycle()
                 val saver = remember(stats.time / 10000) { ctx.getSystemService(PowerManager::class.java).isPowerSaveMode }
                 BoostScreen(
-                    stats, settings.globalMode, session, perms,
+                    stats, history, device?.sections?.firstOrNull { it.title == "Graphics" }?.rows?.firstOrNull()?.second, settings,
+                    settings.globalMode, session, perms,
                     bg?.map { BgApp(it.pkg, a.games.label(it.pkg), DateUtils.getRelativeTimeSpanString(it.lastUsed).toString()) },
                     Insights.performance(stats, saver, perms[Perm.USAGE] == true),
                     vm::setMode, vm::boostNow, vm::endSession, vm::cleanBackground, grant
@@ -183,7 +184,15 @@ object Routes {
                     { open(a.storage.openIntent(it)) }, { open(a.storage.appDetails(it)) },
                     { runCatching { ctx.startActivity(a.storage.storageManagerIntent()) }.onFailure { open(a.storage.internalStorageSettings()) } })
             }
-            Dest.TOUCH -> TouchScreen(remember { touchFeatures(ctx) })
+            Dest.TOUCH -> TouchScreen(remember { touchFeatures(ctx) }, settings, perms[Perm.OVERLAY] == true, perms[Perm.ACCESSIBILITY] == true, object : com.redcore.booster.ui.screens.TouchActions {
+                override fun edgeGuard(on: Boolean) { vm.setEdgeGuard(on) }
+                override fun edgeRange(r: Int) { vm.setEdgeRange(r) }
+                override fun previewEdge() { vm.previewEdge() }
+                override fun triggers(on: Boolean) { vm.setTriggers(on) }
+                override fun points(l1x: Float, l1y: Float, r1x: Float, r1y: Float) { vm.setTriggerPoints(l1x, l1y, r1x, r1y) }
+                override fun grantOverlay() = grant(Perm.OVERLAY)
+                override fun grantAccessibility() = grant(Perm.ACCESSIBILITY)
+            })
             Dest.SETTINGS -> SettingsScreen(settings, perms, toolkit, BuildConfig.VERSION_NAME, object : SettingsActions {
                 override fun mode(m: GameMode) { vm.setMode(m) }
                 override fun autoDetect(v: Boolean) { vm.setAutoDetect(v) }

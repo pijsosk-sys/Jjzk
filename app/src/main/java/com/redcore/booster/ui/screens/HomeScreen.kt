@@ -71,6 +71,7 @@ import com.redcore.booster.data.LiveStats
 import com.redcore.booster.data.fmtRate
 import com.redcore.booster.data.temp
 import com.redcore.booster.ui.Dest
+import com.redcore.booster.ui.vector
 import com.redcore.booster.ui.components.GameIcon
 import com.redcore.booster.ui.components.GlassPanel
 import com.redcore.booster.ui.components.GlowButton
@@ -114,16 +115,8 @@ fun HomeScreen(
     val wide = com.redcore.booster.ui.components.LocalWide.current
     val toolbox: @Composable () -> Unit = {
         SectionHeader("Toolbox")
-        val tools = listOf(
-            Triple("Cooling", Icons.Default.Thermostat, Dest.COOLING),
-            Triple("Network", Icons.Default.NetworkCheck, Dest.NETWORK),
-            Triple("Battery", Icons.Default.Battery5Bar, Dest.BATTERY),
-            Triple("Storage", Icons.Default.Storage, Dest.STORAGE),
-            Triple("Touch", Icons.Default.TouchApp, Dest.TOUCH),
-            Triple("Device", Icons.Default.PhoneAndroid, Dest.DEVICE),
-            Triple("Monitor", Icons.Default.MonitorHeart, Dest.MONITOR),
-            Triple("Settings", Icons.Default.Settings, Dest.SETTINGS),
-        )
+        val tools = listOf(Dest.COOLING, Dest.NETWORK, Dest.BATTERY, Dest.STORAGE, Dest.TOUCH, Dest.DEVICE, Dest.MONITOR, Dest.SETTINGS)
+            .map { Triple(it.title, it.vector(), it) }
         tools.chunked(4).forEach { row ->
             Row(Modifier.padding(bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 row.forEach { (label, icon, dest) -> ToolTile(label, icon, Modifier.weight(1f)) { onNavigate(dest) } }
@@ -142,7 +135,7 @@ fun HomeScreen(
                 SessionBar(session, onEndSession)
             } else {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    GlowButton("Game Space", Modifier.weight(1.2f), icon = Icons.Default.SportsEsports) { onNavigate(Dest.GAMES) }
+                    GlowButton("Game Space", Modifier.weight(1.2f), icon = com.redcore.booster.ui.rcIcon(com.redcore.booster.R.drawable.ic_rc_gamepad)) { onNavigate(Dest.GAMES) }
                     GlowButton("Boost", Modifier.weight(1f), icon = Icons.Default.Bolt, primary = false, onClick = onBoost)
                 }
             }
@@ -151,9 +144,9 @@ fun HomeScreen(
 
             SectionHeader("Live status")
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                StatTile("Battery", stats.batteryPct?.let { "$it%" } ?: "—", Modifier.weight(1f), Icons.Default.Battery5Bar, RC.Green,
+                StatTile("Battery", stats.batteryPct?.let { "$it%" } ?: "—", Modifier.weight(1f), com.redcore.booster.ui.rcIcon(com.redcore.booster.R.drawable.ic_rc_battery), RC.Green,
                     sub = if (stats.charging) "Charging · ${stats.plug}" else "On battery")
-                StatTile("Temp", settings.temp(stats.batteryTempC), Modifier.weight(1f), Icons.Default.Thermostat, tempColor(stats.batteryTempC),
+                StatTile("Temp", settings.temp(stats.batteryTempC), Modifier.weight(1f), com.redcore.booster.ui.rcIcon(com.redcore.booster.R.drawable.ic_rc_thermo), tempColor(stats.batteryTempC),
                     sub = "Battery sensor")
             }
             Spacer(Modifier.height(10.dp))
@@ -383,7 +376,7 @@ private fun ToolkitStrip(on: Boolean, onToggle: () -> Unit) {
             .clickable(onClick = onToggle).padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(Icons.Default.Layers, null, tint = if (on) RC.Red else RC.TextDim, modifier = Modifier.size(20.dp))
+        Icon(com.redcore.booster.ui.rcIcon(com.redcore.booster.R.drawable.ic_rc_layers), null, tint = if (on) RC.Red else RC.TextDim, modifier = Modifier.size(20.dp))
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Text("Floating gaming toolkit", style = RCType.strong.copy(fontSize = 15.sp))

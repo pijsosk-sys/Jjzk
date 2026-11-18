@@ -118,13 +118,13 @@ class ScreenshotTest {
 
     @Test @Config(qualifiers = "w915dp-h760dp-land-xhdpi")
     fun a07_boost() = shot("07_boost", Dest.BOOST) {
-        BoostScreen(s, GameMode.BEAST, SampleData.session, perms,
+        BoostScreen(s, h, "Adreno (TM) 750", st, GameMode.BEAST, SampleData.session, perms,
             listOf(BgApp("com.chat.app", "Messenger", "3 min ago"), BgApp("com.video.stream", "StreamBox", "25 min ago"), BgApp("com.music.player", "Music Player", "1 hour ago")),
             Insights.performance(s.copy(thermalStatus = 2), batterySaver = false, usageGranted = true), {}, {}, {}, {}, {})
     }
 
     @Test fun a08_boostSheet() = shot("08_boost_results", Dest.BOOST, sheet = ResultSheet("Beast mode active", SampleData.session.results)) {
-        BoostScreen(s, GameMode.BEAST, null, perms, null, emptyList(), {}, {}, {}, {}, {})
+        BoostScreen(s, h, "Adreno (TM) 750", st, GameMode.BEAST, null, perms, null, emptyList(), {}, {}, {}, {}, {})
     }
 
     @Test @Config(qualifiers = "w915dp-h760dp-land-xhdpi")
@@ -169,7 +169,10 @@ class ScreenshotTest {
         )
     }
 
-    @Test fun a15_touch() = shot("15_touch", Dest.TOUCH) { TouchScreen(listOf("Multi-touch" to "5+ independent points", "Display density" to "480 dpi", "Touch sampling rate setting" to null)) }
+    private val tf = listOf("Multi-touch" to "5+ independent points", "Display density" to "480 dpi", "Touch sampling rate setting" to null)
+    @Test fun a15_touch() = shot("15_touch", Dest.TOUCH) { TouchScreen(tf, st, true, true, object : TouchActions {}) }
+    @Test fun a15b_edge() = shot("15b_touch_edge_guard", Dest.TOUCH) { TouchScreen(tf, st.copy(edgeGuard = true, edgeRange = 2), true, true, object : TouchActions {}, initialTab = 1) }
+    @Test fun a15c_triggers() = shot("15c_touch_triggers", Dest.TOUCH) { TouchScreen(tf, st.copy(triggers = true, l1x = 0.12f, l1y = 0.7f, r1x = 0.86f, r1y = 0.4f), true, true, object : TouchActions {}, initialTab = 2) }
 
     @Test @Config(qualifiers = "w915dp-h760dp-land-xhdpi")
     fun a16_settings() = shot("16_settings", Dest.SETTINGS) {
@@ -193,7 +196,7 @@ class ScreenshotTest {
         }
     }
 
-    private val ov = OverlayState(s, st.copy(hudEnabled = true), SampleData.session, false, false, true, true, 80, 60, false)
+    private val ov = OverlayState(s, st.copy(hudEnabled = true), SampleData.session, false, false, true, true, 80, 60, false, edgeGuard = true, triggers = false)
 
     @Test fun a18_overlayCollapsed() = capture("18_overlay_hud") {
         FakeGame { Box(Modifier.padding(top = 60.dp)) { OverlayUi(ov, object : OverlayActions {}) } }

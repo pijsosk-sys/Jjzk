@@ -162,6 +162,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setRestore(v: Boolean) = viewModelScope.launch { a.settings.setRestore(v) }
     fun setFahrenheit(v: Boolean) = viewModelScope.launch { a.settings.setFahrenheit(v) }
     fun setOverlayScale(v: Float) = viewModelScope.launch { a.settings.setOverlayScale(v) }
+    fun setEdgeGuard(v: Boolean) = viewModelScope.launch { a.settings.setEdgeGuard(v) }
+    fun setEdgeRange(v: Int) = viewModelScope.launch {
+        a.settings.setEdgeRange(v)
+        if (com.redcore.booster.overlay.EdgeGuard.active.value) com.redcore.booster.overlay.EdgeGuard.show(getApplication(), a.settings.current().edgeWidthDp)
+    }
+    fun previewEdge() = viewModelScope.launch {
+        if (!com.redcore.booster.overlay.EdgeGuard.preview(getApplication(), a.settings.current().edgeWidthDp)) _toast.tryEmit("Allow \"Display over other apps\" first.")
+    }
+    fun setTriggers(v: Boolean) = viewModelScope.launch { a.settings.setTriggers(v) }
+    fun setTriggerPoints(l1x: Float, l1y: Float, r1x: Float, r1y: Float) = viewModelScope.launch { a.settings.setTriggerPoints(l1x, l1y, r1x, r1y) }
     fun finishOnboarding() = viewModelScope.launch { a.settings.setOnboarded() }
 
     fun toast(msg: String) { _toast.tryEmit(msg) }

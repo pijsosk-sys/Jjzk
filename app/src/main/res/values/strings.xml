@@ -1,5 +1,5 @@
 <resources>
     <string name="app_name">REDCORE</string>
-    <string name="accessibility_label">REDCORE screenshot shortcut</string>
-    <string name="accessibility_desc">Lets the REDCORE floating toolkit take a screenshot when you tap its Screenshot button. REDCORE does not read, collect or store any screen content or window events.</string>
+    <string name="accessibility_label">REDCORE screenshot &amp; triggers</string>
+    <string name="accessibility_desc">Used for two optional gaming features: the toolkit\'s Screenshot button, and volume-key triggers (during a REDCORE game session, Volume down/up tap the L1/R1 points you placed). REDCORE does not read, collect or store any screen content, and only watches the volume keys while triggers are switched on.</string>
 </resources>

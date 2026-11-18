@@ -149,7 +149,7 @@ fun BottomBar(current: Dest, onSelect: (Dest) -> Unit) {
                             Modifier.size(width = 44.dp, height = 28.dp).clip(RoundedCornerShape(topStart = 2.dp, topEnd = 10.dp, bottomEnd = 2.dp, bottomStart = 10.dp))
                                 .background(RC.redGradient)
                         )
-                        Icon(d.icon, d.title, tint = if (sel) Color.White else RC.TextMute, modifier = Modifier.size(20.dp))
+                        Icon(d.vector(), d.title, tint = if (sel) Color.White else RC.TextMute, modifier = Modifier.size(20.dp))
                     }
                     Spacer(Modifier.height(4.dp))
                     Text(d.title.uppercase(), style = RCType.label.copy(fontSize = 7.5.sp, color = if (sel) RC.Text else RC.TextMute), maxLines = 1)
@@ -184,7 +184,7 @@ fun SideRail(current: Dest, onSelect: (Dest) -> Unit) {
                     .padding(horizontal = 14.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(d.icon, null, tint = if (sel) Color.White else RC.TextMute, modifier = Modifier.size(17.dp))
+                Icon(d.vector(), null, tint = if (sel) Color.White else RC.TextMute, modifier = Modifier.size(17.dp))
                 Spacer(Modifier.width(10.dp))
                 Text(d.title, style = RCType.body.copy(fontSize = 14.sp, color = if (sel) Color.White else RC.TextDim), maxLines = 1)
             }

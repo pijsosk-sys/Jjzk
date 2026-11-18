@@ -111,6 +111,8 @@ data class OverlayState(
     val brightness: Int?,
     val volume: Int,
     val mic: Boolean,
+    val edgeGuard: Boolean = false,
+    val triggers: Boolean = false,
 )
 
 interface OverlayActions {
@@ -126,6 +128,8 @@ interface OverlayActions {
     fun mic(on: Boolean) {}
     fun clean() {}
     fun hud(on: Boolean) {}
+    fun edgeGuard(on: Boolean) {}
+    fun triggers(on: Boolean) {}
     fun openApp() {}
     fun endSession() {}
 }
@@ -139,6 +143,7 @@ fun OverlayRoot(svc: OverlayService) {
     val session by a.boost.session.collectAsState()
     val expanded by svc.expanded.collectAsState()
     val recording by ScreenRecordService.recording.collectAsState()
+    val edge by EdgeGuard.active.collectAsState()
     var dnd by remember { mutableStateOf(a.boost.isDndOn()) }
     var bri by remember { mutableStateOf(a.boost.currentBrightnessPct()) }
     var vol by remember { mutableStateOf(a.boost.volumePct()) }
@@ -178,12 +183,24 @@ fun OverlayRoot(svc: OverlayService) {
             }
             override fun clean() { scope.launch { svc.toast(a.boost.cleanBackground().detail) } }
             override fun hud(on: Boolean) { scope.launch { a.settings.setHud(on) } }
+            override fun edgeGuard(on: Boolean) {
+                if (on) EdgeGuard.show(svc, settings.edgeWidthDp) else EdgeGuard.hide(svc)
+                svc.toast(if (on) "Edge touch guard on" else "Edge touch guard off")
+            }
+            override fun triggers(on: Boolean) {
+                if (on && !com.redcore.booster.booster.Permissions.accessibilityEnabled(svc)) {
+                    svc.toast("Enable the REDCORE accessibility service first (Settings › Permissions).")
+                    return
+                }
+                scope.launch { a.settings.setTriggers(on) }
+                svc.toast(if (on) "Vol− = L1, Vol+ = R1" else "Volume keys back to normal")
+            }
             override fun openApp() = svc.openApp()
             override fun endSession() = svc.endSession()
         }
     }
     OverlayUi(
-        OverlayState(stats, settings, session, expanded, recording, dnd, a.boost.canSetDnd(), if (a.boost.canSetBrightness()) bri else null, vol, mic),
+        OverlayState(stats, settings, session, expanded, recording, dnd, a.boost.canSetDnd(), if (a.boost.canSetBrightness()) bri else null, vol, mic, edge, settings.triggers),
         actions
     )
 }
@@ -387,11 +404,13 @@ private fun QuickGrid(s: OverlayState, act: OverlayActions, modifier: Modifier) 
         QT(if (s.mic) "Mic on" else "Mic off", if (s.mic) Icons.Default.Mic else Icons.Default.MicOff, s.mic) { act.mic(!s.mic) },
         QT("Close apps", Icons.Default.AutoDelete, false) { act.clean() },
         QT(if (s.settings.hudEnabled) "HUD on" else "HUD off", Icons.Default.Speed, s.settings.hudEnabled) { act.hud(!s.settings.hudEnabled) },
+        QT("Edge guard", com.redcore.booster.ui.rcIcon(com.redcore.booster.R.drawable.ic_rc_touch), s.edgeGuard) { act.edgeGuard(!s.edgeGuard) },
+        QT("L1 / R1", com.redcore.booster.ui.rcIcon(com.redcore.booster.R.drawable.ic_rc_gamepad), s.triggers) { act.triggers(!s.triggers) },
         QT("REDCORE", Icons.Default.OpenInNew, false) { act.openApp() },
         QT("End session", Icons.Default.PowerSettingsNew, false, danger = true) { act.endSession() },
     )
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        tiles.chunked(4).forEach { row ->
+        tiles.chunked(5).forEach { row ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 row.forEach { QuickTile(it, Modifier.weight(1f)) }
             }

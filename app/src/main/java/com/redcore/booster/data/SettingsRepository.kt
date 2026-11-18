@@ -31,6 +31,11 @@ class SettingsRepository(private val context: Context) {
         val library = stringPreferencesKey("library")
         val removed = stringSetPreferencesKey("removed")
         val session = stringPreferencesKey("session_restore")
+        val edge = booleanPreferencesKey("edge_guard")
+        val edgeRange = intPreferencesKey("edge_range")
+        val trig = booleanPreferencesKey("triggers")
+        val l1x = floatPreferencesKey("l1x"); val l1y = floatPreferencesKey("l1y")
+        val r1x = floatPreferencesKey("r1x"); val r1y = floatPreferencesKey("r1y")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { p ->
@@ -45,6 +50,11 @@ class SettingsRepository(private val context: Context) {
             bubbleY = p[K.by] ?: 260,
             overlayScale = p[K.scale] ?: 1f,
             onboarded = p[K.onboarded] ?: false,
+            edgeGuard = p[K.edge] ?: false,
+            edgeRange = p[K.edgeRange] ?: 1,
+            triggers = p[K.trig] ?: false,
+            l1x = p[K.l1x] ?: 0.18f, l1y = p[K.l1y] ?: 0.55f,
+            r1x = p[K.r1x] ?: 0.82f, r1y = p[K.r1y] ?: 0.55f,
         )
     }
 
@@ -60,6 +70,12 @@ class SettingsRepository(private val context: Context) {
     suspend fun setFahrenheit(v: Boolean) = context.dataStore.edit { it[K.fahr] = v }
     suspend fun setOverlayScale(v: Float) = context.dataStore.edit { it[K.scale] = v }
     suspend fun setOnboarded() = context.dataStore.edit { it[K.onboarded] = true }
+    suspend fun setEdgeGuard(v: Boolean) = context.dataStore.edit { it[K.edge] = v }
+    suspend fun setEdgeRange(v: Int) = context.dataStore.edit { it[K.edgeRange] = v }
+    suspend fun setTriggers(v: Boolean) = context.dataStore.edit { it[K.trig] = v }
+    suspend fun setTriggerPoints(l1x: Float, l1y: Float, r1x: Float, r1y: Float) = context.dataStore.edit {
+        it[K.l1x] = l1x; it[K.l1y] = l1y; it[K.r1x] = r1x; it[K.r1y] = r1y
+    }
     suspend fun setBubble(x: Int, y: Int) = context.dataStore.edit { it[K.bx] = x; it[K.by] = y }
 
     suspend fun updateLibrary(transform: (List<GameProfile>) -> List<GameProfile>) = context.dataStore.edit {

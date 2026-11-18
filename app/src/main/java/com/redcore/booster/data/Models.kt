@@ -87,7 +87,16 @@ data class AppSettings(
     val bubbleY: Int = 260,
     val overlayScale: Float = 1f,
     val onboarded: Boolean = false,
-)
+    /** Edge touch guard: blocks palm touches on the screen's short edges during game sessions. */
+    val edgeGuard: Boolean = false,
+    val edgeRange: Int = 1, // 0 small, 1 medium, 2 broad
+    /** Volume-key triggers: Vol- = L1, Vol+ = R1, tapping configurable points during game sessions. */
+    val triggers: Boolean = false,
+    val l1x: Float = 0.18f, val l1y: Float = 0.55f,
+    val r1x: Float = 0.82f, val r1y: Float = 0.55f,
+) {
+    val edgeWidthDp: Int get() = when (edgeRange) { 0 -> 8; 2 -> 26; else -> 16 }
+}
 
 fun AppSettings.temp(c: Float?): String = when {
     c == null -> "—"
