@@ -78,6 +78,23 @@ object Routes {
         )
     }
 
+    /** Opens the right system screen (special permissions) or runtime prompt for a permission. */
+    @Composable
+    fun rememberGranter(vm: MainViewModel): (Perm) -> Unit {
+        val ctx = LocalContext.current
+        val runtimeLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { vm.refresh() }
+        return remember {
+            { p ->
+                when (p) {
+                    Perm.MEDIA -> runtimeLauncher.launch(Permissions.mediaPermissions())
+                    Perm.MICROPHONE -> runtimeLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO))
+                    Perm.NOTIFICATIONS -> if (Build.VERSION.SDK_INT >= 33) runtimeLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
+                    else -> Permissions.settingsIntent(ctx, p)?.let { runCatching { ctx.startActivity(it) }.onFailure { vm.toast("Open Settings › Apps › REDCORE to grant this.") } }
+                }
+            }
+        }
+    }
+
     @Composable
     fun Content(r: Route, vm: MainViewModel, nav: Navigator) {
         val ctx = LocalContext.current
@@ -92,17 +109,7 @@ object Routes {
         val toolkit by vm.toolkitRunning.collectAsStateWithLifecycle()
         val perms by vm.perms.collectAsStateWithLifecycle()
 
-        val runtimeLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { vm.refresh() }
-        val grant: (Perm) -> Unit = remember {
-            { p ->
-                when (p) {
-                    Perm.MEDIA -> runtimeLauncher.launch(Permissions.mediaPermissions())
-                    Perm.MICROPHONE -> runtimeLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO))
-                    Perm.NOTIFICATIONS -> if (Build.VERSION.SDK_INT >= 33) runtimeLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
-                    else -> Permissions.settingsIntent(ctx, p)?.let { runCatching { ctx.startActivity(it) }.onFailure { vm.toast("Open Settings › Apps › REDCORE to grant this.") } }
-                }
-            }
-        }
+        val grant = rememberGranter(vm)
         fun open(i: Intent) = runCatching { ctx.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }.onFailure { vm.toast("Not available on this phone") }
 
         when (r.dest) {

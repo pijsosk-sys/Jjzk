@@ -21,6 +21,7 @@ import androidx.activity.viewModels
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -38,11 +39,24 @@ import kotlinx.coroutines.runBlocking
 
 class MainActivity : ComponentActivity() {
     private val vm: MainViewModel by viewModels()
+    private val pendingDest = kotlinx.coroutines.flow.MutableStateFlow<Dest?>(null)
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        readDest(intent)
+    }
+
+    private fun readDest(i: android.content.Intent?) {
+        i?.getStringExtra(EXTRA_DEST)?.let { runCatching { Dest.valueOf(it) }.getOrNull() }?.let { pendingDest.value = it }
+    }
+
+    companion object { const val EXTRA_DEST = "dest" }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge(SystemBarStyle.dark(android.graphics.Color.TRANSPARENT), SystemBarStyle.dark(android.graphics.Color.TRANSPARENT))
         super.onCreate(savedInstanceState)
         val games = app.games
+        readDest(intent)
         setContent {
             RedcoreTheme {
                 CompositionLocalProvider(LocalIconLoader provides { pkg -> games.icon(pkg) }) {
@@ -63,19 +77,31 @@ class MainActivity : ComponentActivity() {
                             override fun back() { if (stack.size > 1) stack.removeAt(stack.lastIndex) else finish() }
                         }
                     }
-                    BackHandler(enabled = stack.size > 1 || sheet != null) {
-                        if (sheet != null) vm.dismissSheet() else nav.back()
+                    LaunchedEffect(Unit) {
+                        pendingDest.collect { d -> if (d != null) { nav.go(d); pendingDest.value = null } }
+                    }
+                    val askOpen by vm.ask.collectAsStateWithLifecycle()
+                    BackHandler(enabled = stack.size > 1 || sheet != null || askOpen != null) {
+                        when {
+                            askOpen != null -> vm.askDeclined()
+                            sheet != null -> vm.dismissSheet()
+                            else -> nav.back()
+                        }
                     }
                     val route = stack.last()
                     val loaded by vm.loaded.collectAsStateWithLifecycle()
                     val settings by vm.settings.collectAsStateWithLifecycle()
                     val notifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { vm.refresh() }
                     if (!loaded) { Box(Modifier.fillMaxSize().background(RC.Black)); return@CompositionLocalProvider }
+                    val granter = Routes.rememberGranter(vm)
+                    val ask by vm.ask.collectAsStateWithLifecycle()
+                    val perms by vm.perms.collectAsStateWithLifecycle()
+                    var onboardStep by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableIntStateOf(0) }
                     if (!settings.onboarded) {
-                        WelcomeScreen {
-                            vm.finishOnboarding()
+                        if (onboardStep == 0) WelcomeScreen {
+                            onboardStep = 1
                             if (Build.VERSION.SDK_INT >= 33) notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                        }
+                        } else com.redcore.booster.ui.screens.PermissionSetupScreen(perms, granter) { vm.finishOnboarding() }
                         return@CompositionLocalProvider
                     }
                     AppScaffold(
@@ -86,7 +112,10 @@ class MainActivity : ComponentActivity() {
                         onSelect = { nav.go(it) },
                         onBack = { nav.back() },
                         onSession = { nav.go(Dest.BOOST) },
-                        overlay = { ResultsPanel(sheet) { vm.dismissSheet() } },
+                        overlay = {
+                            ResultsPanel(sheet) { vm.dismissSheet() }
+                            com.redcore.booster.ui.screens.PermissionDialog(ask, onAllow = { ask?.perm?.let(granter); vm.askAccepted() }, onDecline = { vm.askDeclined() })
+                        },
                     ) { r -> Routes.Content(r, vm, nav) }
                 }
             }

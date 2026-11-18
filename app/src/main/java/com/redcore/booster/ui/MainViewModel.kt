@@ -68,6 +68,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _toast = MutableSharedFlow<String>(extraBufferCapacity = 4)
     val toast: SharedFlow<String> = _toast
 
+    private val _ask = MutableStateFlow<com.redcore.booster.ui.screens.PermAsk?>(null)
+    val ask = _ask.asStateFlow()
+    private var pendingPerm: Perm? = null
+    private var pendingAction: (() -> Unit)? = null
+    private var declineAction: (() -> Unit)? = null
+
+    /** Runs [action] if [p] is granted; otherwise explains why it's needed and resumes the action once it is granted. */
+    fun require(p: Perm, message: String, declineLabel: String = "Not now", onDecline: (() -> Unit)? = null, action: () -> Unit) {
+        if (Permissions.granted(getApplication(), p)) { action(); return }
+        pendingPerm = p; pendingAction = action; declineAction = onDecline
+        _ask.value = com.redcore.booster.ui.screens.PermAsk(p, message, declineLabel)
+    }
+
+    /** Called when the user taps Allow — the UI then opens the system screen / runtime prompt. */
+    fun askAccepted() { _ask.value = null }
+
+    fun askDeclined() {
+        _ask.value = null
+        val d = declineAction
+        pendingPerm = null; pendingAction = null; declineAction = null
+        d?.invoke()
+    }
+
     private val _background = MutableStateFlow<List<PlayStat>?>(null)
     val background = _background.asStateFlow()
 
@@ -83,6 +106,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun refresh() {
         val ctx = getApplication<Application>()
         _perms.value = Perm.entries.associateWith { Permissions.granted(ctx, it) }
+        pendingPerm?.let { p ->
+            if (_perms.value[p] == true) {
+                val a = pendingAction
+                pendingPerm = null; pendingAction = null; declineAction = null
+                a?.invoke()
+            }
+        }
         viewModelScope.launch {
             val lib = a.games.library.first().map { it.profile.pkg }.toSet()
             _recent.value = a.usage.recent(lib)
@@ -120,7 +150,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun dismissSheet() { _sheet.value = null }
 
-    fun launchGame(pkg: String) = viewModelScope.launch {
+    fun launchGame(pkg: String) {
+        val ctx = getApplication<Application>()
+        val wantsOverlay = library.value?.firstOrNull { it.profile.pkg == pkg }?.profile?.overlay ?: true
+        if (wantsOverlay && !Settings.canDrawOverlays(ctx)) {
+            require(Perm.OVERLAY, "Allow REDCORE to display over other apps so the gaming menu and HUD can appear inside ${a.games.label(pkg)}.",
+                declineLabel = "Play without menu", onDecline = { doLaunch(pkg) }) { doLaunch(pkg) }
+        } else doLaunch(pkg)
+    }
+
+    private fun doLaunch(pkg: String) = viewModelScope.launch {
         val ctx = getApplication<Application>()
         val intent = a.games.launchIntent(pkg)
         if (intent == null) { _toast.tryEmit("This game can't be opened (no launcher entry)."); return@launch }
@@ -132,9 +171,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun toggleToolkit() {
         val ctx = getApplication<Application>()
-        if (OverlayService.running.value) OverlayService.stop(ctx)
-        else if (Settings.canDrawOverlays(ctx)) OverlayService.start(ctx)
-        else _toast.tryEmit("Allow \"Display over other apps\" to use the floating toolkit.")
+        if (OverlayService.running.value) { OverlayService.stop(ctx); return }
+        require(Perm.OVERLAY, "The gaming menu floats on top of your games, so Android needs you to allow REDCORE to display over other apps.") {
+            OverlayService.start(ctx)
+            _toast.tryEmit("Toolkit on — tap the red bubble in any game")
+        }
     }
 
     fun addGames(pkgs: Collection<String>) = viewModelScope.launch {
@@ -153,16 +194,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setAutoDetect(v: Boolean) = viewModelScope.launch {
         val ctx = getApplication<Application>()
-        if (v && !Permissions.granted(ctx, Perm.USAGE)) { _toast.tryEmit("Grant Usage access first so REDCORE can see when a game opens."); return@launch }
-        a.settings.setAutoDetect(v)
-        if (v) GameDetectionService.start(ctx) else GameDetectionService.stop(ctx)
+        if (!v) { a.settings.setAutoDetect(false); GameDetectionService.stop(ctx); return@launch }
+        require(Perm.USAGE, "Auto game boost watches which app is in front so it can apply a game's profile the moment you open it. Android calls this Usage access.") {
+            viewModelScope.launch { a.settings.setAutoDetect(true); GameDetectionService.start(ctx) }
+        }
     }
 
     fun setHud(v: Boolean) = viewModelScope.launch { a.settings.setHud(v) }
     fun setRestore(v: Boolean) = viewModelScope.launch { a.settings.setRestore(v) }
     fun setFahrenheit(v: Boolean) = viewModelScope.launch { a.settings.setFahrenheit(v) }
     fun setOverlayScale(v: Float) = viewModelScope.launch { a.settings.setOverlayScale(v) }
-    fun setEdgeGuard(v: Boolean) = viewModelScope.launch { a.settings.setEdgeGuard(v) }
+    fun setEdgeGuard(v: Boolean) {
+        if (!v) { viewModelScope.launch { a.settings.setEdgeGuard(false) }; return }
+        require(Perm.OVERLAY, "The edge guard is a thin invisible layer over the screen edges, which needs permission to display over other apps.") {
+            viewModelScope.launch { a.settings.setEdgeGuard(true) }
+        }
+    }
     fun setEdgeRange(v: Int) = viewModelScope.launch {
         a.settings.setEdgeRange(v)
         if (com.redcore.booster.overlay.EdgeGuard.active.value) com.redcore.booster.overlay.EdgeGuard.show(getApplication(), a.settings.current().edgeWidthDp)
@@ -170,7 +217,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun previewEdge() = viewModelScope.launch {
         if (!com.redcore.booster.overlay.EdgeGuard.preview(getApplication(), a.settings.current().edgeWidthDp)) _toast.tryEmit("Allow \"Display over other apps\" first.")
     }
-    fun setTriggers(v: Boolean) = viewModelScope.launch { a.settings.setTriggers(v) }
+    fun setTriggers(v: Boolean) {
+        if (!v) { viewModelScope.launch { a.settings.setTriggers(false) }; return }
+        require(Perm.ACCESSIBILITY, "L1/R1 triggers turn the volume keys into screen taps. Android only allows that through an accessibility service. REDCORE's service never reads what's on your screen.") {
+            viewModelScope.launch { a.settings.setTriggers(true) }
+        }
+    }
     fun setTriggerPoints(l1x: Float, l1y: Float, r1x: Float, r1y: Float) = viewModelScope.launch { a.settings.setTriggerPoints(l1x, l1y, r1x, r1y) }
     fun finishOnboarding() = viewModelScope.launch { a.settings.setOnboarded() }
 

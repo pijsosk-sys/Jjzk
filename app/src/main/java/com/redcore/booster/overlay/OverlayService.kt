@@ -163,9 +163,18 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, ViewModelSto
         else ScreenRecordService.requestStart(this, mic)
     }
 
-    fun openApp() {
+    fun openApp(dest: String? = null) {
         setExpanded(false)
-        startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP).apply {
+            if (dest != null) putExtra(MainActivity.EXTRA_DEST, dest)
+        })
+    }
+
+    /** Opens the system screen where the user can grant [p], then collapses the menu. */
+    fun requestPermission(p: Perm, why: String) {
+        toast(why)
+        setExpanded(false)
+        Permissions.settingsIntent(this, p)?.let { runCatching { startActivity(it) } }
     }
 
     fun endSession() {

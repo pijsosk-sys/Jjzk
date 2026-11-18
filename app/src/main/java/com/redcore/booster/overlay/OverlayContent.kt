@@ -16,6 +16,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.filled.BrightnessAuto
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -113,6 +119,8 @@ data class OverlayState(
     val mic: Boolean,
     val edgeGuard: Boolean = false,
     val triggers: Boolean = false,
+    val autoBrightness: Boolean = false,
+    val secureGranted: Boolean = false,
 )
 
 interface OverlayActions {
@@ -130,6 +138,10 @@ interface OverlayActions {
     fun hud(on: Boolean) {}
     fun edgeGuard(on: Boolean) {}
     fun triggers(on: Boolean) {}
+    fun autoBrightness(on: Boolean) {}
+    fun refresh() {}
+    fun open(dest: String?) {}
+    fun grant(p: com.redcore.booster.booster.Perm) {}
     fun openApp() {}
     fun endSession() {}
 }
@@ -148,9 +160,10 @@ fun OverlayRoot(svc: OverlayService) {
     var bri by remember { mutableStateOf(a.boost.currentBrightnessPct()) }
     var vol by remember { mutableStateOf(a.boost.volumePct()) }
     var mic by remember { mutableStateOf(false) }
+    var auto by remember { mutableStateOf(a.boost.isAutoBrightness()) }
     val scope = rememberCoroutineScope()
     LaunchedEffect(expanded) {
-        if (expanded) { dnd = a.boost.isDndOn(); bri = a.boost.currentBrightnessPct(); vol = a.boost.volumePct() }
+        if (expanded) { dnd = a.boost.isDndOn(); bri = a.boost.currentBrightnessPct(); vol = a.boost.volumePct(); auto = a.boost.isAutoBrightness() }
     }
     val actions = remember {
         object : OverlayActions {
@@ -166,17 +179,30 @@ fun OverlayRoot(svc: OverlayService) {
                 }
             }
             override fun dnd(on: Boolean) {
-                val r = a.boost.setDnd(on)
-                if (r.state != ActionState.APPLIED) svc.toast(r.detail)
+                if (!a.boost.canSetDnd()) { grant(com.redcore.booster.booster.Perm.DND); return }
+                a.boost.setDnd(on)
                 dnd = a.boost.isDndOn()
             }
-            override fun brightness(p: Int) { a.boost.setBrightness(p); bri = p }
+            override fun brightness(p: Int) { a.boost.setBrightness(p); bri = p; auto = false }
+            override fun autoBrightness(on: Boolean) {
+                if (!a.boost.canSetBrightness()) { grant(com.redcore.booster.booster.Perm.WRITE_SETTINGS); return }
+                a.boost.setAutoBrightness(on); auto = a.boost.isAutoBrightness()
+            }
+            override fun refresh() {
+                val r = a.boost.cycleRefresh(stats.refreshHz)
+                svc.toast(r.detail)
+            }
+            override fun open(dest: String?) = svc.openApp(dest)
+            override fun grant(p: com.redcore.booster.booster.Perm) {
+                svc.requestPermission(p, "REDCORE needs \"${p.title}\" for this — turn it on, then come back to your game.")
+            }
             override fun volume(p: Int) { a.boost.setVolumePct(p); vol = p }
             override fun screenshot() = svc.screenshot()
             override fun record() = svc.toggleRecording(mic)
             override fun mic(on: Boolean) {
                 if (on && !com.redcore.booster.booster.Permissions.has(svc, android.Manifest.permission.RECORD_AUDIO)) {
                     svc.toast("Allow Microphone in REDCORE › Settings › Permissions to record voice chat.")
+                    svc.openApp("SETTINGS")
                     return
                 }
                 mic = on
@@ -189,7 +215,7 @@ fun OverlayRoot(svc: OverlayService) {
             }
             override fun triggers(on: Boolean) {
                 if (on && !com.redcore.booster.booster.Permissions.accessibilityEnabled(svc)) {
-                    svc.toast("Enable the REDCORE accessibility service first (Settings › Permissions).")
+                    grant(com.redcore.booster.booster.Perm.ACCESSIBILITY)
                     return
                 }
                 scope.launch { a.settings.setTriggers(on) }
@@ -200,14 +226,18 @@ fun OverlayRoot(svc: OverlayService) {
         }
     }
     OverlayUi(
-        OverlayState(stats, settings, session, expanded, recording, dnd, a.boost.canSetDnd(), if (a.boost.canSetBrightness()) bri else null, vol, mic, edge, settings.triggers),
+        OverlayState(stats, settings, session, expanded, recording, dnd, a.boost.canSetDnd(), if (a.boost.canSetBrightness()) bri else null, vol, mic, edge, settings.triggers,
+            auto, com.redcore.booster.booster.Permissions.granted(svc, com.redcore.booster.booster.Perm.SECURE_SETTINGS)),
         actions
     )
 }
 
 @Composable
 fun OverlayUi(s: OverlayState, act: OverlayActions) {
-    if (s.expanded) ExpandedPanel(s, act) else Collapsed(s, act)
+    if (!s.expanded) Collapsed(s, act)
+    else BoxWithConstraints(Modifier.fillMaxSize()) {
+        if (maxWidth > maxHeight && maxWidth >= 560.dp) GameHud(s, act) else ExpandedPanel(s, act)
+    }
 }
 
 @Composable
@@ -473,5 +503,301 @@ private fun Footer(s: OverlayState) {
         Text(s.settings.temp(st.batteryTempC), style = RCType.label.copy(fontSize = 9.sp, color = tempColor(st.batteryTempC)))
         Text("↓ ${fmtRate(st.rxBps)}", style = RCType.label.copy(fontSize = 9.sp, color = RC.Violet))
         Text("${st.refreshHz ?: "—"} Hz", style = RCType.label.copy(fontSize = 9.sp))
+    }
+}
+
+
+// ============================================================================================
+// Landscape game HUD: side panels slide in from the screen edges, framed by chevron bands,
+// leaving the game visible in the middle. Tapping the game closes it.
+// ============================================================================================
+
+private val HudOrange = Color(0xFFFF7A1A)
+
+@Composable
+private fun GameHud(s: OverlayState, act: OverlayActions) {
+    val shown = remember { androidx.compose.animation.core.MutableTransitionState(false).apply { targetState = true } }
+    val t = rememberInfiniteTransition(label = "hud")
+    val flow by t.animateFloat(0f, 1f, infiniteRepeatable(tween(1400, easing = LinearEasing)), label = "flow")
+    BoxWithConstraints(Modifier.fillMaxSize().clickable(remember { MutableInteractionSource() }, null) { act.expand(false) }) {
+        val sideW = maxWidth * 0.36f
+        AnimatedVisibility(shown, enter = fadeIn(tween(250))) {
+            // subtle vignette over the game so the panels read clearly
+            Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(Color(0x66000000), Color(0x11000000), Color(0x11000000), Color(0x66000000)))))
+        }
+        AnimatedVisibility(
+            shown, modifier = Modifier.align(Alignment.CenterStart),
+            enter = androidx.compose.animation.slideInHorizontally(tween(380, easing = androidx.compose.animation.core.FastOutSlowInEasing)) { -it } + fadeIn(tween(250))
+        ) { SidePanel(left = true, width = sideW, flow = flow) { LeftContent(s, act) } }
+        AnimatedVisibility(
+            shown, modifier = Modifier.align(Alignment.CenterEnd),
+            enter = androidx.compose.animation.slideInHorizontally(tween(380, easing = androidx.compose.animation.core.FastOutSlowInEasing)) { it } + fadeIn(tween(250))
+        ) { SidePanel(left = false, width = sideW, flow = flow) { RightContent(s, act) } }
+        AnimatedVisibility(
+            shown, modifier = Modifier.align(Alignment.TopCenter).padding(top = 10.dp),
+            enter = androidx.compose.animation.slideInVertically(tween(380)) { -it } + fadeIn()
+        ) { TopTitle(s) }
+        AnimatedVisibility(
+            shown, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 10.dp),
+            enter = androidx.compose.animation.slideInVertically(tween(380)) { it } + fadeIn()
+        ) { BottomInfo(s) }
+    }
+}
+
+/** Dark side panel whose inner edge is a segmented chevron band pointing toward the game. */
+@Composable
+private fun SidePanel(left: Boolean, width: androidx.compose.ui.unit.Dp, flow: Float, content: @Composable () -> Unit) {
+    Box(
+        Modifier.width(width).fillMaxHeight()
+            .clickable(remember { MutableInteractionSource() }, null) {}
+            .drawBehind {
+                val w = size.width; val h = size.height
+                fun edgeX(t: Float): Float { // 0..1 down the screen; band bulges toward the centre at mid-height
+                    val k = 1f - kotlin.math.abs(t * 2f - 1f)
+                    val x = w * (0.80f + 0.13f * k)
+                    return if (left) x else w - x
+                }
+                val fill = Path().apply {
+                    if (left) { moveTo(0f, 0f); lineTo(edgeX(0f), 0f); lineTo(edgeX(0.5f), h / 2); lineTo(edgeX(1f), h); lineTo(0f, h) }
+                    else { moveTo(w, 0f); lineTo(edgeX(0f), 0f); lineTo(edgeX(0.5f), h / 2); lineTo(edgeX(1f), h); lineTo(w, h) }
+                    close()
+                }
+                drawPath(fill, Brush.horizontalGradient(
+                    if (left) listOf(Color(0xF00A0B10), Color(0xE6101219)) else listOf(Color(0xE6101219), Color(0xF00A0B10))
+                ))
+                // chevron band
+                val bandW = w * 0.065f
+                val segs = 14
+                for (i in 0 until segs) {
+                    val t0 = i / segs.toFloat(); val t1 = (i + 0.7f) / segs
+                    val dir = if (left) -1f else 1f
+                    val p = Path().apply {
+                        moveTo(edgeX(t0), h * t0); lineTo(edgeX(t0) + dir * bandW, h * t0)
+                        lineTo(edgeX(t1) + dir * bandW, h * t1); lineTo(edgeX(t1), h * t1); close()
+                    }
+                    val phase = ((i / segs.toFloat()) - flow).let { it - kotlin.math.floor(it) }
+                    val a = 0.45f + 0.55f * (1f - phase)
+                    drawPath(p, Brush.verticalGradient(listOf(RC.Red.copy(alpha = a), HudOrange.copy(alpha = a)), startY = h * t0, endY = h * t1))
+                }
+                // metallic inner rim
+                val rim = Path().apply { moveTo(edgeX(0f) - (if (left) bandW * 1.25f else -bandW * 1.25f), 0f)
+                    lineTo(edgeX(0.5f) - (if (left) bandW * 1.25f else -bandW * 1.25f), h / 2)
+                    lineTo(edgeX(1f) - (if (left) bandW * 1.25f else -bandW * 1.25f), h) }
+                drawPath(rim, RC.Metal, style = Stroke(2f))
+            }
+    ) {
+        Box(Modifier.fillMaxHeight().fillMaxWidth(0.79f).align(if (left) Alignment.CenterStart else Alignment.CenterEnd)) { content() }
+    }
+}
+
+@Composable
+private fun RoundIcon(icon: ImageVector, desc: String, onClick: () -> Unit) {
+    Box(
+        Modifier.size(34.dp).clip(CircleShape).background(Color(0xFF1E2029)).border(1.dp, RC.Stroke, CircleShape).clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) { Icon(icon, desc, tint = RC.Text, modifier = Modifier.size(17.dp)) }
+}
+
+@Composable
+private fun LeftContent(s: OverlayState, act: OverlayActions) {
+    Column(Modifier.fillMaxSize().padding(start = 12.dp, top = 10.dp, bottom = 10.dp, end = 4.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            RoundIcon(com.redcore.booster.ui.rcIcon(com.redcore.booster.R.drawable.ic_rc_home), "Open REDCORE") { act.open(null) }
+            RoundIcon(com.redcore.booster.ui.rcIcon(com.redcore.booster.R.drawable.ic_rc_gamepad), "Game Space") { act.open("GAMES") }
+            RoundIcon(com.redcore.booster.ui.rcIcon(com.redcore.booster.R.drawable.ic_rc_gauge), "Performance") { act.open("BOOST") }
+            RoundIcon(com.redcore.booster.ui.rcIcon(com.redcore.booster.R.drawable.ic_rc_touch), "Touch") { act.open("TOUCH") }
+        }
+        Spacer(Modifier.height(10.dp))
+        Row(Modifier.weight(1f)) {
+            Column(Modifier.width(76.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                ToolCard("Edge guard", com.redcore.booster.ui.rcIcon(com.redcore.booster.R.drawable.ic_rc_touch), s.edgeGuard) { act.edgeGuard(!s.edgeGuard) }
+                ToolCard("L1 / R1", com.redcore.booster.ui.rcIcon(com.redcore.booster.R.drawable.ic_rc_gamepad), s.triggers) { act.triggers(!s.triggers) }
+                ToolCard("HUD", Icons.Default.Speed, s.settings.hudEnabled) { act.hud(!s.settings.hudEnabled) }
+                ToolCard("Close apps", Icons.Default.AutoDelete, false) { act.clean() }
+            }
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                HudReadout(s.stats.peakCurMHz?.let { "%.2f".format(it / 1000f) } ?: "—", "GHz", "CPU", RC.Red)
+                Spacer(Modifier.height(6.dp))
+                val mode = s.session?.mode ?: s.settings.globalMode
+                ChevronChip(mode.title, mode.accent()) { act.mode(GameMode.entries[(mode.ordinal + 1) % GameMode.entries.size]) }
+                Spacer(Modifier.weight(1f))
+                VerticalLevel(
+                    if (s.autoBrightness) 0f else (s.brightness ?: 0) / 100f, enabled = s.brightness != null,
+                    icon = Icons.Default.BrightnessMedium, color = Color.White,
+                    onChange = { act.brightness((it * 100).toInt().coerceAtLeast(1)) },
+                    onLocked = { act.grant(com.redcore.booster.booster.Perm.WRITE_SETTINGS) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RightContent(s: OverlayState, act: OverlayActions) {
+    Column(Modifier.fillMaxSize().padding(end = 12.dp, top = 10.dp, bottom = 10.dp, start = 4.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+            Text("${s.stats.refreshHz ?: "—"} Hz", style = RCType.label.copy(fontSize = 9.sp, color = RC.TextDim))
+            Spacer(Modifier.width(10.dp))
+            RoundIcon(Icons.Default.Close, "Close") { act.expand(false) }
+        }
+        Spacer(Modifier.height(10.dp))
+        Row(Modifier.weight(1f)) {
+            Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                val st = s.stats
+                if (st.gpuMHz != null) HudReadout("${st.gpuMHz}", "MHz", "GPU", RC.Violet)
+                else HudReadout("${(st.ramFraction * 100).toInt()}", "%", "RAM", RC.Blue)
+                Spacer(Modifier.height(6.dp))
+                ChevronChip(if (s.dndOn) "No alerts" else "All alerts", if (s.dndOn) HudOrange else RC.TextDim) { act.dnd(!s.dndOn) }
+                Spacer(Modifier.weight(1f))
+                VerticalLevel(
+                    s.volume / 100f, enabled = true, icon = Icons.AutoMirrored.Filled.VolumeUp, color = Color.White,
+                    onChange = { act.volume((it * 100).toInt()) }, onLocked = {}
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            val tiles = listOf(
+                QT("Screenshot", Icons.Default.Screenshot, false) { act.screenshot() },
+                QT(if (s.recording) "Stop rec" else "Record", Icons.Default.FiberManualRecord, s.recording) { act.record() },
+                QT(if (s.mic) "Mic on" else "Mic off", if (s.mic) Icons.Default.Mic else Icons.Default.MicOff, s.mic) { act.mic(!s.mic) },
+                QT("${s.stats.refreshHz ?: "—"}Hz", com.redcore.booster.ui.rcIcon(com.redcore.booster.R.drawable.ic_rc_monitor), false, enabled = s.secureGranted) { act.refresh() },
+                QT("Auto light", Icons.Default.BrightnessAuto, s.autoBrightness, enabled = s.brightness != null) { act.autoBrightness(!s.autoBrightness) },
+                QT("End", Icons.Default.PowerSettingsNew, false, danger = true) { act.endSession() },
+            )
+            Column(Modifier.width(118.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                tiles.chunked(2).forEach { row ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { row.forEach { HudTile(it, Modifier.weight(1f)) } }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HudReadout(value: String, unit: String, label: String, color: Color) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(value, style = androidx.compose.ui.text.TextStyle(fontFamily = Orbitron, fontWeight = FontWeight.Black, fontStyle = FontStyle.Italic, fontSize = 30.sp, color = Color.White), maxLines = 1, softWrap = false)
+        Text(unit, style = RCType.label.copy(fontSize = 8.sp))
+        Canvas(Modifier.width(112.dp).height(30.dp)) {
+            for (i in 0..3) {
+                val w = size.width * (1f - i * 0.18f); val h = size.height * (0.62f - i * 0.12f)
+                val y = size.height * (0.15f + i * 0.17f)
+                drawOval(Brush.radialGradient(listOf(color.copy(alpha = 0.55f), Color.Transparent), Offset(size.width / 2, y + h / 2), w / 2), Offset((size.width - w) / 2, y), Size(w, h))
+                drawOval(if (i % 2 == 0) color.copy(alpha = 0.95f - i * 0.2f) else HudOrange.copy(alpha = 0.7f), Offset((size.width - w) / 2, y), Size(w, h), style = Stroke(2f))
+            }
+        }
+        Text("— $label —", style = RCType.label.copy(fontSize = 10.sp, color = color, fontWeight = FontWeight.Bold))
+    }
+}
+
+@Composable
+private fun ChevronChip(text: String, color: Color, onClick: () -> Unit) {
+    Box(
+        Modifier.height(30.dp).clickable(onClick = onClick).drawBehind {
+            val w = size.width; val h = size.height; val n = h * 0.45f
+            val p = Path().apply { moveTo(n, 0f); lineTo(w - n, 0f); lineTo(w, h / 2); lineTo(w - n, h); lineTo(n, h); lineTo(0f, h / 2); close() }
+            drawPath(p, Color(0xCC14161E)); drawPath(p, color, style = Stroke(2.5f))
+        }.padding(horizontal = 20.dp),
+        contentAlignment = Alignment.Center
+    ) { Text(text, style = RCType.strong.copy(fontSize = 13.sp, color = Color.White), maxLines = 1) }
+}
+
+/** Stacked-bar vertical slider (brightness / volume), drag or tap to set. */
+@Composable
+private fun VerticalLevel(value: Float, enabled: Boolean, icon: ImageVector, color: Color, onChange: (Float) -> Unit, onLocked: () -> Unit) {
+    var v by remember(value) { mutableFloatStateOf(value.coerceIn(0f, 1f)) }
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Canvas(
+            Modifier.width(40.dp).height(96.dp)
+                .pointerInput(enabled) {
+                    if (!enabled) detectTapGestures { onLocked() }
+                    else detectTapGestures { o -> v = (1f - o.y / size.height).coerceIn(0f, 1f); onChange(v) }
+                }
+                .pointerInput(enabled) {
+                    if (enabled) detectVerticalDragGestures { change, _ ->
+                        change.consume(); v = (1f - change.position.y / size.height).coerceIn(0f, 1f); onChange(v)
+                    }
+                }
+        ) {
+            val n = 12; val gap = size.height / n
+            for (i in 0 until n) {
+                val y = size.height - (i + 1) * gap + gap * 0.25f
+                val on = enabled && (i + 1) / n.toFloat() <= v + 0.001f
+                val wFrac = 0.55f + 0.45f * (i / (n - 1f))
+                drawRoundRect(if (on) color else Color(0x55FFFFFF), Offset(size.width * (1 - wFrac) / 2, y), Size(size.width * wFrac, gap * 0.5f), androidx.compose.ui.geometry.CornerRadius(3f))
+            }
+        }
+        Spacer(Modifier.height(3.dp))
+        Icon(icon, null, tint = if (enabled) color else RC.TextMute, modifier = Modifier.size(15.dp))
+        if (!enabled) Text("Tap to allow", style = RCType.label.copy(fontSize = 6.sp, color = HudOrange))
+    }
+}
+
+@Composable
+private fun ToolCard(label: String, icon: ImageVector, active: Boolean, onClick: () -> Unit) {
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
+            .background(if (active) Brush.verticalGradient(listOf(HudOrange.copy(alpha = 0.9f), RC.Red)) else Brush.verticalGradient(listOf(Color(0xFF2A2D37), Color(0xFF1C1E26))))
+            .border(1.dp, if (active) HudOrange else RC.Stroke, RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick).padding(vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(icon, null, tint = Color.White, modifier = Modifier.size(19.dp))
+        Text(label, style = RCType.bodyDim.copy(fontSize = 10.sp, color = if (active) Color.White else RC.TextDim), maxLines = 1)
+    }
+}
+
+@Composable
+private fun HudTile(t: QT, modifier: Modifier) {
+    Column(modifier.clickable(onClick = t.onClick), horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            Modifier.size(44.dp).clip(RoundedCornerShape(9.dp))
+                .background(
+                    when {
+                        t.active -> Brush.verticalGradient(listOf(HudOrange, RC.Red))
+                        t.danger -> Brush.verticalGradient(listOf(Color(0xFF3A0610), Color(0xFF1C0408)))
+                        else -> Brush.verticalGradient(listOf(Color(0xFF2E313B), Color(0xFF1E2028)))
+                    }
+                )
+                .border(1.dp, if (t.active) HudOrange else if (t.danger) RC.Red else RC.Stroke, RoundedCornerShape(9.dp)),
+            contentAlignment = Alignment.Center
+        ) { Icon(t.icon, t.label, tint = if (!t.enabled) RC.TextMute else if (t.danger) RC.Red else Color.White, modifier = Modifier.size(20.dp)) }
+        Text(t.label, style = RCType.bodyDim.copy(fontSize = 10.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+private fun TopTitle(s: OverlayState) {
+    Row(
+        Modifier.clip(RoundedCornerShape(16.dp)).background(Color(0xB30A0B10)).border(1.dp, RC.Red.copy(alpha = 0.6f), RoundedCornerShape(16.dp))
+            .padding(horizontal = 12.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        RedcoreLogo(16.dp)
+        Spacer(Modifier.width(6.dp))
+        Text((s.session?.label ?: "REDCORE").uppercase(), style = RCType.label.copy(fontSize = 9.sp, color = Color.White), maxLines = 1)
+    }
+}
+
+@Composable
+private fun BottomInfo(s: OverlayState) {
+    var now by remember { mutableStateOf(Date()) }
+    LaunchedEffect(Unit) { while (true) { delay(15_000); now = Date() } }
+    val st = s.stats
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Row(
+            Modifier.clip(RoundedCornerShape(6.dp)).background(Color(0xCC0A0B10)).padding(horizontal = 12.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("REDCORE", style = RCType.label.copy(fontSize = 8.sp, color = RC.Text, letterSpacing = 3.sp))
+            Text(SimpleDateFormat("HH:mm", Locale.getDefault()).format(now), style = RCType.label.copy(fontSize = 8.sp, color = RC.Text))
+            Text("▮ ${st.batteryPct ?: "—"}%", style = RCType.label.copy(fontSize = 8.sp, color = RC.Green))
+            Text(s.settings.temp(st.batteryTempC), style = RCType.label.copy(fontSize = 8.sp, color = tempColor(st.batteryTempC)))
+            Text("⇣ ${fmtRate(st.rxBps)}", style = RCType.label.copy(fontSize = 8.sp, color = RC.Text))
+        }
+        Spacer(Modifier.height(4.dp))
+        Box(Modifier.clip(RoundedCornerShape(12.dp)).background(Color(0xCC000000)).padding(horizontal = 14.dp, vertical = 4.dp)) {
+            Text("Tap the game to close · tap CPU mode to switch", style = RCType.bodyDim.copy(fontSize = 11.sp, color = RC.Text))
+        }
     }
 }

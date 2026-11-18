@@ -44,6 +44,7 @@ import com.redcore.booster.ui.SpeedPhase
 import com.redcore.booster.ui.SpeedState
 import com.redcore.booster.ui.components.LocalIconLoader
 import com.redcore.booster.ui.screens.*
+import com.redcore.booster.ui.screens.PermAsk
 import com.redcore.booster.ui.theme.RedcoreTheme
 import org.junit.Rule
 import org.junit.Test
@@ -185,12 +186,31 @@ class ScreenshotTest {
 
     @Test fun a17_welcome() = capture("17_welcome") { WelcomeScreen {} }
 
+    @Test fun a17b_permissions() = capture("17b_permission_setup") {
+        PermissionSetupScreen(Perm.entries.associateWith { it == Perm.NOTIFICATIONS || it == Perm.DND }, {}, {})
+    }
+
+    @Test fun a17c_permissionDialog() = shot("17c_permission_prompt", Dest.GAMES) {
+        GameSpaceScreen(SampleData.library, today, week, true, {}, {}, {}, {}, {})
+        PermissionDialog(PermAsk(Perm.OVERLAY, "Allow REDCORE to display over other apps so the gaming menu and HUD can appear inside Sky Raiders.", "Play without menu"), {}, {})
+    }
+
     @Composable
     private fun FakeGame(content: @Composable () -> Unit) {
-        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF7FB7E8), Color(0xFFCFE3F2), Color(0xFF8C7F6A))))) {
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF3B6FB6), Color(0xFF9CC7EE), Color(0xFFE8D9B5))))) {
             Canvas(Modifier.fillMaxSize()) {
-                drawRect(Color(0xFF5E7044), Offset(0f, size.height * 0.62f))
-                for (i in 0..8) drawRect(Color(0xFFE8EEF2), Offset(size.width * (0.08f + i * 0.1f), size.height * 0.25f), androidx.compose.ui.geometry.Size(18f, size.height * 0.4f))
+                val w = size.width; val h = size.height
+                // distant towers
+                for (i in 0..10) {
+                    val x = w * (0.05f + i * 0.09f); val th = h * (0.25f + (i % 3) * 0.08f)
+                    drawRect(Color(0xFFDDE6EE).copy(alpha = 0.8f), Offset(x, h * 0.62f - th), androidx.compose.ui.geometry.Size(w * 0.025f, th))
+                }
+                // pillar + platform
+                drawRect(Color(0xFFF2F2F2), Offset(w * 0.58f, 0f), androidx.compose.ui.geometry.Size(w * 0.035f, h * 0.75f))
+                val path = androidx.compose.ui.graphics.Path().apply { moveTo(w * 0.3f, h); lineTo(w * 0.44f, h * 0.68f); lineTo(w * 0.58f, h * 0.68f); lineTo(w * 0.72f, h); close() }
+                drawPath(path, Color(0xFFC9B48E))
+                drawRect(Color(0xFF4B5A88), Offset(w * 0.44f, h * 0.62f), androidx.compose.ui.geometry.Size(w * 0.14f, h * 0.06f))
+                drawCircle(Color.White.copy(alpha = 0.5f), w * 0.12f, Offset(w * 0.52f, h * 0.2f))
             }
             content()
         }

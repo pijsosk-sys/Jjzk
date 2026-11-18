@@ -13,6 +13,7 @@ REDCORE only shows real readings and only performs actions that Android allows. 
 | ![Touch triggers](docs/screenshots/touch_triggers.jpg) | ![Edge guard](docs/screenshots/touch_edge_guard.jpg) |
 | ![Cooling](docs/screenshots/cooling.jpg) | ![Network](docs/screenshots/network.jpg) |
 | ![Device research](docs/screenshots/device.jpg) | ![Storage](docs/screenshots/storage.jpg) |
+| ![Permission setup](docs/screenshots/permission_setup.jpg) | ![Permission prompt](docs/screenshots/permission_prompt.jpg) |
 
 ## Features
 
@@ -21,7 +22,7 @@ REDCORE only shows real readings and only performs actions that Android allows. 
 | **Control Center** | Live CPU clock and RAM stage, mode selector, quick status, toolbox, recently played games. |
 | **Game Space** | 3D game carousel on a neon stage. Finds installed games automatically, and you can add or remove any app. Shows Today/Week play summary rings and a weekly bar chart. Each game has its own profile. |
 | **Performance** | CPU and GPU rings, Eco / Balanced / Beast modes, a per-action plan showing what each mode will do and whether it's allowed, results of the active session, background app cleanup, recommendations. |
-| **Floating toolkit** | Draggable bubble with a live HUD (CPU, RAM, temperature, battery, network). The expanded panel has modes, Do Not Disturb, screenshot, screen recording (with optional mic), close apps, HUD, edge guard, L1/R1 triggers, brightness and volume sliders, and end session. |
+| **In-game menu** | Draggable bubble with a live HUD (CPU, RAM, temperature, battery, network). Tapping it opens a full-screen game menu: side panels slide in from both edges behind chevron bands and the game stays visible in the middle. Left side: CPU readout, mode switch, brightness bar, tools (edge guard, L1/R1, HUD, close apps). Right side: RAM/GPU readout, notification mode, volume bar, screenshot, recording, mic, refresh rate, auto brightness, end session. Tap the game to close it. |
 | **Monitor** | Per-core CPU clocks, memory, temperature and network charts, GPU info, and an honest note about FPS. |
 | **Cooling** | Temperature gauge, Android thermal status and headroom, history graph, readable thermal zones, fan detection (never a fake fan switch). |
 | **Battery** | Level ring, temperature, voltage, current, power, cycles, design capacity, live charts, recommendations. |
@@ -81,7 +82,7 @@ Minimum Android 8.0 (API 26). Tested against Android 15 (API 35).
 
 ### First-run setup
 
-Open **Settings › Permissions** and grant what you want to use. Everything is optional.
+On first launch, REDCORE shows a welcome screen, then a **permission setup** screen that explains each permission and opens the right Android page for it. Whenever you use a feature without its permission (for example starting the in-game menu or L1/R1), an in-app prompt explains why it's needed. The action continues automatically when you come back with it granted. Everything is optional, and you can manage it all later in **Settings › Permissions**.
 
 | Permission | Unlocks |
 |---|---|

@@ -2,6 +2,7 @@ package com.redcore.booster.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -104,20 +105,19 @@ fun SettingsScreen(s: AppSettings, perms: Map<Perm, Boolean>, toolkitOn: Boolean
         }, right = {
             SectionHeader("Permissions")
             GlassPanel(Modifier.fillMaxWidth()) {
-                Perm.entries.forEachIndexed { i, p ->
-                    if (i > 0) Divider()
-                    val granted = perms[p] == true
-                    Row(Modifier.fillMaxWidth().padding(vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(p.title, style = RCType.strong.copy(fontSize = 15.sp))
-                            Text(p.why, style = RCType.bodyDim)
-                        }
-                        Spacer(Modifier.width(10.dp))
-                        when {
-                            granted -> Icon(Icons.Default.CheckCircle, "Granted", tint = RC.Green, modifier = Modifier.size(24.dp))
-                            p == Perm.SECURE_SETTINGS -> GlowButton("ADB", primary = false, icon = Icons.Default.ContentCopy, onClick = act::copyAdb)
-                            else -> GlowButton("Grant", onClick = { act.grant(p) })
-                        }
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Perm.entries.forEach { p ->
+                        if (p == Perm.SECURE_SETTINGS) {
+                            Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(p.title, style = RCType.strong.copy(fontSize = 15.sp))
+                                    Text(p.why, style = RCType.bodyDim)
+                                }
+                                Spacer(Modifier.width(10.dp))
+                                if (perms[p] == true) Icon(Icons.Default.CheckCircle, "Granted", tint = RC.Green, modifier = Modifier.size(24.dp))
+                                else GlowButton("ADB", primary = false, icon = Icons.Default.ContentCopy, onClick = act::copyAdb)
+                            }
+                        } else PermCard(p, perms[p] == true) { act.grant(p) }
                     }
                 }
                 if (perms[Perm.SECURE_SETTINGS] != true) {

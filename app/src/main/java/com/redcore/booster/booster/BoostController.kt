@@ -116,6 +116,30 @@ class BoostController(
         }
     }
 
+    fun setAutoBrightness(on: Boolean): ActionResult {
+        if (!canSetBrightness()) return ActionResult("Auto brightness", ActionState.BLOCKED, "Grant \"Modify system settings\" first.")
+        return runCatching {
+            Settings.System.putInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS_MODE,
+                if (on) Settings.System.SCREEN_BRIGHTNESS_MODE_AUTOMATIC else Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL)
+            ActionResult("Auto brightness", ActionState.APPLIED, if (on) "Auto brightness on" else "Auto brightness off")
+        }.getOrElse { ActionResult("Auto brightness", ActionState.BLOCKED, it.message ?: "Rejected by system.") }
+    }
+
+    /** Cycles the peak refresh rate through the display's supported rates. Needs the ADB-granted permission on most phones. */
+    fun cycleRefresh(currentHz: Int?): ActionResult {
+        val rates = supportedRefreshRates().map { it.roundToInt() }.distinct().sorted()
+        if (rates.size < 2) return ActionResult("Refresh rate", ActionState.SKIPPED, "This display only supports ${rates.firstOrNull() ?: "one"} Hz.")
+        val next = rates.firstOrNull { it > (currentHz ?: 0) } ?: rates.first()
+        return try {
+            val cr = context.contentResolver
+            Settings.System.putFloat(cr, KEY_PEAK, next.toFloat())
+            Settings.System.putFloat(cr, KEY_MIN, next.toFloat())
+            ActionResult("Refresh rate", ActionState.APPLIED, "$next Hz")
+        } catch (_: Exception) {
+            ActionResult("Refresh rate", ActionState.BLOCKED, "Needs the one-time ADB grant (REDCORE › Settings › Permissions).")
+        }
+    }
+
     suspend fun cleanBackground(): ActionResult = withContext(Dispatchers.IO) {
         if (!usage.hasAccess()) return@withContext ActionResult("Background apps", ActionState.BLOCKED, "Grant Usage access so REDCORE can see which apps ran recently.")
         val launcher = context.packageManager.resolveActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), 0)?.activityInfo?.packageName
