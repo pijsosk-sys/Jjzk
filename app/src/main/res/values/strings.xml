@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">REDCORE</string>
+    <string name="accessibility_label">REDCORE screenshot shortcut</string>
+    <string name="accessibility_desc">Lets the REDCORE floating toolkit take a screenshot when you tap its Screenshot button. REDCORE does not read, collect or store any screen content or window events.</string>
+</resources>
