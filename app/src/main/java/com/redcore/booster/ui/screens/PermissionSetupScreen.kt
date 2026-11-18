@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DoNotDisturbOn
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.PhoneDisabled
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -67,6 +68,9 @@ fun Perm.icon(): ImageVector = when (this) {
     Perm.MEDIA -> rcIcon(R.drawable.ic_rc_storage)
     Perm.MICROPHONE -> Icons.Default.Mic
     Perm.SECURE_SETTINGS -> rcIcon(R.drawable.ic_rc_gauge)
+    Perm.NOTIF_ACCESS -> Icons.Default.Notifications
+    Perm.CALL_SCREENING -> Icons.Default.PhoneDisabled
+    Perm.FPS_ADB -> rcIcon(R.drawable.ic_rc_monitor)
 }
 
 val Perm.recommended: Boolean get() = this in setOf(Perm.OVERLAY, Perm.USAGE, Perm.DND, Perm.WRITE_SETTINGS, Perm.NOTIFICATIONS)
@@ -79,13 +83,15 @@ val Perm.howTo: String get() = when (this) {
     Perm.WRITE_SETTINGS -> "Android opens \"Modify system settings\". Switch it on, then press Back."
     Perm.ACCESSIBILITY -> "Android opens Accessibility. Tap \"Installed apps\" › REDCORE screenshot & triggers › On."
     Perm.NOTIFICATIONS, Perm.MEDIA, Perm.MICROPHONE -> "Android will show a permission pop-up. Tap Allow."
-    Perm.SECURE_SETTINGS -> "Run the ADB command shown in Settings › Permissions from a computer."
+    Perm.SECURE_SETTINGS, Perm.FPS_ADB -> "Run the ADB command shown in Settings › Permissions from a computer."
+    Perm.NOTIF_ACCESS -> "Android opens \"Notification access\". Switch on \"REDCORE game barrage\", then press Back."
+    Perm.CALL_SCREENING -> "Android asks whether REDCORE may be your call-screening app. Tap Set as default / Allow."
 }
 
 /** First-run permission setup. Every permission is optional; the screen explains what each unlocks. */
 @Composable
 fun PermissionSetupScreen(perms: Map<Perm, Boolean>, onGrant: (Perm) -> Unit, onDone: () -> Unit) {
-    val list = Perm.entries.filter { it != Perm.SECURE_SETTINGS }
+    val list = Perm.entries.filter { it !in com.redcore.booster.booster.Permissions.adbOnly && (it != Perm.CALL_SCREENING || android.os.Build.VERSION.SDK_INT >= 29) }
     val granted = list.count { perms[it] == true }
     val recommendedDone = list.filter { it.recommended }.all { perms[it] == true }
     HudBackdrop {

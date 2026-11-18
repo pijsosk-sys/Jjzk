@@ -8,8 +8,10 @@ REDCORE only shows real readings and only performs actions that Android allows. 
 
 | | |
 |---|---|
+| ![In-game menu](docs/screenshots/overlay_panel.jpg) | ![In-game tools](docs/screenshots/overlay_tools.jpg) |
 | ![Game Space](docs/screenshots/game_space.jpg) | ![Performance](docs/screenshots/performance.jpg) |
-| ![In-game toolkit](docs/screenshots/overlay_panel.jpg) | ![Monitor](docs/screenshots/monitor.jpg) |
+| ![Game Tools](docs/screenshots/game_tools.jpg) | ![Monitor](docs/screenshots/monitor.jpg) |
+| ![Screen hang-up](docs/screenshots/screen_hangup.jpg) | ![Settings](docs/screenshots/settings.jpg) |
 | ![Touch triggers](docs/screenshots/touch_triggers.jpg) | ![Edge guard](docs/screenshots/touch_edge_guard.jpg) |
 | ![Cooling](docs/screenshots/cooling.jpg) | ![Network](docs/screenshots/network.jpg) |
 | ![Device research](docs/screenshots/device.jpg) | ![Storage](docs/screenshots/storage.jpg) |
@@ -21,8 +23,11 @@ REDCORE only shows real readings and only performs actions that Android allows. 
 |---|---|
 | **Control Center** | Live CPU clock and RAM stage, mode selector, quick status, toolbox, recently played games. |
 | **Game Space** | 3D game carousel on a neon stage. Finds installed games automatically, and you can add or remove any app. Shows Today/Week play summary rings and a weekly bar chart. Each game has its own profile. |
-| **Performance** | CPU and GPU rings, Eco / Balanced / Beast modes, a per-action plan showing what each mode will do and whether it's allowed, results of the active session, background app cleanup, recommendations. |
-| **In-game menu** | Draggable bubble with a live HUD (CPU, RAM, temperature, battery, network). Tapping it opens a full-screen game menu: side panels slide in from both edges behind chevron bands and the game stays visible in the middle. Left side: CPU readout, mode switch, brightness bar, tools (edge guard, L1/R1, HUD, close apps). Right side: RAM/GPU readout, notification mode, volume bar, screenshot, recording, mic, refresh rate, auto brightness, end session. Tap the game to close it. |
+| **Performance** | CPU and GPU rings, **Eco / Balance / Beast / Limit** modes, **COOL guard**, a per-action plan showing what each mode will do and whether it's allowed, results of the active session, background app cleanup, recommendations. |
+| **Game Tools** | Swipe-to-open settings, crosshair designer, stopwatch & countdown, screen hang-up, barrage notifications, no calls, 4D vibration, sound EQ, L1/R1 tap/hold, recording quality, ping/FPS, break reminder, your phone's own game software. |
+| **In-game menu** | **Swipe down from a top corner or in from a side edge** (or tap the optional bubble / stats bar) and side panels spring in behind animated chevron bands while the game stays visible in a glowing frame. Left: CPU readout, mode chip (cycles Eco→Limit), COOL chip, brightness bar, tools (edge guard, L1/R1, crosshair, stopwatch, hang-up, HUD, close apps). Right: FPS/GPU/RAM readout, notification mode (All / Barrage / Block), volume bar and two pages of tiles (screenshot, record, mic, refresh rate, auto brightness, rotation lock, no calls, 4D vibration, EQ). Top: game, session timer, COOL state. Tap the game to close it. |
+| **Live stats bar** | Draggable pill with FPS (when available), CPU, RAM, temperature, battery, ping and network speed. |
+| **Floating tools** | Crosshair (touches pass through), stopwatch/countdown, barrage notification line, screen hang-up (black screen while the game keeps running). |
 | **Monitor** | Per-core CPU clocks, memory, temperature and network charts, GPU info, and an honest note about FPS. |
 | **Cooling** | Temperature gauge, Android thermal status and headroom, history graph, readable thermal zones, fan detection (never a fake fan switch). |
 | **Battery** | Level ring, temperature, voltage, current, power, cycles, design capacity, live charts, recommendations. |
@@ -34,16 +39,31 @@ REDCORE only shows real readings and only performs actions that Android allows. 
 
 ### Gaming modes: what they really do
 
-| Action | Eco | Balanced | Beast | Requirement |
-|---|---|---|---|---|
-| Do Not Disturb (priority only) | – | ✓ | ✓ | Do Not Disturb access |
-| Brightness | 40 % | unchanged | 100 % | Modify system settings |
-| Refresh rate | lowest | default | highest | One-time ADB grant (see below) |
-| Close recently used apps | – | – | ✓ | Usage access |
-| Keep screen awake | – | ✓ | ✓ | Display over other apps |
-| Edge touch guard / L1-R1 triggers | if enabled | if enabled | if enabled | Overlay / accessibility |
+| Action | Eco | Balance | Beast | **Limit** | Requirement |
+|---|---|---|---|---|---|
+| Do Not Disturb (game sound & alarms stay on) | – | ✓ | ✓ | ✓ | Do Not Disturb access |
+| Calls | your choice | your choice | your choice | **declined** | DND / Call blocking |
+| Brightness (locked) | 40 % | unchanged | 100 % | 100 % | Modify system settings |
+| Refresh rate | lowest | default | highest | highest | One-time ADB grant |
+| Rotation lock | ✓ | ✓ | ✓ | ✓ | Modify system settings |
+| Pause account auto-sync | – | ✓ | ✓ | ✓ | – |
+| Low-latency Wi-Fi | – | ✓ | ✓ | ✓ | – (phone dependent) |
+| Close recently used apps | – | – | ✓ | ✓ | Usage access |
+| Keep screen awake | – | ✓ | ✓ | ✓ | Display over other apps |
+| Faster system animations (0.5×) | – | – | – | ✓ | One-time ADB grant |
+| Edge guard / L1-R1 / 4D vibration / EQ | if enabled | if enabled | if enabled | if enabled | Overlay / accessibility / mic |
 
-Each game can override any of these. When the session ends, the previous Do Not Disturb, brightness and refresh-rate values are restored.
+Each game can override the main settings. When the session ends, Do Not Disturb policy, brightness, rotation, sync, refresh rate and animation speeds are restored.
+
+### COOL guard
+
+COOL guard works together with any mode, including Limit. During a session it watches the battery temperature and Android's thermal status:
+
+- **At your target temperature (default 41 °C)** it caps brightness at 70 %, steps the refresh rate down (with the ADB grant) and closes background apps.
+- **Three degrees higher, or when Android reports severe heat**, it drops to 45 % brightness and the lowest refresh rate, and warns you.
+- **When the phone has cooled** (with a 1.5 °C margin and at least 45 s at the current level) it restores everything.
+
+It can't throttle the game itself; that needs root.
 
 ### What needs root or the phone manufacturer
 
@@ -51,10 +71,11 @@ Each game can override any of these. When the session ends, the previous Do Not 
 |---|---|---|---|
 | Everything listed above | Refresh-rate switching on most phones | CPU/GPU clocks and governors, other apps' FPS, thermal limits, live GPU clock on most phones | Built-in cooling fans, physical shoulder triggers, touch sampling-rate modes, RGB lights |
 
-To enable refresh-rate control (optional, run once with USB debugging on):
+To enable refresh-rate control, faster animations and the experimental FPS counter (optional, run once with USB debugging on):
 
 ```
 adb shell pm grant com.redcore.booster android.permission.WRITE_SECURE_SETTINGS
+adb shell pm grant com.redcore.booster android.permission.DUMP
 ```
 
 ## Build
@@ -93,7 +114,10 @@ On first launch, REDCORE shows a welcome screen, then a **permission setup** scr
 | Notifications | Session notification with quick controls |
 | Accessibility (Screenshot & triggers) | Toolkit screenshot button, L1/R1 volume-key triggers |
 | Media & files | Large-file finder |
-| Microphone | Voice in screen recordings |
+| Microphone | Voice in screen recordings, 4D vibration (audio analysed on the phone, never recorded) |
+| Notification access | Barrage notifications over games |
+| Call blocking (Android 10+) | Declining calls during games |
+| ADB: `WRITE_SECURE_SETTINGS`, `DUMP` | Refresh-rate control, faster animations, experimental real FPS counter |
 
 ## Tests
 

@@ -17,7 +17,7 @@ import kotlinx.coroutines.flow.map
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore("redcore")
 
 class SettingsRepository(private val context: Context) {
-    private object K {
+    object K {
         val mode = stringPreferencesKey("mode")
         val auto = booleanPreferencesKey("auto_detect")
         val hud = booleanPreferencesKey("hud")
@@ -36,6 +36,28 @@ class SettingsRepository(private val context: Context) {
         val trig = booleanPreferencesKey("triggers")
         val l1x = floatPreferencesKey("l1x"); val l1y = floatPreferencesKey("l1y")
         val r1x = floatPreferencesKey("r1x"); val r1y = floatPreferencesKey("r1y")
+        val trigHold = booleanPreferencesKey("trig_hold")
+        val trigVib = booleanPreferencesKey("trig_vib")
+        val cool = booleanPreferencesKey("cool_guard")
+        val coolTarget = intPreferencesKey("cool_target")
+        val swipeTop = booleanPreferencesKey("swipe_top")
+        val swipeSide = booleanPreferencesKey("swipe_side")
+        val bubble = booleanPreferencesKey("show_bubble")
+        val hint = booleanPreferencesKey("handle_hint")
+        val notif = stringPreferencesKey("notif_mode")
+        val calls = stringPreferencesKey("call_mode")
+        val haptics = booleanPreferencesKey("haptics")
+        val hapticStrength = floatPreferencesKey("haptic_strength")
+        val eq = stringPreferencesKey("eq")
+        val cross = booleanPreferencesKey("crosshair")
+        val crossStyle = stringPreferencesKey("cross_style")
+        val crossColor = intPreferencesKey("cross_color")
+        val crossSize = floatPreferencesKey("cross_size")
+        val breakMin = intPreferencesKey("break_min")
+        val recQ = intPreferencesKey("rec_quality")
+        val fps = booleanPreferencesKey("show_fps")
+        val ping = booleanPreferencesKey("show_ping")
+        val sessions = stringPreferencesKey("session_log")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { p ->
@@ -55,6 +77,27 @@ class SettingsRepository(private val context: Context) {
             triggers = p[K.trig] ?: false,
             l1x = p[K.l1x] ?: 0.18f, l1y = p[K.l1y] ?: 0.55f,
             r1x = p[K.r1x] ?: 0.82f, r1y = p[K.r1y] ?: 0.55f,
+            triggerHold = p[K.trigHold] ?: false,
+            triggerVibrate = p[K.trigVib] ?: true,
+            coolGuard = p[K.cool] ?: false,
+            coolTarget = p[K.coolTarget] ?: 41,
+            swipeTop = p[K.swipeTop] ?: true,
+            swipeSide = p[K.swipeSide] ?: true,
+            showBubble = p[K.bubble] ?: false,
+            handleHint = p[K.hint] ?: true,
+            notifMode = p[K.notif]?.let { runCatching { NotifMode.valueOf(it) }.getOrNull() } ?: NotifMode.BARRAGE,
+            callMode = p[K.calls]?.let { runCatching { CallMode.valueOf(it) }.getOrNull() } ?: CallMode.ALLOW,
+            haptics = p[K.haptics] ?: false,
+            hapticStrength = p[K.hapticStrength] ?: 0.7f,
+            eq = p[K.eq]?.let { runCatching { EqPreset.valueOf(it) }.getOrNull() } ?: EqPreset.OFF,
+            crosshair = p[K.cross] ?: false,
+            crossStyle = p[K.crossStyle]?.let { runCatching { CrossStyle.valueOf(it) }.getOrNull() } ?: CrossStyle.CROSS,
+            crossColor = p[K.crossColor] ?: 0,
+            crossSize = p[K.crossSize] ?: 0.5f,
+            breakMinutes = p[K.breakMin] ?: 60,
+            recQuality = p[K.recQ] ?: 1,
+            showFps = p[K.fps] ?: true,
+            showPing = p[K.ping] ?: true,
         )
     }
 
@@ -62,6 +105,18 @@ class SettingsRepository(private val context: Context) {
     val removed: Flow<Set<String>> = context.dataStore.data.map { it[K.removed] ?: emptySet() }
 
     suspend fun current() = settings.first()
+
+    /** Generic setter used by the many small toggles. */
+    suspend fun <T> put(key: Preferences.Key<T>, value: T) = context.dataStore.edit { it[key] = value }
+
+    /** Recent game sessions (pkg, start, end) — used for the per-game "Moments" captures gallery. */
+    suspend fun logSession(pkg: String, start: Long, end: Long) = context.dataStore.edit {
+        val list = (it[K.sessions] ?: "").split(';').filter { e -> e.isNotBlank() }.takeLast(79)
+        it[K.sessions] = (list + "$pkg,$start,$end").joinToString(";")
+    }
+
+    suspend fun sessions(): List<Triple<String, Long, Long>> = (context.dataStore.data.first()[K.sessions] ?: "")
+        .split(';').mapNotNull { e -> e.split(',').takeIf { it.size == 3 }?.let { Triple(it[0], it[1].toLongOrNull() ?: 0, it[2].toLongOrNull() ?: 0) } }
 
     suspend fun setMode(m: GameMode) = context.dataStore.edit { it[K.mode] = m.name }
     suspend fun setAutoDetect(v: Boolean) = context.dataStore.edit { it[K.auto] = v }

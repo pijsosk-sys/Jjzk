@@ -21,7 +21,10 @@ enum class Perm(val title: String, val why: String) {
     NOTIFICATIONS("Notifications", "Shows the active-session notification with quick controls."),
     ACCESSIBILITY("Screenshot & triggers", "Optional accessibility service for the toolkit's screenshot button and volume-key triggers. Never reads screen content."),
     MEDIA("Media & files", "Lets the storage analyzer find large photos, videos and audio files."),
-    MICROPHONE("Microphone", "Optional: include your voice in screen recordings."),
+    MICROPHONE("Microphone", "Voice in screen recordings and 4D vibration (audio is analysed on the phone, never recorded)."),
+    NOTIF_ACCESS("Notification access", "Shows messages as a scrolling barrage over games instead of pop-ups. Nothing is stored."),
+    CALL_SCREENING("Call blocking", "Lets \"No calls\" decline incoming calls during games (Android 10+)."),
+    FPS_ADB("FPS counter (ADB)", "Experimental: lets REDCORE read the game's real frame rate. Granted from a computer via ADB."),
     SECURE_SETTINGS("Refresh-rate control (ADB)", "Needed on most phones to change refresh rate. Can only be granted from a computer via ADB.");
 }
 
@@ -35,6 +38,9 @@ object Permissions {
         Perm.ACCESSIBILITY -> accessibilityEnabled(c)
         Perm.MEDIA -> mediaPermissions().all { has(c, it) }
         Perm.MICROPHONE -> has(c, Manifest.permission.RECORD_AUDIO)
+        Perm.NOTIF_ACCESS -> androidx.core.app.NotificationManagerCompat.getEnabledListenerPackages(c).contains(c.packageName)
+        Perm.CALL_SCREENING -> Build.VERSION.SDK_INT >= 29 && c.getSystemService(android.app.role.RoleManager::class.java)?.isRoleHeld(android.app.role.RoleManager.ROLE_CALL_SCREENING) == true
+        Perm.FPS_ADB -> has(c, "android.permission.DUMP")
         Perm.SECURE_SETTINGS -> has(c, "android.permission.WRITE_SECURE_SETTINGS")
     }
 
@@ -54,7 +60,9 @@ object Permissions {
             Perm.WRITE_SETTINGS -> Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, pkg)
             Perm.ACCESSIBILITY -> Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
             Perm.NOTIFICATIONS -> if (Build.VERSION.SDK_INT >= 26) Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, c.packageName) else null
-            Perm.MEDIA, Perm.MICROPHONE, Perm.SECURE_SETTINGS -> Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkg)
+            Perm.NOTIF_ACCESS -> Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+            Perm.CALL_SCREENING -> null // requested through RoleManager by the UI
+            Perm.MEDIA, Perm.MICROPHONE, Perm.SECURE_SETTINGS, Perm.FPS_ADB -> Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkg)
         }?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
 
@@ -65,4 +73,8 @@ object Permissions {
     }
 
     const val ADB_GRANT = "adb shell pm grant com.redcore.booster android.permission.WRITE_SECURE_SETTINGS"
+    const val ADB_GRANT_ALL = "adb shell pm grant com.redcore.booster android.permission.WRITE_SECURE_SETTINGS && adb shell pm grant com.redcore.booster android.permission.DUMP"
+
+    /** Permissions that can only be granted over ADB (shown with a copyable command instead of a button). */
+    val adbOnly = setOf(Perm.SECURE_SETTINGS, Perm.FPS_ADB)
 }

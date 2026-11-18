@@ -43,6 +43,12 @@ class GameRepository(private val context: Context, private val settings: Setting
             .sortedWith(compareByDescending<InstalledApp> { it.isGame }.thenBy { it.label.lowercase() })
     }
 
+    /** Manufacturer game hubs (Game Space, Game Booster, Armoury Crate…) detected by package name. */
+    suspend fun vendorGameTools(): List<InstalledApp> = installedApps().filter { a ->
+        Regex("(gamespace|gamelauncher|gametools|gamebooster|gameturbo|gamecenter|gamehome|gamemode|armourycrate|gamedashboard|gameassistant)", RegexOption.IGNORE_CASE)
+            .containsMatchIn(a.pkg) && a.pkg != context.packageName
+    }
+
     @Suppress("DEPRECATION")
     fun isGame(ai: ApplicationInfo): Boolean =
         (Build.VERSION.SDK_INT >= 26 && ai.category == ApplicationInfo.CATEGORY_GAME) ||

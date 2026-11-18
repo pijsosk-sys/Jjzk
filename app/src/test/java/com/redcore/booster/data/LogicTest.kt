@@ -51,6 +51,30 @@ class LogicTest {
         assertEquals("2.50 GHz", fmtGHz(2500))
     }
 
+    @Test fun limitModeEnablesEverything() {
+        val l = ModeSpec.of(GameMode.LIMIT)
+        assertTrue(l.dnd && l.cleanBackground && l.keepScreenOn && l.rotationLock && l.pauseSync && l.lowLatencyWifi && l.fastAnimations)
+        assertEquals(RefreshTarget.HIGHEST, l.refresh)
+        assertEquals(100, l.brightness)
+        assertEquals(CallMode.DECLINE, l.calls)
+    }
+
+    @Test fun fpsParserCountsLastSecondAndRejectsForeignClocks() {
+        val now = 50_000_000_000L
+        val frames = (0 until 120).map { now - it * 8_333_333L } // 120 fps
+        val out = "16666666\n" + frames.reversed().joinToString("\n") { "0 $it 0" } + "\n0 9223372036854775807 0\n"
+        assertEquals(120, FpsProbe.parseLatency(out, now))
+        assertNull("timestamps far from now must not produce a number", FpsProbe.parseLatency(out, now + 60_000_000_000L))
+        assertNull(FpsProbe.parseLatency("16666666\n0 0 0\n", now))
+    }
+
+    @Test fun eqPresetsShapeTheRightBands() {
+        assertTrue(com.redcore.booster.booster.GameAudio.levelFor(EqPreset.FOOTSTEPS, 2000) > 0)
+        assertTrue(com.redcore.booster.booster.GameAudio.levelFor(EqPreset.FOOTSTEPS, 60) < 0)
+        assertTrue(com.redcore.booster.booster.GameAudio.levelFor(EqPreset.BASS, 60) > 0)
+        assertEquals(0, com.redcore.booster.booster.GameAudio.levelFor(EqPreset.OFF, 1000))
+    }
+
     @Test fun insightsNeverEmpty() {
         assertTrue(Insights.performance(LiveStats(), false, true).isNotEmpty())
         assertTrue(Insights.performance(LiveStats(thermalStatus = 4), false, true).any { it.severity == Severity.CRITICAL })

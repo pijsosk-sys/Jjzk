@@ -272,6 +272,27 @@ private fun PlaySummaryPanel(library: List<LibraryGame>, today: PlaySummary?, we
                 Spacer(Modifier.height(14.dp))
                 WeekBars(s.dailyMs)
             }
+            if (s.perGame.isNotEmpty() && total > 0) {
+                Spacer(Modifier.height(12.dp))
+                Text("SHARE OF PLAY TIME", style = RCType.label.copy(fontSize = 8.sp))
+                val palette = listOf(RC.Red, RC.Violet, RC.Blue, RC.Green, RC.Amber)
+                Row(Modifier.fillMaxWidth().padding(vertical = 6.dp).height(8.dp).clip(RoundedCornerShape(4.dp)).background(RC.Black)) {
+                    s.perGame.take(5).forEachIndexed { i, g ->
+                        val w = g.foregroundMs.toFloat() / total
+                        if (w > 0.01f) Box(Modifier.weight(w).fillMaxHeight().background(palette[i % palette.size]))
+                    }
+                }
+                s.perGame.take(5).forEachIndexed { i, g ->
+                    val name = library.firstOrNull { it.profile.pkg == g.pkg }?.label ?: g.pkg
+                    Row(Modifier.padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(8.dp).clip(CircleShape).background(palette[i % palette.size]))
+                        Spacer(Modifier.width(8.dp))
+                        Text("${(g.foregroundMs * 100 / total)}%", style = RCType.strong.copy(fontSize = 13.sp), modifier = Modifier.width(44.dp))
+                        Text(name, style = RCType.body.copy(fontSize = 13.sp), modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(fmtDuration(g.foregroundMs), style = RCType.bodyDim.copy(fontSize = 12.sp))
+                    }
+                }
+            }
             Spacer(Modifier.height(10.dp))
             Text("• Moderate play is good for body and mind •", style = RCType.bodyDim.copy(fontSize = 12.sp), modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
         }

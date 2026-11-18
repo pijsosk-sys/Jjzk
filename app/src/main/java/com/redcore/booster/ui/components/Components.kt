@@ -160,7 +160,7 @@ fun GlowButton(
 
 /** Off/On pill switch styled like a gaming console toggle. */
 @Composable
-fun RedSwitch(checked: Boolean, onChange: (Boolean) -> Unit, enabled: Boolean = true) {
+fun RedSwitch(checked: Boolean, onChange: (Boolean) -> Unit, enabled: Boolean = true, onBrush: Brush = RC.redGradient) {
     val shape = RoundedCornerShape(6.dp)
     Row(
         Modifier.clip(shape).background(RC.Black).border(1.dp, RC.Stroke, shape)
@@ -170,7 +170,7 @@ fun RedSwitch(checked: Boolean, onChange: (Boolean) -> Unit, enabled: Boolean = 
             val sel = v == checked
             Box(
                 Modifier.clip(RoundedCornerShape(4.dp))
-                    .background(if (sel) (if (v) RC.redGradient else Brush.linearGradient(listOf(RC.Metal, RC.Metal))) else Brush.linearGradient(listOf(Color.Transparent, Color.Transparent)))
+                    .background(if (sel) (if (v) onBrush else Brush.linearGradient(listOf(RC.Metal, RC.Metal))) else Brush.linearGradient(listOf(Color.Transparent, Color.Transparent)))
                     .padding(horizontal = 10.dp, vertical = 5.dp)
             ) {
                 Text(l, style = RCType.label.copy(fontSize = 9.sp, color = if (sel) Color.White else if (enabled) RC.TextMute else RC.Stroke))

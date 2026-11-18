@@ -106,8 +106,8 @@ fun SettingsScreen(s: AppSettings, perms: Map<Perm, Boolean>, toolkitOn: Boolean
             SectionHeader("Permissions")
             GlassPanel(Modifier.fillMaxWidth()) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Perm.entries.forEach { p ->
-                        if (p == Perm.SECURE_SETTINGS) {
+                    Perm.entries.filter { it != Perm.CALL_SCREENING || android.os.Build.VERSION.SDK_INT >= 29 }.forEach { p ->
+                        if (p in Permissions.adbOnly) {
                             Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Column(Modifier.weight(1f)) {
                                     Text(p.title, style = RCType.strong.copy(fontSize = 15.sp))
@@ -120,29 +120,56 @@ fun SettingsScreen(s: AppSettings, perms: Map<Perm, Boolean>, toolkitOn: Boolean
                         } else PermCard(p, perms[p] == true) { act.grant(p) }
                     }
                 }
-                if (perms[Perm.SECURE_SETTINGS] != true) {
+                if (perms[Perm.SECURE_SETTINGS] != true || perms[Perm.FPS_ADB] != true) {
                     Spacer(Modifier.height(6.dp))
                     Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(RC.Black).border(1.dp, RC.Stroke, RoundedCornerShape(8.dp)).padding(10.dp)) {
-                        Text(Permissions.ADB_GRANT, style = RCType.body.copy(fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = RC.Amber))
+                        Text(Permissions.ADB_GRANT_ALL, style = RCType.body.copy(fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = RC.Amber))
                     }
-                    Text("Run once from a computer with USB debugging enabled to unlock refresh-rate control. Optional.", style = RCType.bodyDim.copy(fontSize = 12.sp), modifier = Modifier.padding(top = 6.dp))
+                    Text("Run once from a computer with USB debugging enabled to unlock refresh-rate control, faster animations and the experimental FPS counter. Optional.", style = RCType.bodyDim.copy(fontSize = 12.sp), modifier = Modifier.padding(top = 6.dp))
                 }
             }
 
-            SectionHeader("What needs root or the manufacturer")
+            SectionHeader("Gaming phone features")
             GlassPanel(Modifier.fillMaxWidth()) {
-                listOf(
-                    "Works on every phone" to "Device research, live monitoring, game library & stats, gaming modes (DND, brightness, background cleanup, keep-awake), floating toolkit, screenshots, screen recording, network & speed test, storage analysis, touch tester.",
-                    "Needs a one-time ADB grant" to "Refresh-rate switching on most phones.",
-                    "Needs root" to "CPU/GPU governors and clocks, other apps' FPS counter, thermal limit changes, live GPU clock on most phones.",
-                    "Needs manufacturer APIs" to "Built-in cooling fans, shoulder triggers, touch sampling-rate modes, RGB lights. These are private to each maker's own software.",
-                ).forEachIndexed { i, (t, d) ->
+                val rows = listOf(
+                    Triple("Game library, auto-detect & play stats", 0, ""),
+                    Triple("Eco · Balance · Beast · Limit modes", 0, ""),
+                    Triple("COOL guard (heat control)", 0, ""),
+                    Triple("Swipe-open game menu & live stats HUD", 0, ""),
+                    Triple("Do Not Disturb, barrage notifications, no calls", 0, ""),
+                    Triple("Brightness lock, rotation lock, keep awake", 0, ""),
+                    Triple("Close background apps, pause auto-sync", 0, ""),
+                    Triple("Low-latency Wi-Fi", 1, "phone dependent"),
+                    Triple("Edge touch protection", 0, ""),
+                    Triple("L1/R1 triggers (volume keys, tap or hold)", 0, ""),
+                    Triple("Crosshair, stopwatch & timer, screen hang-up", 0, ""),
+                    Triple("Screenshot & screen recording", 0, ""),
+                    Triple("4D vibration, sound equalizer", 1, "phone dependent"),
+                    Triple("Break reminder, session timer, ping", 0, ""),
+                    Triple("Refresh-rate changer, faster animations", 2, "one ADB command"),
+                    Triple("FPS counter", 2, "ADB · experimental"),
+                    Triple("CPU/GPU overclock, Diablo-level clocks", 3, "root"),
+                    Triple("Touch sampling rate, sensitivity, smoothness", 4, "manufacturer"),
+                    Triple("GPU settings (MSAA, AF, LOD, VRS)", 4, "manufacturer"),
+                    Triple("Frame insertion & super resolution", 4, "display chip"),
+                    Triple("Cooling fan, bypass charging, RGB", 4, "hardware"),
+                    Triple("Blocking system gestures & status bar", 4, "system only"),
+                    Triple("Macros & rapid fire", 5, "not included"),
+                )
+                rows.forEachIndexed { i, (name, status, note) ->
                     if (i > 0) Divider()
-                    Column(Modifier.padding(vertical = 7.dp)) {
-                        Text(t, style = RCType.strong.copy(fontSize = 14.sp, color = if (i == 0) RC.Green else if (i == 1) RC.Amber else RC.Text))
-                        Text(d, style = RCType.bodyDim)
+                    Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(name, style = RCType.body.copy(fontSize = 14.sp), modifier = Modifier.weight(1f))
+                        Spacer(Modifier.width(8.dp))
+                        com.redcore.booster.ui.components.Chip(
+                            when (status) { 0 -> "Works"; 1 -> "Best effort"; 2 -> "ADB"; 3 -> "Root"; 4 -> "Not possible"; else -> "Not included" },
+                            when (status) { 0 -> RC.Green; 1 -> RC.Blue; 2 -> RC.Amber; else -> RC.TextMute }
+                        )
                     }
+                    if (note.isNotEmpty() && status >= 1) Text(note, style = RCType.bodyDim.copy(fontSize = 11.sp), modifier = Modifier.padding(bottom = 2.dp))
                 }
+                Spacer(Modifier.height(6.dp))
+                Text("\"Not possible\" features live in the phone maker's firmware or hardware — no app can reach them on a regular phone. Macros and rapid fire are left out because automated input breaks many games' rules.", style = RCType.bodyDim.copy(fontSize = 12.sp))
             }
 
             SectionHeader("About")

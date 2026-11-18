@@ -28,6 +28,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.redcore.booster.R
 import com.redcore.booster.RedcoreApp
+import com.redcore.booster.app
 import kotlinx.coroutines.flow.MutableStateFlow
 import java.io.File
 import java.text.SimpleDateFormat
@@ -79,8 +80,10 @@ class ScreenRecordService : Service() {
         val wm = getSystemService(WindowManager::class.java)
         val m = DisplayMetrics()
         @Suppress("DEPRECATION") wm.defaultDisplay.getRealMetrics(m)
-        // Keep the long edge at most 1920 px; encoders need even dimensions.
-        val scale = minOf(1f, 1920f / maxOf(m.widthPixels, m.heightPixels))
+        // Quality from Game Tools: 720p30 / 1080p60 / native 60. Encoders need even dimensions.
+        val q = kotlinx.coroutines.runBlocking { app.settings.current().recQuality }
+        val maxEdge = when (q) { 0 -> 1280f; 1 -> 1920f; else -> Float.MAX_VALUE }
+        val scale = minOf(1f, maxEdge / maxOf(m.widthPixels, m.heightPixels))
         val w = ((m.widthPixels * scale).toInt() / 2) * 2
         val h = ((m.heightPixels * scale).toInt() / 2) * 2
 
@@ -93,8 +96,8 @@ class ScreenRecordService : Service() {
         r.setVideoEncoder(MediaRecorder.VideoEncoder.H264)
         if (mic) { r.setAudioEncoder(MediaRecorder.AudioEncoder.AAC); r.setAudioEncodingBitRate(128_000); r.setAudioSamplingRate(44_100) }
         r.setVideoSize(w, h)
-        r.setVideoFrameRate(60)
-        r.setVideoEncodingBitRate(12_000_000)
+        r.setVideoFrameRate(if (q == 0) 30 else 60)
+        r.setVideoEncodingBitRate(when (q) { 0 -> 6_000_000; 1 -> 12_000_000; else -> 20_000_000 })
 
         if (Build.VERSION.SDK_INT >= 29) {
             val values = ContentValues().apply {

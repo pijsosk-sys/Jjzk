@@ -83,9 +83,16 @@ object Routes {
     fun rememberGranter(vm: MainViewModel): (Perm) -> Unit {
         val ctx = LocalContext.current
         val runtimeLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { vm.refresh() }
+        val roleLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { vm.refresh() }
         return remember {
             { p ->
                 when (p) {
+                    Perm.CALL_SCREENING -> if (Build.VERSION.SDK_INT >= 29) {
+                        val rm = ctx.getSystemService(android.app.role.RoleManager::class.java)
+                        if (rm != null && rm.isRoleAvailable(android.app.role.RoleManager.ROLE_CALL_SCREENING))
+                            roleLauncher.launch(rm.createRequestRoleIntent(android.app.role.RoleManager.ROLE_CALL_SCREENING))
+                        else vm.toast("This phone doesn't support call screening apps.")
+                    }
                     Perm.MEDIA -> runtimeLauncher.launch(Permissions.mediaPermissions())
                     Perm.MICROPHONE -> runtimeLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO))
                     Perm.NOTIFICATIONS -> if (Build.VERSION.SDK_INT >= 33) runtimeLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
@@ -108,6 +115,7 @@ object Routes {
         val device by vm.device.collectAsStateWithLifecycle()
         val toolkit by vm.toolkitRunning.collectAsStateWithLifecycle()
         val perms by vm.perms.collectAsStateWithLifecycle()
+        val fxState by vm.fx.collectAsStateWithLifecycle()
 
         val grant = rememberGranter(vm)
         fun open(i: Intent) = runCatching { ctx.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }.onFailure { vm.toast("Not available on this phone") }
@@ -119,7 +127,8 @@ object Routes {
                 HomeScreen(
                     stats, settings, session, recentGames,
                     device?.headline ?: Build.MODEL, device?.subline ?: "",
-                    toolkit, vm::setMode, { nav.go(it) }, vm::launchGame, vm::boostNow, vm::endSession, vm::toggleToolkit
+                    toolkit, vm::setMode, { nav.go(it) }, vm::launchGame, vm::boostNow, vm::endSession, vm::toggleToolkit,
+                    fx = fxState, onCool = { vm.setCool(it) }
                 )
             }
             Dest.GAMES -> {
@@ -156,8 +165,25 @@ object Routes {
                     settings.globalMode, session, perms,
                     bg?.map { BgApp(it.pkg, a.games.label(it.pkg), DateUtils.getRelativeTimeSpanString(it.lastUsed).toString()) },
                     Insights.performance(stats, saver, perms[Perm.USAGE] == true),
-                    vm::setMode, vm::boostNow, vm::endSession, vm::cleanBackground, grant
+                    vm::setMode, vm::boostNow, vm::endSession, vm::cleanBackground, grant,
+                    fx = fxState, onCool = { vm.setCool(it) }, onCoolTarget = { vm.setCoolTarget(it) }
                 )
+            }
+            Dest.TOOLS -> {
+                LaunchedEffect(Unit) { vm.loadVendorTools() }
+                val vendor by vm.vendorTools.collectAsStateWithLifecycle()
+                com.redcore.booster.ui.screens.GameToolsScreen(settings, perms, vendor, object : com.redcore.booster.ui.screens.ToolsActions {
+                    override fun <T> put(key: androidx.datastore.preferences.core.Preferences.Key<T>, value: T) { vm.put(key, value) }
+                    override fun haptics(on: Boolean) { vm.setHaptics(on) }
+                    override fun calls(m: com.redcore.booster.data.CallMode) { vm.setCalls(m) }
+                    override fun notif(m: com.redcore.booster.data.NotifMode) { vm.setNotif(m) }
+                    override fun grant(p: Perm) = grant(p)
+                    override fun openApp(pkg: String) { a.games.launchIntent(pkg)?.let { open(it) } ?: vm.toast("Can't open that app") }
+                    override fun copyAdb() {
+                        ctx.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("adb", Permissions.ADB_GRANT_ALL))
+                        vm.toast("ADB command copied")
+                    }
+                })
             }
             Dest.MONITOR -> MonitorScreen(stats, history, settings, device?.sections?.firstOrNull { it.title == "Graphics" }?.rows?.firstOrNull()?.second) { nav.go(it) }
             Dest.DEVICE, Dest.PROCESSOR -> DeviceScreen(device)
@@ -210,7 +236,7 @@ object Routes {
                 override fun toolkit() { vm.toggleToolkit() }
                 override fun grant(p: Perm) = grant(p)
                 override fun copyAdb() {
-                    ctx.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("adb", Permissions.ADB_GRANT))
+                    ctx.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("adb", Permissions.ADB_GRANT_ALL))
                     vm.toast("ADB command copied")
                 }
             })

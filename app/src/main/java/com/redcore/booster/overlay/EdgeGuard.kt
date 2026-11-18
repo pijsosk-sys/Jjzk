@@ -62,6 +62,18 @@ object EdgeGuard {
 
     fun hide(ctx: Context) { main.post { removeAll(ctx.applicationContext) } }
 
+    /** While the game menu is open, let touches through to it. */
+    fun setPassThrough(ctx: Context, through: Boolean) {
+        main.post {
+            val wm = ctx.applicationContext.getSystemService(WindowManager::class.java)
+            views.forEach { v ->
+                val lp = v.layoutParams as? WindowManager.LayoutParams ?: return@forEach
+                lp.flags = if (through) lp.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE else lp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+                runCatching { wm.updateViewLayout(v, lp) }
+            }
+        }
+    }
+
     private fun removeAll(c: Context) {
         val wm = c.getSystemService(WindowManager::class.java)
         views.forEach { runCatching { wm.removeView(it) } }

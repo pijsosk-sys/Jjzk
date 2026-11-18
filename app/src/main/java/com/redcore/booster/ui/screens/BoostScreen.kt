@@ -26,9 +26,17 @@ import androidx.compose.material.icons.filled.DoNotDisturbOn
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.ScreenLockRotation
+import androidx.compose.material.icons.filled.SyncDisabled
+import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material.icons.filled.PhoneDisabled
+import androidx.compose.material.icons.filled.Animation
+import androidx.compose.material.icons.filled.AcUnit
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -78,13 +86,18 @@ fun BoostScreen(
     onEnd: () -> Unit,
     onClean: () -> Unit,
     onGrant: (Perm) -> Unit,
+    fx: com.redcore.booster.booster.EffectsState = com.redcore.booster.booster.EffectsState(),
+    onCool: (Boolean) -> Unit = {},
+    onCoolTarget: (Int) -> Unit = {},
 ) {
     HudBackdrop {
         com.redcore.booster.ui.components.Panes(1f, 1f, left = {
             PerformanceRings(stats, mode, gpuName)
             Spacer(Modifier.height(12.dp))
             ModeSelector(mode, onMode)
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(8.dp))
+            CoolGuardPanel(settings, fx, stats, onCool, onCoolTarget)
+            Spacer(Modifier.height(10.dp))
             if (session == null) GlowButton("Activate ${mode.title} mode", Modifier.fillMaxWidth(), Icons.Default.Bolt, onClick = onBoost)
             else Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 GlowButton("Re-apply", Modifier.weight(1f), Icons.Default.Bolt, onClick = onBoost)
@@ -189,6 +202,13 @@ private fun ModePlan(mode: GameMode, perms: Map<Perm, Boolean>, onGrant: (Perm) 
         PlanItem(Icons.Default.Refresh, "Refresh rate", when (spec.refresh) { RefreshTarget.HIGHEST -> "Highest supported"; RefreshTarget.LOWEST -> "Lowest supported"; else -> "System default" }, spec.refresh != RefreshTarget.DEFAULT, Perm.SECURE_SETTINGS, perms[Perm.SECURE_SETTINGS] == true),
         PlanItem(Icons.Default.AutoDelete, "Background apps", if (spec.cleanBackground) "Close recently used apps" else "Left running", spec.cleanBackground, Perm.USAGE, perms[Perm.USAGE] == true),
         PlanItem(Icons.Default.LightMode, "Keep screen awake", if (spec.keepScreenOn) "While toolkit is shown" else "Normal timeout", spec.keepScreenOn, Perm.OVERLAY, perms[Perm.OVERLAY] == true),
+        PlanItem(Icons.Default.ScreenLockRotation, "Rotation lock", if (spec.rotationLock) "A tilt can't flip the game" else "Auto-rotate", spec.rotationLock, Perm.WRITE_SETTINGS, perms[Perm.WRITE_SETTINGS] == true),
+        PlanItem(Icons.Default.SyncDisabled, "Pause auto-sync", if (spec.pauseSync) "No account sync during play" else "Sync keeps running", spec.pauseSync, null, true),
+        PlanItem(Icons.Default.Wifi, "Low-latency Wi-Fi", if (spec.lowLatencyWifi) "Wi-Fi power saving off (supported phones)" else "Normal Wi-Fi", spec.lowLatencyWifi, null, true),
+        PlanItem(Icons.Default.PhoneDisabled, "Calls", when (spec.calls) { com.redcore.booster.data.CallMode.DECLINE -> "Declined"; com.redcore.booster.data.CallMode.SILENCE -> "Silenced"; else -> "Your Game Tools choice" },
+            spec.calls != null, if (spec.calls == com.redcore.booster.data.CallMode.DECLINE) Perm.CALL_SCREENING else Perm.DND,
+            perms[if (spec.calls == com.redcore.booster.data.CallMode.DECLINE) Perm.CALL_SCREENING else Perm.DND] == true),
+        PlanItem(Icons.Default.Animation, "Faster animations", if (spec.fastAnimations) "System animations at 0.5×" else "Normal", spec.fastAnimations, Perm.SECURE_SETTINGS, perms[Perm.SECURE_SETTINGS] == true),
     )
     val accent = mode.accent()
     val shape = RoundedCornerShape(topStart = 4.dp, topEnd = 18.dp, bottomEnd = 4.dp, bottomStart = 18.dp)
@@ -218,6 +238,7 @@ private fun ModePlan(mode: GameMode, perms: Map<Perm, Boolean>, onGrant: (Perm) 
                 when {
                     !it.active -> Chip("Off", RC.TextMute)
                     it.granted -> Chip("Ready", RC.Green)
+                    it.perm == null -> Chip("Ready", RC.Green)
                     it.perm == Perm.SECURE_SETTINGS -> Chip("ADB only", RC.Amber)
                     else -> Box(Modifier.clip(RoundedCornerShape(4.dp)).background(RC.Amber.copy(alpha = 0.15f)).border(1.dp, RC.Amber, RoundedCornerShape(4.dp))) {
                         Text("GRANT", style = RCType.label.copy(fontSize = 8.sp, color = RC.Amber), modifier = Modifier.clickable { it.perm?.let(onGrant) }.padding(horizontal = 8.dp, vertical = 4.dp))
@@ -282,6 +303,47 @@ private fun QuickStrip(stats: LiveStats, settings: com.redcore.booster.data.AppS
                     Text(l.uppercase(), style = RCType.label.copy(fontSize = 7.sp))
                 }
             }
+        }
+    }
+}
+
+
+@Composable
+private fun CoolGuardPanel(
+    settings: com.redcore.booster.data.AppSettings,
+    fx: com.redcore.booster.booster.EffectsState,
+    stats: LiveStats,
+    onCool: (Boolean) -> Unit,
+    onTarget: (Int) -> Unit,
+) {
+    val on = settings.coolGuard
+    GlassPanel(Modifier.fillMaxWidth(), padding = 12.dp) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.AcUnit, null, tint = if (on) CoolBlue else RC.TextMute, modifier = Modifier.size(22.dp))
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text("COOL GUARD", style = RCType.title.copy(fontSize = 13.sp))
+                Text("Works with every mode — even Limit", style = RCType.bodyDim.copy(fontSize = 12.sp))
+            }
+            com.redcore.booster.ui.components.RedSwitch(on, onCool, onBrush = Brush.horizontalGradient(listOf(Color(0xFF1B6FD6), CoolBlue)))
+        }
+        if (on) {
+            Spacer(Modifier.height(8.dp))
+            var t by androidx.compose.runtime.remember(settings.coolTarget) { androidx.compose.runtime.mutableFloatStateOf(settings.coolTarget.toFloat()) }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("TARGET ${t.toInt()}°C", style = RCType.label.copy(fontSize = 9.sp, color = CoolBlue), modifier = Modifier.width(96.dp))
+                com.redcore.booster.ui.components.RedSlider((t - 37f) / 9f, { t = 37f + it * 9f }, Modifier.weight(1f), onDone = { onTarget(t.toInt()) })
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Chip(fx.coolLevel.title.substringBefore(" ·"), when (fx.coolLevel) {
+                    com.redcore.booster.booster.CoolLevel.HOT -> Color(0xFFFF7A1A); com.redcore.booster.booster.CoolLevel.WARM -> RC.Amber; else -> CoolBlue
+                })
+                Text("Battery ${stats.batteryTempC?.let { "%.1f°C".format(it) } ?: "—"}", style = RCType.bodyDim.copy(fontSize = 12.sp))
+            }
+            Text(
+                fx.coolNote ?: "At ${settings.coolTarget}°C it caps brightness at 70 %, steps the refresh rate down and closes background apps; at ${settings.coolTarget + 3}°C it goes further and warns you. It can't throttle the game itself.",
+                style = RCType.bodyDim.copy(fontSize = 11.sp)
+            )
         }
     }
 }

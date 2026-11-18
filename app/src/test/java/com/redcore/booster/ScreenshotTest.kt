@@ -6,6 +6,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
@@ -81,8 +84,15 @@ class ScreenshotTest {
             AppScaffold(Route(dest), depth, title, SampleData.session.takeIf { dest != Dest.HOME }, {}, {}, {}, overlay = { ResultsPanel(sheet) {} }) { content() }
         }
 
+    private val fxWarm = com.redcore.booster.booster.EffectsState(
+        coolLevel = com.redcore.booster.booster.CoolLevel.WARM, coolNote = "brightness ≤ 70% · 90 Hz", pingMs = 23, fps = 118, fpsSource = "game",
+        sessionStart = System.currentTimeMillis() - 1_754_000, wifiLowLatency = true
+    )
+    private val limitSession = SampleData.session.copy(mode = GameMode.LIMIT, spec = com.redcore.booster.data.ModeSpec.of(GameMode.LIMIT), startedAt = System.currentTimeMillis() - 1_754_000)
+
     @Test fun a01_home() = shot("01_home", Dest.HOME, "Control Center") {
-        HomeScreen(s, st, null, SampleData.library.take(4), "Nubia Gamer X9", "Snapdragon 8 Gen 3 · Android 15 · 12 GB RAM", false, {}, {}, {}, {}, {}, {})
+        HomeScreen(s, st.copy(globalMode = GameMode.LIMIT, coolGuard = true), null, SampleData.library.take(4), "Nubia Gamer X9", "Snapdragon 8 Gen 3 · Android 15 · 12 GB RAM", false, {}, {}, {}, {}, {}, {},
+            fx = com.redcore.booster.booster.EffectsState(coolLevel = com.redcore.booster.booster.CoolLevel.NORMAL))
     }
 
     @Test @Config(qualifiers = "w915dp-h760dp-land-xhdpi")
@@ -119,9 +129,20 @@ class ScreenshotTest {
 
     @Test @Config(qualifiers = "w915dp-h760dp-land-xhdpi")
     fun a07_boost() = shot("07_boost", Dest.BOOST) {
-        BoostScreen(s, h, "Adreno (TM) 750", st, GameMode.BEAST, SampleData.session, perms,
+        BoostScreen(s, h, "Adreno (TM) 750", st.copy(coolGuard = true), GameMode.LIMIT, limitSession, perms,
             listOf(BgApp("com.chat.app", "Messenger", "3 min ago"), BgApp("com.video.stream", "StreamBox", "25 min ago"), BgApp("com.music.player", "Music Player", "1 hour ago")),
-            Insights.performance(s.copy(thermalStatus = 2), batterySaver = false, usageGranted = true), {}, {}, {}, {}, {})
+            Insights.performance(s.copy(thermalStatus = 2), batterySaver = false, usageGranted = true), {}, {}, {}, {}, {}, fx = fxWarm)
+    }
+
+    @Test @Config(qualifiers = "w915dp-h1100dp-land-xhdpi")
+    fun a07b_tools() = shot("07b_game_tools", Dest.TOOLS) {
+        GameToolsScreen(st.copy(crosshair = true, haptics = true, eq = com.redcore.booster.data.EqPreset.FOOTSTEPS, callMode = com.redcore.booster.data.CallMode.SILENCE),
+            perms, listOf(InstalledApp("com.vendor.gamespace", "Game Space", false, true)), object : ToolsActions {
+                override fun <T> put(key: androidx.datastore.preferences.core.Preferences.Key<T>, value: T) {}
+                override fun haptics(on: Boolean) {}; override fun calls(m: com.redcore.booster.data.CallMode) {}
+                override fun notif(m: com.redcore.booster.data.NotifMode) {}; override fun grant(p: Perm) {}
+                override fun openApp(pkg: String) {}; override fun copyAdb() {}
+            })
     }
 
     @Test fun a08_boostSheet() = shot("08_boost_results", Dest.BOOST, sheet = ResultSheet("Beast mode active", SampleData.session.results)) {
@@ -216,7 +237,8 @@ class ScreenshotTest {
         }
     }
 
-    private val ov = OverlayState(s, st.copy(hudEnabled = true), SampleData.session, false, false, true, true, 80, 60, false, edgeGuard = true, triggers = false)
+    private val ov = OverlayState(s, st.copy(hudEnabled = true, coolGuard = true, crosshair = true, haptics = true), limitSession, false, false, true, true, 80, 60, false,
+        edgeGuard = true, triggers = true, fx = fxWarm, notifMode = com.redcore.booster.data.NotifMode.BARRAGE, rotationLocked = true)
 
     @Test fun a18_overlayCollapsed() = capture("18_overlay_hud") {
         FakeGame { Box(Modifier.padding(top = 60.dp)) { OverlayUi(ov, object : OverlayActions {}) } }
@@ -224,5 +246,34 @@ class ScreenshotTest {
 
     @Test fun a19_overlayExpanded() = capture("19_overlay_panel") {
         FakeGame { OverlayUi(ov.copy(expanded = true, recording = true), object : OverlayActions {}) }
+    }
+
+    @Test fun a20_hangup() = capture("20_screen_hangup") { com.redcore.booster.overlay.HangupScreen("Sky Raiders", s) {} }
+
+    @Test fun a21_tools_overlay() = capture("21_stopwatch_barrage_crosshair") {
+        FakeGame {
+            Box(Modifier.fillMaxSize()) {
+                Box(Modifier.align(Alignment.TopCenter).padding(top = 8.dp).fillMaxWidth().height(40.dp)) { BarrageTickerPreview() }
+                Box(Modifier.padding(start = 24.dp, top = 64.dp)) { com.redcore.booster.overlay.StopwatchWidget({ _, _ -> }, {}, {}) }
+                Box(Modifier.align(Alignment.Center).size(68.dp)) { com.redcore.booster.overlay.CrosshairGlyph(com.redcore.booster.data.CrossStyle.CROSS, 1) }
+                Box(Modifier.align(Alignment.TopStart).padding(start = 40.dp)) {
+                    Box(Modifier.size(150.dp, 24.dp)) { androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+                        drawRoundRect(androidx.compose.ui.graphics.Color(0x99FF1E3C), androidx.compose.ui.geometry.Offset(size.width * 0.29f, 8f), androidx.compose.ui.geometry.Size(size.width * 0.42f, 9f), androidx.compose.ui.geometry.CornerRadius(8f))
+                    } }
+                }
+                Box(Modifier.align(Alignment.BottomStart).padding(16.dp)) { OverlayUi(ov, object : OverlayActions {}) }
+            }
+        }
+    }
+
+    @Composable
+    private fun BarrageTickerPreview() {
+        androidx.compose.foundation.layout.Row(
+            Modifier.padding(start = 260.dp).background(Color(0xCC0A0B10), androidx.compose.foundation.shape.RoundedCornerShape(16.dp)).padding(horizontal = 12.dp, vertical = 5.dp)
+        ) {
+            androidx.compose.material3.Text("DISCORD", style = com.redcore.booster.ui.theme.RCType.label.copy(color = com.redcore.booster.ui.theme.RC.Red))
+            androidx.compose.foundation.layout.Spacer(Modifier.size(8.dp))
+            androidx.compose.material3.Text("Alex: gg, one more match?", style = com.redcore.booster.ui.theme.RCType.body.copy(color = Color.White))
+        }
     }
 }

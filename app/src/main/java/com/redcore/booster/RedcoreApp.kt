@@ -36,11 +36,15 @@ class RedcoreApp : Application() {
             setShowBadge(false)
         })
         nm.createNotificationChannel(NotificationChannel(CH_RECORD, "Screen recording", NotificationManager.IMPORTANCE_LOW))
+        nm.createNotificationChannel(NotificationChannel(CH_ALERT, "Heat & break alerts", NotificationManager.IMPORTANCE_DEFAULT).apply {
+            description = "COOL guard heat warnings and play-break reminders"
+        })
     }
 
     companion object {
         const val CH_SESSION = "session"
         const val CH_RECORD = "record"
+        const val CH_ALERT = "alerts"
     }
 }
 

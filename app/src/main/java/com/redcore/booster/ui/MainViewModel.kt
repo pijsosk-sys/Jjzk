@@ -43,6 +43,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val loaded: StateFlow<Boolean> = a.settings.settings.map { true }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
     val library: StateFlow<List<LibraryGame>?> = a.games.library.stateIn(viewModelScope, SharingStarted.Eagerly, null)
     val session = a.boost.session
+    val fx = a.boost.effects.state
     val toolkitRunning = OverlayService.running
 
     private val _perms = MutableStateFlow(Perm.entries.associateWith { false })
@@ -224,6 +225,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     fun setTriggerPoints(l1x: Float, l1y: Float, r1x: Float, r1y: Float) = viewModelScope.launch { a.settings.setTriggerPoints(l1x, l1y, r1x, r1y) }
+    fun <T> put(key: androidx.datastore.preferences.core.Preferences.Key<T>, value: T) = viewModelScope.launch { a.settings.put(key, value) }
+
+    private val _vendor = MutableStateFlow<List<InstalledApp>>(emptyList())
+    val vendorTools = _vendor.asStateFlow()
+    fun loadVendorTools() = viewModelScope.launch { _vendor.value = a.games.vendorGameTools() }
+
+    fun setHaptics(on: Boolean) {
+        if (!on) { put(com.redcore.booster.data.SettingsRepository.K.haptics, false); return }
+        require(Perm.MICROPHONE, "4D vibration listens to the game's sound to know when to vibrate. Android calls this microphone access. Nothing is recorded or stored.") {
+            put(com.redcore.booster.data.SettingsRepository.K.haptics, true)
+        }
+    }
+
+    fun setCalls(m: com.redcore.booster.data.CallMode) {
+        put(com.redcore.booster.data.SettingsRepository.K.calls, m.name)
+        if (m == com.redcore.booster.data.CallMode.DECLINE && android.os.Build.VERSION.SDK_INT >= 29)
+            require(Perm.CALL_SCREENING, "To decline calls during games, Android needs REDCORE to be your call-screening app. It only acts while a game session is running.") {}
+    }
+
+    fun setNotif(m: com.redcore.booster.data.NotifMode) {
+        put(com.redcore.booster.data.SettingsRepository.K.notif, m.name)
+        if (m == com.redcore.booster.data.NotifMode.BARRAGE)
+            require(Perm.NOTIF_ACCESS, "Barrage shows your messages as a small line gliding over the game instead of pop-ups. Android calls this notification access. Nothing is stored.") {}
+    }
+
+    fun setCool(on: Boolean) = put(com.redcore.booster.data.SettingsRepository.K.cool, on)
+    fun setCoolTarget(t: Int) = put(com.redcore.booster.data.SettingsRepository.K.coolTarget, t)
+
     fun finishOnboarding() = viewModelScope.launch { a.settings.setOnboarded() }
 
     fun toast(msg: String) { _toast.tryEmit(msg) }

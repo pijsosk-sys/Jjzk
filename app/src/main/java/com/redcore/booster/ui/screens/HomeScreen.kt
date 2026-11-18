@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.EnergySavingsLeaf
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.LocalFireDepartment
+import androidx.compose.material.icons.filled.RocketLaunch
 import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material.icons.filled.PhoneAndroid
@@ -43,6 +44,7 @@ import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Thermostat
 import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.AcUnit
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -88,12 +90,14 @@ fun GameMode.accent(): Color = when (this) {
     GameMode.ECO -> RC.Green
     GameMode.BALANCED -> RC.Blue
     GameMode.BEAST -> RC.Red
+    GameMode.LIMIT -> Color(0xFFFF7A1A)
 }
 
 fun GameMode.icon(): ImageVector = when (this) {
     GameMode.ECO -> Icons.Default.EnergySavingsLeaf
     GameMode.BALANCED -> Icons.Default.Balance
     GameMode.BEAST -> Icons.Default.LocalFireDepartment
+    GameMode.LIMIT -> Icons.Default.RocketLaunch
 }
 
 @Composable
@@ -111,6 +115,8 @@ fun HomeScreen(
     onBoost: () -> Unit,
     onEndSession: () -> Unit,
     onToggleToolkit: () -> Unit,
+    fx: com.redcore.booster.booster.EffectsState = com.redcore.booster.booster.EffectsState(),
+    onCool: (Boolean) -> Unit = {},
 ) {
     val wide = com.redcore.booster.ui.components.LocalWide.current
     val toolbox: @Composable () -> Unit = {
@@ -130,7 +136,9 @@ fun HomeScreen(
         }, right = {
             if (!wide) Spacer(Modifier.height(14.dp))
             ModeSelector(settings.globalMode, onMode)
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(8.dp))
+            CoolStrip(settings.coolGuard, fx, settings.coolTarget, onCool)
+            Spacer(Modifier.height(10.dp))
             if (session != null) {
                 SessionBar(session, onEndSession)
             } else {
@@ -339,10 +347,10 @@ fun ModeSelector(selected: GameMode, onMode: (GameMode) -> Unit) {
             ) {
                 Icon(m.icon(), null, tint = if (sel) m.accent() else RC.TextMute, modifier = Modifier.size(22.dp))
                 Spacer(Modifier.height(4.dp))
-                Text(m.title.uppercase(), style = RCType.label.copy(fontSize = 10.sp, color = if (sel) Color.White else RC.TextDim))
+                Text(m.title.uppercase(), style = RCType.label.copy(fontSize = 9.sp, letterSpacing = 0.6.sp, color = if (sel) Color.White else RC.TextDim), maxLines = 1, softWrap = false)
                 Text(
-                    when (m) { GameMode.ECO -> "Save power"; GameMode.BALANCED -> "Everyday"; GameMode.BEAST -> "Max output" },
-                    style = RCType.bodyDim.copy(fontSize = 11.sp), maxLines = 1
+                    when (m) { GameMode.ECO -> "Save power"; GameMode.BALANCED -> "Everyday"; GameMode.BEAST -> "High output"; GameMode.LIMIT -> "All in" },
+                    style = RCType.bodyDim.copy(fontSize = 11.sp), maxLines = 1, overflow = TextOverflow.Ellipsis
                 )
             }
         }
@@ -415,5 +423,40 @@ private fun RecentCard(g: LibraryGame, onLaunch: (String) -> Unit) {
             Icon(Icons.Default.PlayArrow, null, tint = RC.Red, modifier = Modifier.size(14.dp))
             Text("PLAY", style = RCType.label.copy(fontSize = 8.sp, color = RC.Red))
         }
+    }
+}
+
+
+val CoolBlue = Color(0xFF3CC8FF)
+
+/** COOL guard toggle: works together with any mode, including Limit. */
+@Composable
+fun CoolStrip(on: Boolean, fx: com.redcore.booster.booster.EffectsState, target: Int, onToggle: (Boolean) -> Unit) {
+    val level = fx.coolLevel
+    val color = if (!on) RC.TextMute else if (level == com.redcore.booster.booster.CoolLevel.HOT) Color(0xFFFF7A1A) else CoolBlue
+    val shape = RoundedCornerShape(topStart = 2.dp, topEnd = 12.dp, bottomEnd = 2.dp, bottomStart = 12.dp)
+    Row(
+        Modifier.fillMaxWidth().clip(shape)
+            .background(if (on) Brush.horizontalGradient(listOf(CoolBlue.copy(alpha = 0.16f), RC.Panel)) else RC.panelGradient)
+            .border(1.dp, if (on) color.copy(alpha = 0.8f) else RC.Stroke, shape)
+            .clickable { onToggle(!on) }.padding(horizontal = 12.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(Icons.Default.AcUnit, null, tint = color, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text("COOL GUARD", style = RCType.label.copy(fontSize = 10.sp, color = if (on) Color.White else RC.TextDim))
+            Text(
+                when {
+                    !on -> "Off · turn on to stop the phone overheating in any mode"
+                    level == com.redcore.booster.booster.CoolLevel.WARM -> "Warm · ${fx.coolNote ?: "easing off"}"
+                    level == com.redcore.booster.booster.CoolLevel.HOT -> "Hot · ${fx.coolNote ?: "cooling down"}"
+                    level == com.redcore.booster.booster.CoolLevel.NORMAL -> "Watching · keeps it under $target°C"
+                    else -> "On · keeps it under $target°C during games"
+                },
+                style = RCType.bodyDim.copy(fontSize = 12.sp), maxLines = 1, overflow = TextOverflow.Ellipsis
+            )
+        }
+        com.redcore.booster.ui.components.RedSwitch(on, onToggle, onBrush = Brush.horizontalGradient(listOf(Color(0xFF1B6FD6), CoolBlue)))
     }
 }
