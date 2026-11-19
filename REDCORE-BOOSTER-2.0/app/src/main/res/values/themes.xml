@@ -1,0 +1,12 @@
+<resources>
+    <style name="Theme.Redcore" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/rc_black</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:colorAccent">@color/rc_red</item>
+    </style>
+    <style name="Theme.Redcore.Transparent" parent="android:Theme.Translucent.NoTitleBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowIsTranslucent">true</item>
+    </style>
+</resources>

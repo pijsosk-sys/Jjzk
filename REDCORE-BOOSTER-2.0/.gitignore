@@ -1,0 +1,12 @@
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+.kotlin/
+captures/
+/screenshots/
+
+# Signing secrets (the project test key in app/keystore is intentionally public)
+keystore.properties
+*.jks
