@@ -92,12 +92,14 @@ class ScreenshotTest {
 
     @Test fun a01_home() = shot("01_home", Dest.HOME, "Control Center") {
         HomeScreen(s, st.copy(globalMode = GameMode.LIMIT, coolGuard = true), null, SampleData.library.take(4), "Nubia Gamer X9", "Snapdragon 8 Gen 3 · Android 15 · 12 GB RAM", false, {}, {}, {}, {}, {}, {},
-            fx = com.redcore.booster.booster.EffectsState(coolLevel = com.redcore.booster.booster.CoolLevel.NORMAL))
+            fx = com.redcore.booster.booster.EffectsState(coolLevel = com.redcore.booster.booster.CoolLevel.NORMAL),
+            unlock = SampleData.unlock())
     }
 
     @Test @Config(qualifiers = "w915dp-h760dp-land-xhdpi")
     fun a02_homeTall() = shot("02_home_scrolled_session", Dest.HOME, "Control Center") {
-        HomeScreen(s, st, SampleData.session, SampleData.library.take(4), "Nubia Gamer X9", "Snapdragon 8 Gen 3 · Android 15 · 12 GB RAM", true, {}, {}, {}, {}, {}, {})
+        HomeScreen(s, st, SampleData.session, SampleData.library.take(4), "Nubia Gamer X9", "Snapdragon 8 Gen 3 · Android 15 · 12 GB RAM", true, {}, {}, {}, {}, {}, {},
+            live = SampleData.live, unlock = SampleData.unlock(allButAdb = true).map { it.copy(granted = true) })
     }
 
     private val today = PlaySummary(2 * 3600_000L + 14 * 60_000L, listOf(PlayStat("com.studio.skyraiders", 84 * 60_000L, 0), PlayStat("com.neon.drift", 50 * 60_000L, 0)), emptyList())
@@ -131,7 +133,8 @@ class ScreenshotTest {
     fun a07_boost() = shot("07_boost", Dest.BOOST) {
         BoostScreen(s, h, "Adreno (TM) 750", st.copy(coolGuard = true, smooth120 = true), GameMode.LIMIT, limitSession, perms,
             listOf(BgApp("com.chat.app", "Messenger", "3 min ago"), BgApp("com.video.stream", "StreamBox", "25 min ago"), BgApp("com.music.player", "Music Player", "1 hour ago")),
-            Insights.performance(s.copy(thermalStatus = 2), batterySaver = false, usageGranted = true), {}, {}, {}, {}, {}, fx = fxWarm.copy(fpsAdvice = null), maxHz = 120)
+            Insights.performance(s.copy(thermalStatus = 2), batterySaver = false, usageGranted = true), {}, {}, {}, {}, {}, fx = fxWarm.copy(fpsAdvice = null), maxHz = 120,
+            live = SampleData.live, samsungRefresh = true)
     }
 
     @Test @Config(qualifiers = "w915dp-h1100dp-land-xhdpi")
@@ -203,6 +206,11 @@ class ScreenshotTest {
             override fun hud(v: Boolean) {}; override fun scale(v: Float) {}; override fun fahrenheit(v: Boolean) {}
             override fun toolkit() {}; override fun grant(p: Perm) {}; override fun copyAdb() {}
         })
+    }
+
+    @Test fun a16b_pendingRestore() = shot("16b_pending_restore", Dest.HOME, "Control Center") {
+        HomeScreen(s, st, null, SampleData.library.take(4), "Galaxy S24 Ultra", "Snapdragon 8 Gen 3 for Galaxy · Android 15 · 12 GB RAM", false, {}, {}, {}, {}, {}, {},
+            unlock = SampleData.unlock(), pending = listOf(com.redcore.booster.booster.PendingRestore(com.redcore.booster.core.Tweak.BRIGHTNESS, "\"Modify system settings\"")))
     }
 
     @Test fun a17_welcome() = capture("17_welcome") { WelcomeScreen {} }

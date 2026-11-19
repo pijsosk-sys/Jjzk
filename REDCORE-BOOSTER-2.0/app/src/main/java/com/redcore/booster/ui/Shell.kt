@@ -226,7 +226,7 @@ fun WideHeader(title: String, canBack: Boolean, onBack: () -> Unit, onSettings: 
             ) {
                 PulsingDot(size = 6.dp)
                 Spacer(Modifier.width(6.dp))
-                Text("${session.mode.title.uppercase()} · ${session.label}", style = RCType.label.copy(fontSize = 9.sp, color = Color.White), maxLines = 1)
+                Text("${session.mode.title.uppercase()} · ${session.label} · ${session.appliedCount} ACTIVE", style = RCType.label.copy(fontSize = 9.sp, color = Color.White), maxLines = 1)
             }
             Spacer(Modifier.width(6.dp))
         }

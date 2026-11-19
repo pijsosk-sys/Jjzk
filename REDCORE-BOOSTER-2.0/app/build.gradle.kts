@@ -90,6 +90,15 @@ android {
     }
 }
 
+androidComponents {
+    // Compose UI tests need androidx.compose.ui:ui-test-manifest (a test-only activity), which must never ship in a
+    // release APK. All app logic is identical in both variants and is unit-tested in the debug variant; the pure
+    // logic in :core is tested independently of any variant.
+    beforeVariants(selector().withBuildType("release")) { variant ->
+        (variant as com.android.build.api.variant.HasUnitTestBuilder).enableUnitTest = false
+    }
+}
+
 dependencies {
     implementation(project(":core"))
 

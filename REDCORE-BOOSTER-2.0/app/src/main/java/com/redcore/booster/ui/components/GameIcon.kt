@@ -10,7 +10,12 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.produceState
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -42,8 +47,9 @@ fun GameIcon(pkg: String, label: String, size: Dp, modifier: Modifier = Modifier
     val loader = LocalIconLoader.current
     val cache = LocalIconCache.current
     // Decode off the main thread so scrolling the library never stalls on PackageManager.
-    val bmp by produceState(initialValue = cache(pkg), pkg) {
-        if (value == null) value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { runCatching { loader(pkg) }.getOrNull() }
+    var bmp by remember(pkg) { mutableStateOf(cache(pkg)) }
+    LaunchedEffect(pkg) {
+        if (bmp == null) bmp = withContext(Dispatchers.IO) { runCatching { loader(pkg) }.getOrNull() }
     }
     val shape = RoundedCornerShape(corner)
     val loaded = bmp

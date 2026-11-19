@@ -42,6 +42,7 @@ class AndroidSettingsBackend(private val context: Context) : SettingsBackend {
             Tweak.ANIM_ANIMATOR -> Settings.Global.getString(cr, Settings.Global.ANIMATOR_DURATION_SCALE)
             Tweak.ANIM_TRANSITION -> Settings.Global.getString(cr, Settings.Global.TRANSITION_ANIMATION_SCALE)
             Tweak.ANIM_WINDOW -> Settings.Global.getString(cr, Settings.Global.WINDOW_ANIMATION_SCALE)
+            Tweak.PC_POWER_PLAN, Tweak.PC_GAME_MODE, Tweak.PC_POWER_PROFILE -> null // PC-only keys
         }
     }.getOrNull()
 
@@ -60,6 +61,7 @@ class AndroidSettingsBackend(private val context: Context) : SettingsBackend {
             Tweak.ANIM_ANIMATOR -> putGlobal(Settings.Global.ANIMATOR_DURATION_SCALE, value)
             Tweak.ANIM_TRANSITION -> putGlobal(Settings.Global.TRANSITION_ANIMATION_SCALE, value)
             Tweak.ANIM_WINDOW -> putGlobal(Settings.Global.WINDOW_ANIMATION_SCALE, value)
+            Tweak.PC_POWER_PLAN, Tweak.PC_GAME_MODE, Tweak.PC_POWER_PROFILE -> error("Not an Android setting")
         }
     }
 
@@ -73,12 +75,14 @@ class AndroidSettingsBackend(private val context: Context) : SettingsBackend {
         Tweak.PEAK_REFRESH, Tweak.MIN_REFRESH, Tweak.SAMSUNG_REFRESH_MODE,
         Tweak.ANIM_ANIMATOR, Tweak.ANIM_TRANSITION, Tweak.ANIM_WINDOW -> Permissions.has(context, WRITE_SECURE)
         Tweak.MASTER_SYNC -> true
+        Tweak.PC_POWER_PLAN, Tweak.PC_GAME_MODE, Tweak.PC_POWER_PROFILE -> false
     }
 
     override fun requirement(t: Tweak): String = when (t) {
         Tweak.DND_FILTER, Tweak.DND_POLICY -> "Do Not Disturb access"
         Tweak.BRIGHTNESS_MODE, Tweak.BRIGHTNESS, Tweak.AUTO_ROTATE, Tweak.USER_ROTATION -> "\"Modify system settings\""
         Tweak.MASTER_SYNC -> "nothing"
+        Tweak.PC_POWER_PLAN, Tweak.PC_GAME_MODE, Tweak.PC_POWER_PROFILE -> "the PC version"
         else -> "the one-time ADB grant (Settings › Permissions)"
     }
 
@@ -118,6 +122,7 @@ class AndroidSettingsBackend(private val context: Context) : SettingsBackend {
  * a kill by Android or a reboot at any point can be undone on the next start.
  * The file is excluded from cloud backup (see data_extraction_rules.xml): it describes this phone only.
  */
+@android.annotation.SuppressLint("ApplySharedPref") // commit() on purpose: the journal must be on disk *before* a setting is changed
 class JournalStore(context: Context) {
     private val prefs = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
     fun load(): RestoreJournal = RestoreJournal.parse(prefs.getString(KEY, null))

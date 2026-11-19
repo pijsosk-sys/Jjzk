@@ -213,7 +213,7 @@ class DeviceInfoProvider(private val context: Context) {
                 "Supported refresh rates" to rates.takeIf { it.isNotEmpty() }?.joinToString(" / ") { "$it Hz" },
                 "Display modes" to modes.size.toString(),
                 "HDR" to (if (hdr.isEmpty()) "Not reported" else hdr.joinToString(", ")),
-                "Wide colour gamut" to (if (Build.VERSION.SDK_INT >= 26) context.resources.configuration.isScreenWideColorGamut.yesNo() else null),
+                "Wide colour gamut" to context.resources.configuration.isScreenWideColorGamut.yesNo(),
             )
         )
     }

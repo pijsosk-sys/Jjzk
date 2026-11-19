@@ -46,6 +46,16 @@ data class NetInfo(
 class SpeedTestException(message: String) : IOException(message)
 
 class NetworkTester(private val context: Context) {
+    @android.annotation.SuppressLint("InlinedApi") // constants are inlined; only read on Android 11+
+    private fun wifiStandardName(s: Int): String? = when (s) {
+        android.net.wifi.ScanResult.WIFI_STANDARD_11N -> "Wi-Fi 4 (802.11n)"
+        android.net.wifi.ScanResult.WIFI_STANDARD_11AC -> "Wi-Fi 5 (802.11ac)"
+        android.net.wifi.ScanResult.WIFI_STANDARD_11AX -> "Wi-Fi 6 (802.11ax)"
+        android.net.wifi.ScanResult.WIFI_STANDARD_11BE -> "Wi-Fi 7 (802.11be)"
+        android.net.wifi.ScanResult.WIFI_STANDARD_LEGACY -> "Legacy"
+        else -> null
+    }
+
     private val cm = context.getSystemService(ConnectivityManager::class.java)
 
     fun info(): NetInfo {
@@ -74,9 +84,7 @@ class NetworkTester(private val context: Context) {
                 freq = wi.frequency.takeIf { it > 0 }
                 val raw = wi.ssid?.trim('"')
                 ssid = raw?.takeIf { it.isNotBlank() && it != "<unknown ssid>" }
-                if (Build.VERSION.SDK_INT >= 30) std = when (wi.wifiStandard) {
-                    4 -> "Wi-Fi 4 (802.11n)"; 5 -> "Wi-Fi 5 (802.11ac)"; 6 -> "Wi-Fi 6 (802.11ax)"; 8 -> "Wi-Fi 7 (802.11be)"; 1 -> "Legacy"; else -> null
-                }
+                if (Build.VERSION.SDK_INT >= 30) std = wifiStandardName(wi.wifiStandard)
                 rssi?.let {
                     @Suppress("DEPRECATION")
                     level = WifiManager.calculateSignalLevel(it, 5)

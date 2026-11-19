@@ -397,7 +397,7 @@ private fun ToolkitStrip(on: Boolean, onToggle: () -> Unit) {
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Text("Floating gaming toolkit", style = RCType.strong.copy(fontSize = 15.sp))
-            Text(if (on) "Running — tap the red bubble over any game" else "HUD, quick controls, screenshot & recording", style = RCType.bodyDim.copy(fontSize = 12.sp))
+            Text(if (on) "Running — swipe in from a side edge in any game" else "HUD, quick controls, screenshot & recording", style = RCType.bodyDim.copy(fontSize = 12.sp))
         }
         com.redcore.booster.ui.components.RedSwitch(on, { onToggle() })
     }

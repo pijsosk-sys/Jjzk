@@ -774,6 +774,7 @@ private fun TopTitle(s: OverlayState) {
             val e = (now - start).coerceAtLeast(0) / 1000
             Text("%d:%02d:%02d".format(e / 3600, (e / 60) % 60, e % 60), style = RCType.label.copy(fontSize = 9.sp, color = RC.Red))
         }
+        s.session?.let { Text("${it.appliedCount} ACTIVE", style = RCType.label.copy(fontSize = 8.sp, color = RC.Green)) }
         if (s.fx.coolLevel != CoolLevel.OFF) Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Default.AcUnit, null, tint = if (s.fx.coolLevel == CoolLevel.HOT) HudOrange else CoolBlue, modifier = Modifier.size(12.dp))
             Spacer(Modifier.width(3.dp))

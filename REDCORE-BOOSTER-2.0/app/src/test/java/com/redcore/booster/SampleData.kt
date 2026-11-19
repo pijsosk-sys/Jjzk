@@ -43,11 +43,26 @@ object SampleData {
     val session = GameSession(
         "com.studio.skyraiders", "Sky Raiders", GameMode.BEAST, ModeSpec.of(GameMode.BEAST), 0,
         listOf(
-            ActionResult("Do Not Disturb", ActionState.APPLIED, "Priority-only mode: notifications are silenced."),
-            ActionResult("Brightness", ActionState.APPLIED, "Set to 100 % (auto-brightness paused)."),
-            ActionResult("Refresh rate", ActionState.BLOCKED, "Android blocks apps from changing refresh rate on this phone unless granted via ADB."),
-            ActionResult("Background apps", ActionState.APPLIED, "Asked Android to close 6 cached apps."),
-            ActionResult("Keep screen awake", ActionState.APPLIED, "Screen stays on while the toolkit is active."),
+            ActionResult("Do Not Disturb", ActionState.APPLIED, "Off → on. Pop-ups silenced; game sound and alarms still play.", verified = true),
+            ActionResult("Brightness", ActionState.APPLIED, "43 % (auto) → 100 % locked.", verified = true),
+            ActionResult("Refresh rate", ActionState.APPLIED, "60 Hz → Locked to 120 Hz. Display confirms 120 Hz.", verified = true),
+            ActionResult("Rotation lock", ActionState.APPLIED, "Auto-rotate on → locked to landscape.", verified = true),
+            ActionResult("Auto-sync", ActionState.APPLIED, "On → paused (Gmail, Drive, contacts…). Resumes after the game.", verified = true),
+            ActionResult("Background apps", ActionState.SKIPPED, "Android 14 and newer don't let apps close other apps. Android frees memory for the game by itself; close apps you don't need from Recents."),
+            ActionResult("Keep screen awake", ActionState.APPLIED, "Screen stays on while the toolkit is showing."),
+            ActionResult("Low-latency Wi-Fi", ActionState.SKIPPED, "Android only gives low-latency Wi-Fi to the app on screen, so during play only the game itself can request it."),
         )
+    )
+
+    val live = listOf(
+        com.redcore.booster.booster.LiveEffect("Do Not Disturb", "On", true),
+        com.redcore.booster.booster.LiveEffect("Brightness", "100 %", true),
+        com.redcore.booster.booster.LiveEffect("Refresh rate", "120 Hz", true),
+        com.redcore.booster.booster.LiveEffect("Rotation lock", "Locked", true),
+        com.redcore.booster.booster.LiveEffect("Auto-sync", "Paused", true),
+    )
+
+    fun unlock(allButAdb: Boolean = true) = com.redcore.booster.ui.screens.unlockItems(
+        com.redcore.booster.booster.Perm.entries.associateWith { allButAdb && it !in com.redcore.booster.booster.Permissions.adbOnly }, 120
     )
 }

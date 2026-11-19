@@ -229,6 +229,7 @@ class BoostController(
         Tweak.SAMSUNG_REFRESH_MODE -> when (v) { "0" -> "Standard"; "1" -> "Adaptive"; "2" -> "High"; else -> "default" }
         Tweak.MASTER_SYNC -> if (v == "false") "paused" else "on"
         Tweak.ANIM_ANIMATOR, Tweak.ANIM_TRANSITION, Tweak.ANIM_WINDOW -> v?.toFloatOrNull()?.let { "${it}×" } ?: "1.0× (default)"
+        Tweak.PC_POWER_PLAN, Tweak.PC_GAME_MODE, Tweak.PC_POWER_PROFILE -> v ?: "default"
     }
 
     private fun rawToPct(raw: Int) = (raw * 100f / 255f).roundToInt().coerceIn(0, 100)

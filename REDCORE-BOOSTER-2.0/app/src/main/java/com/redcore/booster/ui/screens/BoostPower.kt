@@ -114,7 +114,7 @@ fun ActiveEffectsPanel(live: List<LiveEffect>, modifier: Modifier = Modifier) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             PulsingDot(RC.Green, 7.dp)
             Spacer(Modifier.width(8.dp))
-            Text("ACTIVE RIGHT NOW", style = RCType.label.copy(fontSize = 10.sp, color = Color.White), modifier = Modifier.weight(1f))
+            Text("ACTIVE NOW", style = RCType.label.copy(fontSize = 10.sp, color = Color.White), modifier = Modifier.weight(1f))
             Icon(Icons.Default.Verified, null, tint = RC.Green, modifier = Modifier.size(14.dp))
             Spacer(Modifier.width(4.dp))
             Text("READ FROM SYSTEM", style = RCType.label.copy(fontSize = 8.sp, color = RC.Green))
@@ -156,6 +156,6 @@ fun PendingRestoreBanner(pending: List<PendingRestore>, onGrant: (Perm) -> Unit,
 fun permFor(t: Tweak): Perm? = when (t) {
     Tweak.DND_FILTER, Tweak.DND_POLICY -> Perm.DND
     Tweak.BRIGHTNESS, Tweak.BRIGHTNESS_MODE, Tweak.AUTO_ROTATE, Tweak.USER_ROTATION -> Perm.WRITE_SETTINGS
-    Tweak.MASTER_SYNC -> null
+    Tweak.MASTER_SYNC, Tweak.PC_POWER_PLAN, Tweak.PC_GAME_MODE, Tweak.PC_POWER_PROFILE -> null
     else -> Perm.SECURE_SETTINGS
 }

@@ -95,6 +95,7 @@ fun MonitorScreen(stats: LiveStats, history: List<LiveStats>, settings: AppSetti
             SectionHeader("Graphics & frame rate")
             GlassPanel(Modifier.fillMaxWidth()) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.material3.Icon(com.redcore.booster.ui.rcIcon(com.redcore.booster.R.drawable.ic_rc_gpu), null, tint = RC.Violet, modifier = Modifier.padding(end = 10.dp).width(22.dp).height(22.dp))
                     Column(Modifier.weight(1f)) {
                         Text(gpuName ?: "GPU", style = RCType.strong, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(

@@ -16,7 +16,12 @@ enum class Tweak(val label: String, val numeric: Boolean) {
     MASTER_SYNC("Auto-sync", false),
     ANIM_ANIMATOR("Animator duration scale", true),
     ANIM_TRANSITION("Transition animation scale", true),
-    ANIM_WINDOW("Window animation scale", true);
+    ANIM_WINDOW("Window animation scale", true),
+
+    // PC version (Windows / Linux). Android never uses these.
+    PC_POWER_PLAN("Windows power plan", false),
+    PC_GAME_MODE("Windows Game Mode", true),
+    PC_POWER_PROFILE("Linux power profile", false);
 }
 
 /**

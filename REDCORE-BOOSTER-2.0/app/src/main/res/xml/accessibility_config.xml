@@ -2,6 +2,8 @@
 <!-- Only key filtering (L1/R1) and gestures/screenshot are used. No window content is retrieved, and the
      service subscribes to a single rare event type it ignores, so it receives almost no events. -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    tools:ignore="UnusedAttribute"
     android:accessibilityEventTypes="typeAnnouncement"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:accessibilityFlags="flagRequestFilterKeyEvents"

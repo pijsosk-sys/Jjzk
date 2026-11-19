@@ -25,7 +25,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.PhoneAndroid
@@ -78,7 +78,7 @@ fun WelcomeScreen(onStart: () -> Unit) {
                     }
                     Spacer(Modifier.height(16.dp))
                     Text("REDCORE", style = RCType.display.copy(fontSize = 36.sp, letterSpacing = 6.sp))
-                    Text("GAMING BOOSTER", style = RCType.label.copy(color = RC.Red, fontSize = 11.sp, letterSpacing = 5.sp))
+                    Text("GAMING BOOSTER 2.0", style = RCType.label.copy(color = RC.Red, fontSize = 11.sp, letterSpacing = 5.sp))
                 }
             }
             val features: @Composable () -> Unit = {
@@ -87,7 +87,7 @@ fun WelcomeScreen(onStart: () -> Unit) {
                         Triple(Icons.Default.SportsEsports, "Game Space", "All your games in one place, each with its own performance profile."),
                         Triple(Icons.Default.Layers, "Floating toolkit", "HUD, Do Not Disturb, brightness, screenshots and recording over any game."),
                         Triple(Icons.Default.MonitorHeart, "Live monitoring", "CPU clocks, memory, temperature, battery and network in real time."),
-                        Triple(Icons.Default.PhoneAndroid, "Honest by design", "Only real readings and real actions. If Android doesn't allow something, we say so."),
+                        Triple(Icons.Default.PhoneAndroid, "Real, verified boosts", "Every change is read back from the system and shown before → after, then put back when you stop playing. If Android doesn't allow something, REDCORE says so."),
                     ).forEach { (icon, title, text) ->
                         Row(Modifier.fillMaxWidth().padding(vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
                             Box(Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)).background(RC.RedDark), contentAlignment = Alignment.Center) {
@@ -101,7 +101,7 @@ fun WelcomeScreen(onStart: () -> Unit) {
                         }
                     }
                     Spacer(Modifier.height(18.dp))
-                    GlowButton("Get started", Modifier.fillMaxWidth(), Icons.Default.ArrowForward, onClick = onStart)
+                    GlowButton("Get started", Modifier.fillMaxWidth(), Icons.AutoMirrored.Filled.ArrowForward, onClick = onStart)
                     Spacer(Modifier.height(8.dp))
                     Text("You can grant optional permissions later in Settings.", style = RCType.bodyDim.copy(fontSize = 12.sp), textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
                 }

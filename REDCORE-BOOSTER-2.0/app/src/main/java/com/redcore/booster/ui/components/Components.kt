@@ -179,6 +179,7 @@ fun RedSwitch(checked: Boolean, onChange: (Boolean) -> Unit, enabled: Boolean = 
     }
 }
 
+@Suppress("ModifierParameter") // positional (title, subtitle) calls are used throughout
 @Composable
 fun SettingRow(
     title: String,
