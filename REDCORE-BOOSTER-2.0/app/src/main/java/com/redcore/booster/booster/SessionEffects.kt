@@ -7,7 +7,6 @@ import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import com.redcore.booster.R
 import com.redcore.booster.RedcoreApp
-import com.redcore.booster.app
 import com.redcore.booster.data.AppSettings
 import com.redcore.booster.data.FpsProbe
 import com.redcore.booster.data.LiveStats
@@ -125,9 +124,11 @@ class SessionEffects(private val context: Context, private val boost: BoostContr
         out += if (settings.coolGuard) ActionResult("COOL guard", ActionState.APPLIED, "Eases off above ${fmtTempTarget(settings.coolTarget, settings.fahrenheit)}.")
         else ActionResult("COOL guard", ActionState.SKIPPED, "Off — turn it on to keep the phone from overheating.")
 
-        val app = context.app
-        sc.launch { app.monitor.stats.collect { onStats(it) } }       // also keeps sampling alive during the session
-        sc.launch { app.settings.settings.collect { onSettings(it) } }
+        // (null only in unit tests that run without the REDCORE application)
+        (context.applicationContext as? RedcoreApp)?.let { app ->
+            sc.launch { app.monitor.stats.collect { onStats(it) } }       // also keeps sampling alive during the session
+            sc.launch { app.settings.settings.collect { onSettings(it) } }
+        }
         sc.launch {
             while (isActive) {
                 if (cfg.showFps && screenOn()) {

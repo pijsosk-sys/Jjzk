@@ -71,12 +71,7 @@ object SysFs {
         return zones.sortedBy { it.name.removePrefix("thermal_zone").toIntOrNull() ?: 0 }.mapNotNull { z ->
             val type = read("${z.path}/type") ?: return@mapNotNull null
             val t = readLong("${z.path}/temp") ?: return@mapNotNull null
-            val c = when {
-                t > 1000 -> t / 1000f
-                t > 200 -> t / 10f
-                else -> t.toFloat()
-            }
-            if (c in 1f..150f) ThermalZone(type, c) else null
+            ThermalMath.zoneCelsius(t)?.let { ThermalZone(type, it) }
         }
     }
 

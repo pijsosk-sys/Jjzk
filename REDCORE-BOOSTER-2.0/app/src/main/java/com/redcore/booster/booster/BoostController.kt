@@ -117,9 +117,9 @@ class BoostController(
 
     fun currentRefreshHz(): Int? = display()?.refreshRate?.roundToInt()
 
-    fun canSetBrightness() = Settings.System.canWrite(context)
-    fun canSetDnd() = nm.isNotificationPolicyAccessGranted
-    fun canWriteSecure() = Permissions.has(context, AndroidSettingsBackend.WRITE_SECURE)
+    fun canSetBrightness() = backend.canWrite(Tweak.BRIGHTNESS)
+    fun canSetDnd() = backend.canWrite(Tweak.DND_FILTER)
+    fun canWriteSecure() = backend.canWrite(Tweak.PEAK_REFRESH)
 
     /** Samsung One UI exposes its own "Motion smoothness" key in addition to the AOSP refresh keys. */
     fun hasSamsungRefreshMode(): Boolean =
@@ -236,7 +236,7 @@ class BoostController(
 
     // ------------------------------------------------------------------ notifications & calls
 
-    fun isDndOn(): Boolean = nm.currentInterruptionFilter > NotificationManager.INTERRUPTION_FILTER_ALL
+    fun isDndOn(): Boolean = (backend.read(Tweak.DND_FILTER)?.toIntOrNull() ?: NotificationManager.INTERRUPTION_FILTER_ALL) > NotificationManager.INTERRUPTION_FILTER_ALL
 
     /**
      * Do Not Disturb tuned for games: alarms and **media stay audible** (so the game keeps its sound),

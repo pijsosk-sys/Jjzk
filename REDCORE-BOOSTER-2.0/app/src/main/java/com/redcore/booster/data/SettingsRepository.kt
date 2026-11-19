@@ -19,9 +19,9 @@ import java.io.IOException
 
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore("redcore")
 
-class SettingsRepository(private val context: Context) {
+class SettingsRepository(context: Context, private val store: DataStore<Preferences> = context.dataStore) {
     /** A damaged settings file must not crash the app: fall back to defaults and keep going. */
-    private val data: Flow<Preferences> = context.dataStore.data.catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
+    private val data: Flow<Preferences> = store.data.catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
 
     object K {
         val mode = stringPreferencesKey("mode")
@@ -119,10 +119,10 @@ class SettingsRepository(private val context: Context) {
         internal set
 
     /** Generic setter used by the many small toggles. */
-    suspend fun <T> put(key: Preferences.Key<T>, value: T) = context.dataStore.edit { it[key] = value }
+    suspend fun <T> put(key: Preferences.Key<T>, value: T) = store.edit { it[key] = value }
 
     /** Recent game sessions (pkg, start, end) — used for the per-game "Moments" captures gallery. */
-    suspend fun logSession(pkg: String, start: Long, end: Long) = context.dataStore.edit {
+    suspend fun logSession(pkg: String, start: Long, end: Long) = store.edit {
         val list = (it[K.sessions] ?: "").split(';').filter { e -> e.isNotBlank() }.takeLast(79)
         it[K.sessions] = (list + "$pkg,$start,$end").joinToString(";")
     }
@@ -130,39 +130,39 @@ class SettingsRepository(private val context: Context) {
     suspend fun sessions(): List<Triple<String, Long, Long>> = (data.first()[K.sessions] ?: "")
         .split(';').mapNotNull { e -> e.split(',').takeIf { it.size == 3 }?.let { Triple(it[0], it[1].toLongOrNull() ?: 0, it[2].toLongOrNull() ?: 0) } }
 
-    suspend fun setMode(m: GameMode) = context.dataStore.edit { it[K.mode] = m.name }
-    suspend fun setAutoDetect(v: Boolean) = context.dataStore.edit { it[K.auto] = v }
-    suspend fun setHud(v: Boolean) = context.dataStore.edit { it[K.hud] = v }
-    suspend fun setRestore(v: Boolean) = context.dataStore.edit { it[K.restore] = v }
-    suspend fun setFahrenheit(v: Boolean) = context.dataStore.edit { it[K.fahr] = v }
-    suspend fun setOverlayScale(v: Float) = context.dataStore.edit { it[K.scale] = v }
-    suspend fun setOnboarded() = context.dataStore.edit { it[K.onboarded] = true }
-    suspend fun setEdgeGuard(v: Boolean) = context.dataStore.edit { it[K.edge] = v }
-    suspend fun setEdgeRange(v: Int) = context.dataStore.edit { it[K.edgeRange] = v }
-    suspend fun setTriggers(v: Boolean) = context.dataStore.edit { it[K.trig] = v }
-    suspend fun setTriggerPoints(l1x: Float, l1y: Float, r1x: Float, r1y: Float) = context.dataStore.edit {
+    suspend fun setMode(m: GameMode) = store.edit { it[K.mode] = m.name }
+    suspend fun setAutoDetect(v: Boolean) = store.edit { it[K.auto] = v }
+    suspend fun setHud(v: Boolean) = store.edit { it[K.hud] = v }
+    suspend fun setRestore(v: Boolean) = store.edit { it[K.restore] = v }
+    suspend fun setFahrenheit(v: Boolean) = store.edit { it[K.fahr] = v }
+    suspend fun setOverlayScale(v: Float) = store.edit { it[K.scale] = v }
+    suspend fun setOnboarded() = store.edit { it[K.onboarded] = true }
+    suspend fun setEdgeGuard(v: Boolean) = store.edit { it[K.edge] = v }
+    suspend fun setEdgeRange(v: Int) = store.edit { it[K.edgeRange] = v }
+    suspend fun setTriggers(v: Boolean) = store.edit { it[K.trig] = v }
+    suspend fun setTriggerPoints(l1x: Float, l1y: Float, r1x: Float, r1y: Float) = store.edit {
         it[K.l1x] = l1x; it[K.l1y] = l1y; it[K.r1x] = r1x; it[K.r1y] = r1y
     }
-    suspend fun setBubble(x: Int, y: Int) = context.dataStore.edit { it[K.bx] = x; it[K.by] = y }
+    suspend fun setBubble(x: Int, y: Int) = store.edit { it[K.bx] = x; it[K.by] = y }
 
-    suspend fun updateLibrary(transform: (List<GameProfile>) -> List<GameProfile>) = context.dataStore.edit {
+    suspend fun updateLibrary(transform: (List<GameProfile>) -> List<GameProfile>) = store.edit {
         it[K.library] = GameProfile.listToJson(transform(GameProfile.listFromJson(it[K.library])))
     }
 
     suspend fun markRemoved(pkg: String, removed: Boolean) = markRemoved(listOf(pkg), removed)
 
     /** One DataStore write for many packages. */
-    suspend fun markRemoved(pkgs: Collection<String>, removed: Boolean) = context.dataStore.edit {
+    suspend fun markRemoved(pkgs: Collection<String>, removed: Boolean) = store.edit {
         val s = (it[K.removed] ?: emptySet()).toMutableSet()
         if (removed) s += pkgs else s -= pkgs.toSet()
         it[K.removed] = s
     }
 
-    suspend fun setScanned() = context.dataStore.edit { it[K.scanned] = true }
+    suspend fun setScanned() = store.edit { it[K.scanned] = true }
 
     /**
      * 1.3.x kept a full snapshot here that could be overwritten with boosted values after a crash. 2.0 uses a
      * write-ahead journal instead (see BoostController), so the old snapshot is discarded on upgrade.
      */
-    suspend fun clearLegacyRestorePoint() = context.dataStore.edit { it.remove(K.session) }
+    suspend fun clearLegacyRestorePoint() = store.edit { it.remove(K.session) }
 }

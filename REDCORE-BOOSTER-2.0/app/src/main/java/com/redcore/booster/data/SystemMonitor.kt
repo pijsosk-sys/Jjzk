@@ -95,6 +95,10 @@ class SystemMonitor(private val context: Context, scope: CoroutineScope) {
         .stateIn(scope, SharingStarted.WhileSubscribed(4000), LiveStats())
 
     private fun sample(): LiveStats {
+        val now = SystemClock.elapsedRealtime()
+        // Sampling stops while nobody watches; after a pause the old counters would average a rate over minutes
+        // and present it as "now". Start fresh instead.
+        if (prevT != 0L && now - prevT > 5_000) { prevCpu = null; prevRx = -1L; prevTx = -1L }
         val n = SysFs.cpuCount()
         val cur = (0 until n).map { SysFs.coreCurFreqKHz(it)?.let { k -> (k / 1000).toInt() } }
         val max = (0 until n).map { SysFs.coreMaxFreqKHz(it)?.let { k -> (k / 1000).toInt() } }
@@ -102,12 +106,7 @@ class SystemMonitor(private val context: Context, scope: CoroutineScope) {
         val cpu = SysFs.procStatCpuLine()
         var usage: Float? = null
         if (cpu != null) {
-            val p = prevCpu
-            if (p != null && p.size == cpu.size) {
-                val idle = (cpu[3] + cpu.getOrElse(4) { 0 }) - (p[3] + p.getOrElse(4) { 0 })
-                val total = cpu.sum() - p.sum()
-                if (total > 0) usage = (1f - idle.toFloat() / total).coerceIn(0f, 1f)
-            }
+            prevCpu?.let { p -> usage = CpuMath.usage(p, cpu) }
             prevCpu = cpu
         }
 
@@ -127,15 +126,15 @@ class SystemMonitor(private val context: Context, scope: CoroutineScope) {
         val thermalStatus = if (Build.VERSION.SDK_INT >= 29) pm?.currentThermalStatus else null
         val headroom = if (Build.VERSION.SDK_INT >= 30) pm?.getThermalHeadroom(0)?.takeIf { !it.isNaN() } else null
 
-        val now = SystemClock.elapsedRealtime()
         val rx = TrafficStats.getTotalRxBytes()
         val tx = TrafficStats.getTotalTxBytes()
         var rxBps: Long? = null
         var txBps: Long? = null
         if (rx != TrafficStats.UNSUPPORTED.toLong() && prevRx >= 0 && now > prevT) {
             val dt = (now - prevT) / 1000.0
-            rxBps = ((rx - prevRx) / dt).toLong().coerceAtLeast(0)
-            txBps = ((tx - prevTx) / dt).toLong().coerceAtLeast(0)
+            // Counters can reset (e.g. airplane mode); a negative delta is not a rate.
+            rxBps = ((rx - prevRx) / dt).toLong().takeIf { it >= 0 }
+            txBps = ((tx - prevTx) / dt).toLong().takeIf { it >= 0 }
         }
         prevRx = rx; prevTx = tx; prevT = now
 

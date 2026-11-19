@@ -28,7 +28,8 @@ class GameAudio {
             eq = e
             if (p == EqPreset.LOUD) loud = LoudnessEnhancer(0).apply { setTargetGain(650); enabled = true }
             active = p
-            ActionResult("Sound EQ", ActionState.APPLIED, "${p.title} preset on.")
+            if (!e.hasControl()) ActionResult("Sound EQ", ActionState.BLOCKED, "Another sound app (e.g. Dolby or the phone's own equalizer) controls audio effects, so the ${p.title} preset may be overridden.")
+            else ActionResult("Sound EQ", ActionState.APPLIED, "${p.title} preset requested on the phone's audio output. Phones that don't support global audio effects ignore it.")
         } catch (t: Throwable) {
             release()
             ActionResult("Sound EQ", ActionState.BLOCKED, "This phone doesn't let apps equalize other apps' audio.")

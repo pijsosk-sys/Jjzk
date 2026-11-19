@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -29,10 +28,10 @@ import com.redcore.booster.service.GameDetectionService
 import com.redcore.booster.ui.AppScaffold
 import com.redcore.booster.ui.Dest
 import com.redcore.booster.ui.MainViewModel
+import com.redcore.booster.ui.NavStack
 import com.redcore.booster.ui.RecoveryPanel
 import com.redcore.booster.ui.ReportPanel
 import com.redcore.booster.ui.ResultsPanel
-import com.redcore.booster.ui.Route
 import com.redcore.booster.ui.Routes
 import com.redcore.booster.ui.components.LocalIconCache
 import com.redcore.booster.ui.components.LocalIconLoader
@@ -71,7 +70,7 @@ class MainActivity : ComponentActivity() {
                     LocalIconLoader provides { pkg -> games.icon(pkg) },
                     LocalIconCache provides { pkg -> games.cachedIcon(pkg) },
                 ) {
-                    val stack = remember { mutableStateListOf(Route(Dest.HOME)) }
+                    val stack = remember { NavStack() }
                     val session by vm.session.collectAsStateWithLifecycle()
                     val sheet by vm.sheet.collectAsStateWithLifecycle()
                     LaunchedEffect(Unit) {
@@ -79,13 +78,8 @@ class MainActivity : ComponentActivity() {
                     }
                     val nav = remember {
                         object : Routes.Navigator {
-                            override fun go(dest: Dest, arg: String?) {
-                                if (dest in Dest.bottom || dest == Dest.SETTINGS && stack.size == 1) {
-                                    stack.clear(); if (dest != Dest.HOME) stack.add(Route(Dest.HOME))
-                                }
-                                if (stack.lastOrNull()?.dest != dest || stack.last().arg != arg) stack.add(Route(dest, arg))
-                            }
-                            override fun back() { if (stack.size > 1) stack.removeAt(stack.lastIndex) else finish() }
+                            override fun go(dest: Dest, arg: String?) = stack.go(dest, arg)
+                            override fun back() { if (!stack.back()) finish() }
                         }
                     }
                     LaunchedEffect(Unit) {
@@ -96,7 +90,7 @@ class MainActivity : ComponentActivity() {
                     val ask by vm.ask.collectAsStateWithLifecycle()
                     val report by vm.report.collectAsStateWithLifecycle()
                     val recovery by vm.recovery.collectAsStateWithLifecycle()
-                    BackHandler(enabled = stack.size > 1 || sheet != null || ask != null || report != null || boostRun != null || recovery != null) {
+                    BackHandler(enabled = stack.depth > 1 || sheet != null || ask != null || report != null || boostRun != null || recovery != null) {
                         when {
                             boostRun != null -> vm.runFinished()
                             ask != null -> vm.askDeclined()
@@ -106,7 +100,7 @@ class MainActivity : ComponentActivity() {
                             else -> nav.back()
                         }
                     }
-                    val route = stack.last()
+                    val route = stack.current
                     val loaded by vm.loaded.collectAsStateWithLifecycle()
                     val settings by vm.settings.collectAsStateWithLifecycle()
                     val notifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { vm.refresh() }
@@ -123,7 +117,7 @@ class MainActivity : ComponentActivity() {
                     }
                     AppScaffold(
                         route = route,
-                        stackDepth = if (route.dest == Dest.HOME) 1 else stack.size,
+                        stackDepth = if (route.dest == Dest.HOME) 1 else stack.depth,
                         title = route.arg?.let { games.label(it) } ?: if (route.dest == Dest.HOME) "Control Center" else route.dest.title,
                         session = session,
                         onSelect = { nav.go(it) },
