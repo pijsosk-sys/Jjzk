@@ -92,6 +92,9 @@ class GameRepository(private val context: Context, private val settings: Setting
         try { (ai ?: pm.getApplicationInfo(pkg, 0)).loadLabel(pm).toString() } catch (_: Exception) { pkg }
     }
 
+    /** Drops cached icons so a running game gets that memory. */
+    fun clearIconCache() { iconCache.evictAll(); labelCache.clear() }
+
     fun icon(pkg: String, sizePx: Int = 144): ImageBitmap? {
         iconCache.get(pkg)?.let { return it }
         return try {

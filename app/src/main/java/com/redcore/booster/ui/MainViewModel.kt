@@ -34,6 +34,17 @@ import kotlinx.coroutines.withContext
 
 data class ResultSheet(val title: String, val results: List<ActionResult>)
 
+/** A boost in progress, shown as the full-screen boost sequence. [results] is null while actions are still running. */
+data class BoostRun(
+    val pkg: String?,
+    val label: String,
+    val mode: GameMode,
+    val results: List<ActionResult>? = null,
+    val freedMb: Long? = null,
+    val batterySaver: Boolean = false,
+    val launch: Boolean = false,
+)
+
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val a = application.app
 
@@ -99,6 +110,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         d?.invoke()
     }
 
+    private val _run = MutableStateFlow<BoostRun?>(null)
+    val run = _run.asStateFlow()
+    private val _nav = MutableSharedFlow<Dest>(extraBufferCapacity = 2)
+    val navEvents: SharedFlow<Dest> = _nav
+
+    private fun availMem(): Long {
+        val am = getApplication<Application>().getSystemService(android.app.ActivityManager::class.java)
+        return android.app.ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }.availMem
+    }
+    private fun batterySaver() = getApplication<Application>().getSystemService(android.os.PowerManager::class.java).isPowerSaveMode
+
+    /** Called when the boost sequence finishes (or the user taps to skip). */
+    fun runFinished() {
+        val r = _run.value ?: return
+        if (r.results == null) return
+        _run.value = null
+        if (r.launch && r.pkg != null) startGame(r.pkg) else _nav.tryEmit(Dest.GAMES)
+        refresh()
+    }
+
+    private fun startGame(pkg: String) {
+        val intent = a.games.launchIntent(pkg) ?: run { _toast.tryEmit("This game can't be opened (no launcher entry)."); return }
+        runCatching { getApplication<Application>().startActivity(intent) }.onFailure { _toast.tryEmit("Couldn't open the game.") }
+    }
+
     private val _background = MutableStateFlow<List<PlayStat>?>(null)
     val background = _background.asStateFlow()
 
@@ -140,9 +176,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun boostNow() = viewModelScope.launch {
+        if (_run.value != null) return@launch
         val m = settings.value.globalMode
+        _run.value = BoostRun(null, "Game Space", m, batterySaver = batterySaver())
+        val before = availMem()
         val s = a.boost.startSession(null, m, ModeSpec.of(m))
-        _sheet.value = ResultSheet("${m.title} mode active", s.results)
+        kotlinx.coroutines.delay(700) // let Android finish closing apps before measuring
+        val freed = ((availMem() - before) / (1024 * 1024)).takeIf { it >= 16 }
+        _run.value = _run.value?.copy(results = s.results, freedMb = freed)
     }
 
     fun endSession() = viewModelScope.launch {
@@ -173,12 +214,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun doLaunch(pkg: String) = viewModelScope.launch {
         val ctx = getApplication<Application>()
-        val intent = a.games.launchIntent(pkg)
-        if (intent == null) { _toast.tryEmit("This game can't be opened (no launcher entry)."); return@launch }
+        if (a.games.launchIntent(pkg) == null) { _toast.tryEmit("This game can't be opened (no launcher entry)."); return@launch }
+        if (_run.value != null) return@launch
         val profile = a.games.profile(pkg) ?: GameProfile(pkg, settings.value.globalMode)
-        a.boost.startSession(pkg, profile.mode, profile.effective())
+        _run.value = BoostRun(pkg, a.games.label(pkg), profile.mode, batterySaver = batterySaver(), launch = true)
+        val before = availMem()
+        val s = a.boost.startSession(pkg, profile.mode, profile.effective())
         if (profile.overlay && Settings.canDrawOverlays(ctx)) OverlayService.start(ctx)
-        withContext(Dispatchers.Main) { ctx.startActivity(intent) }
+        kotlinx.coroutines.delay(450)
+        val freed = ((availMem() - before) / (1024 * 1024)).takeIf { it >= 16 }
+        _run.value = _run.value?.copy(results = s.results, freedMb = freed)
     }
 
     fun toggleToolkit() {

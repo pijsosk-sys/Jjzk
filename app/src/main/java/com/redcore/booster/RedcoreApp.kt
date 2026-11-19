@@ -41,6 +41,13 @@ class RedcoreApp : Application() {
         })
     }
 
+    /** When REDCORE goes to the background (e.g. a game opens), give our caches back to the system. */
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        @Suppress("DEPRECATION")
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) games.clearIconCache()
+    }
+
     companion object {
         const val CH_SESSION = "session"
         const val CH_RECORD = "record"

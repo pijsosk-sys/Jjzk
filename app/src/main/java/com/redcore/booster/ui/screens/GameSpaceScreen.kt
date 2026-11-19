@@ -83,6 +83,7 @@ fun GameSpaceScreen(
     onAdd: () -> Unit,
     onScan: () -> Unit,
     onGrantUsage: () -> Unit,
+    session: com.redcore.booster.booster.GameSession? = null,
 ) {
     HudBackdrop {
         when {
@@ -99,6 +100,7 @@ fun GameSpaceScreen(
                 }
             }
             else -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                if (session != null && session.pkg == null) BoostedBanner(session)
                 GameStage(library, onPlay, onOpen, onAdd)
                 val wide = com.redcore.booster.ui.components.LocalWide.current
                 val summary: @Composable () -> Unit = {
@@ -374,5 +376,26 @@ private fun LibraryRow(g: LibraryGame, todayMs: Long?, onOpen: (String) -> Unit,
         ) { Icon(Icons.Default.PlayArrow, "Play", tint = Color.White) }
         Spacer(Modifier.width(4.dp))
         Icon(Icons.Default.ChevronRight, null, tint = RC.TextMute)
+    }
+}
+
+
+@Composable
+private fun BoostedBanner(s: com.redcore.booster.booster.GameSession) {
+    val accent = s.mode.accent()
+    val shape = RoundedCornerShape(topStart = 2.dp, topEnd = 14.dp, bottomEnd = 2.dp, bottomStart = 14.dp)
+    Row(
+        Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp).fillMaxWidth().clip(shape)
+            .background(Brush.horizontalGradient(listOf(accent.copy(alpha = 0.25f), RC.Panel)))
+            .border(1.dp, accent, shape).padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(s.mode.icon(), null, tint = accent, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text("BOOSTED · ${s.mode.title.uppercase()} MODE", style = RCType.label.copy(fontSize = 10.sp, color = Color.White))
+            Text("${s.results.count { it.state == com.redcore.booster.booster.ActionState.APPLIED }} optimizations active — pick a game and press Play", style = RCType.bodyDim.copy(fontSize = 12.sp))
+        }
+        com.redcore.booster.ui.components.PulsingDot(accent)
     }
 }

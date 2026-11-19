@@ -243,14 +243,15 @@ class BoostController(
         ActionResult("Auto-sync", ActionState.BLOCKED, e.message ?: "Rejected by system.")
     }
 
-    suspend fun cleanBackground(): ActionResult = withContext(Dispatchers.IO) {
+    suspend fun cleanBackground(deep: Boolean = false): ActionResult = withContext(Dispatchers.IO) {
         if (!usage.hasAccess()) return@withContext ActionResult("Background apps", ActionState.BLOCKED, "Grant Usage access so REDCORE can see which apps ran recently.")
         val launcher = context.packageManager.resolveActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), 0)?.activityInfo?.packageName
         val keep = setOfNotNull(launcher, context.packageName, _session.value?.pkg)
-        val candidates = usage.recentBackgroundApps(keep).map { it.pkg }.filterNot { games.isGamePackage(it) }
+        val window = if (deep) 24L * 3600 * 1000 else 3L * 3600 * 1000
+        val candidates = usage.recentBackgroundApps(keep, window).map { it.pkg }.filterNot { games.isGamePackage(it) }
         candidates.forEach { runCatching { am.killBackgroundProcesses(it) } }
         if (candidates.isEmpty()) ActionResult("Background apps", ActionState.SKIPPED, "No recently used apps to close.")
-        else ActionResult("Background apps", ActionState.APPLIED, "Asked Android to close ${candidates.size} cached app${if (candidates.size == 1) "" else "s"}. Android may restart services it considers important.")
+        else ActionResult("Background apps", ActionState.APPLIED, "${if (deep) "Deep clean: asked" else "Asked"} Android to close ${candidates.size} cached app${if (candidates.size == 1) "" else "s"}. Android may restart services it considers important.")
     }
 
     fun volumePct(): Int {
@@ -289,7 +290,7 @@ class BoostController(
         } else setRefresh(spec.refresh)
         results += if (spec.rotationLock) setRotationLock(true) else ActionResult("Rotation lock", ActionState.SKIPPED, "Not used.")
         results += if (spec.pauseSync) setSyncPaused(true) else ActionResult("Auto-sync", ActionState.SKIPPED, "Not used in ${mode.title} mode.")
-        results += if (spec.cleanBackground) cleanBackground() else ActionResult("Background apps", ActionState.SKIPPED, "Not used in ${mode.title} mode.")
+        results += if (spec.cleanBackground) cleanBackground(deep = spec.deepClean) else ActionResult("Background apps", ActionState.SKIPPED, "Not used in ${mode.title} mode.")
         results += if (spec.fastAnimations) setFastAnimations(true) else ActionResult("Faster animations", ActionState.SKIPPED, "Only in Limit mode.")
         results += if (spec.keepScreenOn) {
             if (Settings.canDrawOverlays(context)) ActionResult("Keep screen awake", ActionState.APPLIED, "Screen stays on while the toolkit is active.")

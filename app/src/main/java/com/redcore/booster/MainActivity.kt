@@ -80,10 +80,13 @@ class MainActivity : ComponentActivity() {
                     LaunchedEffect(Unit) {
                         pendingDest.collect { d -> if (d != null) { nav.go(d); pendingDest.value = null } }
                     }
+                    LaunchedEffect(Unit) { vm.navEvents.collect { nav.go(it) } }
+                    val boostRun by vm.run.collectAsStateWithLifecycle()
                     val askOpen by vm.ask.collectAsStateWithLifecycle()
                     val reportOpen by vm.report.collectAsStateWithLifecycle()
-                    BackHandler(enabled = stack.size > 1 || sheet != null || askOpen != null || reportOpen != null) {
+                    BackHandler(enabled = stack.size > 1 || sheet != null || askOpen != null || reportOpen != null || boostRun != null) {
                         when {
+                            boostRun != null -> vm.runFinished()
                             askOpen != null -> vm.askDeclined()
                             reportOpen != null -> vm.dismissReport()
                             sheet != null -> vm.dismissSheet()
@@ -118,6 +121,11 @@ class MainActivity : ComponentActivity() {
                             ResultsPanel(sheet) { vm.dismissSheet() }
                             val report by vm.report.collectAsStateWithLifecycle()
                             com.redcore.booster.ui.ReportPanel(report) { vm.dismissReport() }
+                            boostRun?.let { r ->
+                                com.redcore.booster.ui.screens.BoostRunScreen(r, onDone = { vm.runFinished() }, onBatterySaver = {
+                                    runCatching { startActivity(android.content.Intent(android.provider.Settings.ACTION_BATTERY_SAVER_SETTINGS)) }
+                                })
+                            }
                             com.redcore.booster.ui.screens.PermissionDialog(ask, onAllow = { ask?.perm?.let(granter); vm.askAccepted() }, onDecline = { vm.askDeclined() })
                         },
                     ) { r -> Routes.Content(r, vm, nav) }

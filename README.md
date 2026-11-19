@@ -11,6 +11,7 @@ REDCORE only shows real readings and only performs actions that Android allows. 
 | ![In-game menu](docs/screenshots/overlay_panel.jpg) | ![In-game tools](docs/screenshots/overlay_tools.jpg) |
 | ![Game Space](docs/screenshots/game_space.jpg) | ![Performance](docs/screenshots/performance.jpg) |
 | ![Game Tools](docs/screenshots/game_tools.jpg) | ![Monitor](docs/screenshots/monitor.jpg) |
+| ![Boost sequence](docs/screenshots/boost_sequence.jpg) | ![Boosted Game Space](docs/screenshots/game_space_boosted.jpg) |
 | ![Screen hang-up](docs/screenshots/screen_hangup.jpg) | ![Session report](docs/screenshots/session_report.jpg) |
 | ![Touch triggers](docs/screenshots/touch_triggers.jpg) | ![Edge guard](docs/screenshots/touch_edge_guard.jpg) |
 | ![Cooling](docs/screenshots/cooling.jpg) | ![Network](docs/screenshots/network.jpg) |
@@ -70,6 +71,13 @@ It can't throttle the game itself; that needs root.
 SMOOTH 120 holds the screen at its highest refresh rate (90/120/144 Hz) for the whole session, even in Eco or Balance. Games that offer a 90 or 120 FPS option can then actually run at it. This needs the one-time ADB grant.
 
 It does **not** turn a 60 FPS game into 120 FPS. Gaming phones that do that ("frame insertion") use a dedicated display chip that generates in-between frames inside the display pipeline, and apps have no access to it. Instead, when REDCORE can read the game's real FPS (ADB `DUMP` grant), it tells you when a game is stuck at 60 FPS on a faster screen so you can raise its in-game frame-rate setting.
+
+### Boost flow
+
+- **Boost** (on Home) and **Activate** (on Performance) play a full-screen boost sequence. It shows a charging ring and a live log of every action, marked done, skipped or blocked. It also shows how much RAM was freed (measured before and after) and warns if Battery Saver is slowing games down. Then it opens your game library with a **BOOSTED** banner.
+- **Play** on any game runs the same sequence with that game's profile, then launches the game. Tap anywhere to skip the wait.
+- **Limit mode does a deep clean:** it closes apps used in the last 24 hours instead of the last 3.
+- **REDCORE releases its own cached memory** while you're in a game.
 
 ### Session report
 

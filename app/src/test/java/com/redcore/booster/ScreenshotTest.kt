@@ -254,6 +254,27 @@ class ScreenshotTest {
             "Game is running at 60 FPS on a 120 Hz screen — set its Frame rate option to 90/120 if it has one")) {}
     }
 
+    private val runResults = SampleData.session.results + listOf(
+        com.redcore.booster.booster.ActionResult("Calls", com.redcore.booster.booster.ActionState.APPLIED, "Incoming calls are declined."),
+        com.redcore.booster.booster.ActionResult("Rotation lock", com.redcore.booster.booster.ActionState.APPLIED, "Screen orientation locked."),
+        com.redcore.booster.booster.ActionResult("Auto-sync", com.redcore.booster.booster.ActionState.APPLIED, "Account sync paused — resumes after the game."),
+        com.redcore.booster.booster.ActionResult("Low-latency Wi-Fi", com.redcore.booster.booster.ActionState.APPLIED, "Requested from Android."),
+        com.redcore.booster.booster.ActionResult("COOL guard", com.redcore.booster.booster.ActionState.APPLIED, "Eases off above 41°C."),
+    )
+
+    @Test fun a19c_boostRun() = capture("19c_boost_sequence", 2400) {
+        BoostRunScreen(com.redcore.booster.ui.BoostRun(null, "Game Space", GameMode.LIMIT, runResults, 412, batterySaver = true), {}, {})
+    }
+
+    @Test fun a19d_launchRun() = capture("19d_launch_sequence", 400) {
+        BoostRunScreen(com.redcore.booster.ui.BoostRun("com.studio.skyraiders", "Sky Raiders", GameMode.BEAST, null, launch = true), {}, {})
+    }
+
+    @Test @Config(qualifiers = "w915dp-h760dp-land-xhdpi")
+    fun a03b_gamesBoosted() = shot("03b_game_space_boosted", Dest.GAMES) {
+        GameSpaceScreen(SampleData.library, today, week, true, {}, {}, {}, {}, {}, limitSession.copy(pkg = null, label = "Gaming session"))
+    }
+
     @Test fun a20_hangup() = capture("20_screen_hangup") { com.redcore.booster.overlay.HangupScreen("Sky Raiders", s) {} }
 
     @Test fun a21_tools_overlay() = capture("21_stopwatch_barrage_crosshair") {

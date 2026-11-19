@@ -134,7 +134,7 @@ object Routes {
             Dest.GAMES -> {
                 val today by vm.today.collectAsStateWithLifecycle()
                 val week by vm.week.collectAsStateWithLifecycle()
-                GameSpaceScreen(library, today, week, perms[Perm.USAGE] == true, vm::launchGame, { nav.go(Dest.GAME_DETAIL, it) }, { nav.go(Dest.ADD_GAMES) }, vm::scan) { grant(Perm.USAGE) }
+                GameSpaceScreen(library, today, week, perms[Perm.USAGE] == true, vm::launchGame, { nav.go(Dest.GAME_DETAIL, it) }, { nav.go(Dest.ADD_GAMES) }, vm::scan, { grant(Perm.USAGE) }, session)
             }
             Dest.GAME_DETAIL -> {
                 val g = library?.firstOrNull { it.profile.pkg == r.arg }

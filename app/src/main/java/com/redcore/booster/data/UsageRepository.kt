@@ -88,11 +88,11 @@ class UsageRepository(private val context: Context) {
     }
 
     /** Apps used recently (last 3 h) that are probably still cached in memory. */
-    suspend fun recentBackgroundApps(exclude: Set<String>): List<PlayStat> = withContext(Dispatchers.IO) {
+    suspend fun recentBackgroundApps(exclude: Set<String>, windowMs: Long = 3L * 3600 * 1000): List<PlayStat> = withContext(Dispatchers.IO) {
         if (!hasAccess()) return@withContext emptyList()
         val now = System.currentTimeMillis()
-        usm?.queryAndAggregateUsageStats(now - 3L * 3600 * 1000, now).orEmpty().values
-            .filter { it.lastTimeUsed > now - 3L * 3600 * 1000 && it.packageName !in exclude && it.packageName != context.packageName }
+        usm?.queryAndAggregateUsageStats(now - windowMs, now).orEmpty().values
+            .filter { it.lastTimeUsed > now - windowMs && it.packageName !in exclude && it.packageName != context.packageName }
             .map { PlayStat(it.packageName, it.totalTimeInForeground, it.lastTimeUsed) }
             .sortedByDescending { it.lastUsed }
     }

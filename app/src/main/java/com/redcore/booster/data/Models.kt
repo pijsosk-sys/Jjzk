@@ -34,6 +34,8 @@ data class ModeSpec(
     val fastAnimations: Boolean = false,
     /** Null = use the user's "Calls during games" preference. */
     val calls: CallMode? = null,
+    /** Close apps used in the last 24 h instead of the last 3 h. */
+    val deepClean: Boolean = false,
 ) {
     companion object {
         fun of(mode: GameMode) = when (mode) {
@@ -43,7 +45,7 @@ data class ModeSpec(
             GameMode.BEAST -> ModeSpec(dnd = true, brightness = 100, refresh = RefreshTarget.HIGHEST, cleanBackground = true, keepScreenOn = true,
                 pauseSync = true, lowLatencyWifi = true)
             GameMode.LIMIT -> ModeSpec(dnd = true, brightness = 100, refresh = RefreshTarget.HIGHEST, cleanBackground = true, keepScreenOn = true,
-                pauseSync = true, lowLatencyWifi = true, fastAnimations = true, calls = CallMode.DECLINE)
+                pauseSync = true, lowLatencyWifi = true, fastAnimations = true, calls = CallMode.DECLINE, deepClean = true)
         }
     }
 }
