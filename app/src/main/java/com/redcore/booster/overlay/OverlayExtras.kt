@@ -220,7 +220,7 @@ fun HangupScreen(label: String, stats: LiveStats, onExit: () -> Unit) {
 }
 
 /**
- * Thin edge strip that opens the game menu when you swipe inward from the screen edge or down from a top corner.
+ * Thin strip on the left/right edge that opens the game menu when you swipe inward from it.
  * It can show a faint red handle so you know where to swipe.
  */
 @SuppressLint("ViewConstructor")

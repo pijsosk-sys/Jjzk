@@ -128,8 +128,8 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, ViewModelSto
     // ------------------------------------------------------------------ swipe-to-open handles
 
     private fun updateHandles(s: AppSettings) {
-        val key = "${s.swipeTop}${s.swipeSide}${s.handleHint}"
-        if (key == handleKey && handles.isNotEmpty() == (s.swipeTop || s.swipeSide)) return
+        val key = "${s.swipeSide}${s.handleHint}"
+        if (key == handleKey && handles.isNotEmpty() == s.swipeSide) return
         handleKey = key
         handles.forEach { removeWindow(it) }; handles.clear()
         fun add(dir: Int, gravity: Int, w: Int, h: Int, x: Int, y: Int) {
@@ -143,13 +143,10 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, ViewModelSto
             }
             runCatching { wm.addView(v, lp); handles += v }
         }
-        if (s.swipeTop) {
-            add(SwipeHandleView.DOWN, Gravity.TOP or Gravity.START, 150, 24, 40, 0)
-            add(SwipeHandleView.DOWN, Gravity.TOP or Gravity.END, 150, 24, 40, 0)
-        }
+        // Side edges only: swipe inward from the upper part of the left or right edge.
         if (s.swipeSide) {
-            add(SwipeHandleView.RIGHT, Gravity.START or Gravity.TOP, 18, 120, 0, 70)
-            add(SwipeHandleView.LEFT, Gravity.END or Gravity.TOP, 18, 120, 0, 70)
+            add(SwipeHandleView.RIGHT, Gravity.START or Gravity.TOP, 18, 160, 0, 56)
+            add(SwipeHandleView.LEFT, Gravity.END or Gravity.TOP, 18, 160, 0, 56)
         }
         setHandlesActive(!expanded.value)
     }
@@ -367,7 +364,7 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, ViewModelSto
         return NotificationCompat.Builder(this, RedcoreApp.CH_SESSION)
             .setSmallIcon(R.drawable.ic_stat)
             .setContentTitle("REDCORE gaming toolkit")
-            .setContentText("Swipe from a top corner or side edge to open the game menu")
+            .setContentText("Swipe in from the left or right edge to open the game menu")
             .setOngoing(true)
             .setContentIntent(open)
             .setColor(0xFFFF1E3C.toInt())

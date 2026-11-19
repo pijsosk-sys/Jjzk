@@ -87,10 +87,7 @@ fun GameToolsScreen(s: AppSettings, perms: Map<Perm, Boolean>, vendorApps: List<
         Panes(left = {
             SectionHeader("In-game menu")
             GlassPanel(Modifier.fillMaxWidth()) {
-                SettingRow("Swipe down from a top corner", "Opens the game menu over any game", icon = Icons.Default.Swipe,
-                    trailing = { RedSwitch(s.swipeTop, { act.put(K.swipeTop, it) }) })
-                Divider()
-                SettingRow("Swipe in from a side edge", "Upper part of the left/right edge", icon = Icons.Default.Swipe,
+                SettingRow("Swipe in from the side", "From the upper part of the left or right edge — opens the game menu over any game", icon = Icons.Default.Swipe,
                     trailing = { RedSwitch(s.swipeSide, { act.put(K.swipeSide, it) }) })
                 Divider()
                 SettingRow("Show swipe hints", "Faint red marks where you can swipe", trailing = { RedSwitch(s.handleHint, { act.put(K.hint, it) }) })

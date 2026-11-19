@@ -383,7 +383,7 @@ private fun HudItem(label: String, value: String, color: Color) {
 }
 
 // ============================================================================================
-// Landscape game menu: panels spring in from both edges behind segmented chevron bands; the game
+// Landscape game menu (opened by swiping in from a side edge): panels spring in from both edges behind segmented chevron bands; the game
 // stays visible in a glowing frame in the middle. Tapping the game (or ✕) animates it closed.
 // ============================================================================================
 

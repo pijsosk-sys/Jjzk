@@ -283,9 +283,9 @@ class ScreenshotTest {
                 Box(Modifier.align(Alignment.TopCenter).padding(top = 8.dp).fillMaxWidth().height(40.dp)) { BarrageTickerPreview() }
                 Box(Modifier.padding(start = 24.dp, top = 64.dp)) { com.redcore.booster.overlay.StopwatchWidget({ _, _ -> }, {}, {}) }
                 Box(Modifier.align(Alignment.Center).size(68.dp)) { com.redcore.booster.overlay.CrosshairGlyph(com.redcore.booster.data.CrossStyle.CROSS, 1) }
-                Box(Modifier.align(Alignment.TopStart).padding(start = 40.dp)) {
-                    Box(Modifier.size(150.dp, 24.dp)) { androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
-                        drawRoundRect(androidx.compose.ui.graphics.Color(0x99FF1E3C), androidx.compose.ui.geometry.Offset(size.width * 0.29f, 8f), androidx.compose.ui.geometry.Size(size.width * 0.42f, 9f), androidx.compose.ui.geometry.CornerRadius(8f))
+                Box(Modifier.align(Alignment.TopEnd).padding(top = 56.dp)) {
+                    Box(Modifier.size(18.dp, 160.dp)) { androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+                        drawRoundRect(androidx.compose.ui.graphics.Color(0x99FF1E3C), androidx.compose.ui.geometry.Offset(size.width - 20f, size.height * 0.25f), androidx.compose.ui.geometry.Size(9f, size.height * 0.5f), androidx.compose.ui.geometry.CornerRadius(8f))
                     } }
                 }
                 Box(Modifier.align(Alignment.BottomStart).padding(16.dp)) { OverlayUi(ov, object : OverlayActions {}) }
