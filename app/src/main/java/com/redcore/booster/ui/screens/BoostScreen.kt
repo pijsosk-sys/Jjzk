@@ -89,6 +89,8 @@ fun BoostScreen(
     fx: com.redcore.booster.booster.EffectsState = com.redcore.booster.booster.EffectsState(),
     onCool: (Boolean) -> Unit = {},
     onCoolTarget: (Int) -> Unit = {},
+    onSmooth: (Boolean) -> Unit = {},
+    maxHz: Int? = null,
 ) {
     HudBackdrop {
         com.redcore.booster.ui.components.Panes(1f, 1f, left = {
@@ -97,6 +99,8 @@ fun BoostScreen(
             ModeSelector(mode, onMode)
             Spacer(Modifier.height(8.dp))
             CoolGuardPanel(settings, fx, stats, onCool, onCoolTarget)
+            Spacer(Modifier.height(8.dp))
+            Smooth120Panel(settings.smooth120, perms[Perm.SECURE_SETTINGS] == true, maxHz, stats.refreshHz, fx, onSmooth, onGrant)
             Spacer(Modifier.height(10.dp))
             if (session == null) GlowButton("Activate ${mode.title} mode", Modifier.fillMaxWidth(), Icons.Default.Bolt, onClick = onBoost)
             else Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -345,5 +349,40 @@ private fun CoolGuardPanel(
                 style = RCType.bodyDim.copy(fontSize = 11.sp)
             )
         }
+    }
+}
+
+
+/**
+ * Smooth 120: holds the display at its highest refresh rate during games. It does not invent frames —
+ * real frame generation needs a dedicated display chip — so it also tells the user when a game itself is capped at 60.
+ */
+@Composable
+private fun Smooth120Panel(
+    on: Boolean, adb: Boolean, maxHz: Int?, nowHz: Int?, fx: com.redcore.booster.booster.EffectsState,
+    onToggle: (Boolean) -> Unit, onGrant: (Perm) -> Unit,
+) {
+    val accent = Color(0xFF2EE59D)
+    GlassPanel(Modifier.fillMaxWidth(), padding = 12.dp) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(34.dp).clip(RoundedCornerShape(8.dp)).background(accent.copy(alpha = if (on) 0.18f else 0.06f)), contentAlignment = Alignment.Center) {
+                Text("${maxHz ?: 120}", style = RCType.label.copy(fontSize = 10.sp, color = if (on) accent else RC.TextMute))
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text("SMOOTH ${maxHz ?: 120}", style = RCType.title.copy(fontSize = 13.sp))
+                Text("Holds the screen at ${maxHz ?: 120} Hz during games · now ${nowHz ?: "—"} Hz", style = RCType.bodyDim.copy(fontSize = 12.sp))
+            }
+            com.redcore.booster.ui.components.RedSwitch(on, onToggle, onBrush = Brush.horizontalGradient(listOf(Color(0xFF119E77), accent)))
+        }
+        Spacer(Modifier.height(6.dp))
+        if (maxHz != null && maxHz < 90) Text("This screen tops out at $maxHz Hz, so there is no higher refresh rate to unlock.", style = RCType.bodyDim.copy(fontSize = 11.sp, color = RC.Amber))
+        else if (!adb) Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Needs the one-time ADB grant (Settings › Permissions).", style = RCType.bodyDim.copy(fontSize = 11.sp, color = RC.Amber), modifier = Modifier.weight(1f))
+            GlowButton("How", primary = false) { onGrant(Perm.SECURE_SETTINGS) }
+        }
+        fx.fpsAdvice?.let { Text("⚠ $it", style = RCType.bodyDim.copy(fontSize = 11.sp, color = RC.Amber)) }
+        Text("Games that offer 90/120 FPS can then run at it. It can't create extra frames for games limited to 60 FPS — that \"frame insertion\" needs a dedicated display chip only some gaming phones have.",
+            style = RCType.bodyDim.copy(fontSize = 11.sp))
     }
 }

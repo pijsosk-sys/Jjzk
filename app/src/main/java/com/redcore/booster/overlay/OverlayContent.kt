@@ -184,6 +184,7 @@ interface OverlayActions {
     fun haptics(on: Boolean) {}
     fun eq(p: EqPreset) {}
     fun rotation(on: Boolean) {}
+    fun smooth120(on: Boolean) {}
     fun refresh() {}
     fun open(dest: String?) {}
     fun grant(p: Perm) {}
@@ -283,6 +284,10 @@ fun OverlayRoot(svc: OverlayService) {
                 a.boost.setRotationLock(on); rot = a.boost.isRotationLocked()
             }
             override fun refresh() { svc.toast(a.boost.cycleRefresh(stats.refreshHz).detail) }
+            override fun smooth120(on: Boolean) {
+                scope.launch { a.settings.put(K.smooth, on) }
+                svc.toast(a.boost.applySmooth120(on).detail)
+            }
             override fun open(dest: String?) = svc.openApp(dest)
             override fun grant(p: Perm) { svc.requestPermission(p, "REDCORE needs \"${p.title}\" for this — turn it on, then come back to your game.") }
             override fun endSession() = svc.endSession()
@@ -607,7 +612,7 @@ private fun TilePager(s: OverlayState, act: OverlayActions, modifier: Modifier) 
             },
             QT("4D vibe", Icons.Default.Vibration, s.settings.haptics) { act.haptics(!s.settings.haptics) },
             QT("EQ ${s.settings.eq.title}", Icons.Default.Equalizer, s.settings.eq != EqPreset.OFF) { act.eq(EqPreset.entries[(s.settings.eq.ordinal + 1) % EqPreset.entries.size]) },
-            QT("Close apps", Icons.Default.AutoDelete, false) { act.clean() },
+            QT("Smooth 120", rcIcon(R.drawable.ic_rc_monitor), s.settings.smooth120, enabled = s.secureGranted) { act.smooth120(!s.settings.smooth120) },
             QT("Tools", rcIcon(R.drawable.ic_rc_tools), false) { act.open("TOOLS") },
         ),
     )
@@ -779,7 +784,7 @@ private fun BottomInfo(s: OverlayState) {
         }
         Spacer(Modifier.height(4.dp))
         Box(Modifier.clip(RoundedCornerShape(12.dp)).background(Color(0xCC000000)).padding(horizontal = 14.dp, vertical = 4.dp)) {
-            Text(s.fx.coolNote?.let { "❄ $it" } ?: "Tap the game to return · swipe the tile grid for more", style = RCType.bodyDim.copy(fontSize = 11.sp, color = RC.Text), maxLines = 1)
+            Text(s.fx.coolNote?.let { "❄ $it" } ?: s.fx.fpsAdvice?.let { "⚠ $it" } ?: "Tap the game to return · swipe the tile grid for more", style = RCType.bodyDim.copy(fontSize = 11.sp, color = RC.Text), maxLines = 1)
         }
     }
 }

@@ -129,9 +129,9 @@ class ScreenshotTest {
 
     @Test @Config(qualifiers = "w915dp-h760dp-land-xhdpi")
     fun a07_boost() = shot("07_boost", Dest.BOOST) {
-        BoostScreen(s, h, "Adreno (TM) 750", st.copy(coolGuard = true), GameMode.LIMIT, limitSession, perms,
+        BoostScreen(s, h, "Adreno (TM) 750", st.copy(coolGuard = true, smooth120 = true), GameMode.LIMIT, limitSession, perms,
             listOf(BgApp("com.chat.app", "Messenger", "3 min ago"), BgApp("com.video.stream", "StreamBox", "25 min ago"), BgApp("com.music.player", "Music Player", "1 hour ago")),
-            Insights.performance(s.copy(thermalStatus = 2), batterySaver = false, usageGranted = true), {}, {}, {}, {}, {}, fx = fxWarm)
+            Insights.performance(s.copy(thermalStatus = 2), batterySaver = false, usageGranted = true), {}, {}, {}, {}, {}, fx = fxWarm.copy(fpsAdvice = null), maxHz = 120)
     }
 
     @Test @Config(qualifiers = "w915dp-h1100dp-land-xhdpi")
@@ -246,6 +246,12 @@ class ScreenshotTest {
 
     @Test fun a19_overlayExpanded() = capture("19_overlay_panel") {
         FakeGame { OverlayUi(ov.copy(expanded = true, recording = true), object : OverlayActions {}) }
+    }
+
+    @Test fun a19b_report() = shot("19b_session_report", Dest.HOME, "Control Center") {
+        HomeScreen(s, st, null, SampleData.library.take(4), "Nubia Gamer X9", "Snapdragon 8 Gen 3 · Android 15 · 12 GB RAM", false, {}, {}, {}, {}, {}, {})
+        com.redcore.booster.ui.ReportPanel(com.redcore.booster.booster.SessionReport("Sky Raiders", "Limit", 47, 14, 42.6f, 39.8f, 2, 24, 58,
+            "Game is running at 60 FPS on a 120 Hz screen — set its Frame rate option to 90/120 if it has one")) {}
     }
 
     @Test fun a20_hangup() = capture("20_screen_hangup") { com.redcore.booster.overlay.HangupScreen("Sky Raiders", s) {} }

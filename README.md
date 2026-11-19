@@ -11,7 +11,7 @@ REDCORE only shows real readings and only performs actions that Android allows. 
 | ![In-game menu](docs/screenshots/overlay_panel.jpg) | ![In-game tools](docs/screenshots/overlay_tools.jpg) |
 | ![Game Space](docs/screenshots/game_space.jpg) | ![Performance](docs/screenshots/performance.jpg) |
 | ![Game Tools](docs/screenshots/game_tools.jpg) | ![Monitor](docs/screenshots/monitor.jpg) |
-| ![Screen hang-up](docs/screenshots/screen_hangup.jpg) | ![Settings](docs/screenshots/settings.jpg) |
+| ![Screen hang-up](docs/screenshots/screen_hangup.jpg) | ![Session report](docs/screenshots/session_report.jpg) |
 | ![Touch triggers](docs/screenshots/touch_triggers.jpg) | ![Edge guard](docs/screenshots/touch_edge_guard.jpg) |
 | ![Cooling](docs/screenshots/cooling.jpg) | ![Network](docs/screenshots/network.jpg) |
 | ![Device research](docs/screenshots/device.jpg) | ![Storage](docs/screenshots/storage.jpg) |
@@ -64,6 +64,16 @@ COOL guard works together with any mode, including Limit. During a session it wa
 - **When the phone has cooled** (with a 1.5 °C margin and at least 45 s at the current level) it restores everything.
 
 It can't throttle the game itself; that needs root.
+
+### SMOOTH 120 and frame rate
+
+SMOOTH 120 holds the screen at its highest refresh rate (90/120/144 Hz) for the whole session, even in Eco or Balance. Games that offer a 90 or 120 FPS option can then actually run at it. This needs the one-time ADB grant.
+
+It does **not** turn a 60 FPS game into 120 FPS. Gaming phones that do that ("frame insertion") use a dedicated display chip that generates in-between frames inside the display pipeline, and apps have no access to it. Instead, when REDCORE can read the game's real FPS (ADB `DUMP` grant), it tells you when a game is stuck at 60 FPS on a faster screen so you can raise its in-game frame-rate setting.
+
+### Session report
+
+After every game, REDCORE shows a short report: play time, battery used, peak and average temperature, how often COOL guard had to ease off, average ping and average FPS (when measurable).
 
 ### What needs root or the phone manufacturer
 

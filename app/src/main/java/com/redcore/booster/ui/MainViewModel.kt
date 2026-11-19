@@ -44,6 +44,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val library: StateFlow<List<LibraryGame>?> = a.games.library.stateIn(viewModelScope, SharingStarted.Eagerly, null)
     val session = a.boost.session
     val fx = a.boost.effects.state
+    val report = a.boost.lastReport
+    fun dismissReport() = a.boost.clearReport()
+    fun setSmooth120(on: Boolean) {
+        put(com.redcore.booster.data.SettingsRepository.K.smooth, on)
+        val r = a.boost.applySmooth120(on)
+        if (on && r.state == com.redcore.booster.booster.ActionState.BLOCKED) _toast.tryEmit("Smooth 120 needs the one-time ADB grant — see Settings › Permissions.")
+    }
     val toolkitRunning = OverlayService.running
 
     private val _perms = MutableStateFlow(Perm.entries.associateWith { false })
@@ -140,7 +147,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun endSession() = viewModelScope.launch {
         val r = a.boost.endSession()
-        if (r.isNotEmpty()) _sheet.value = ResultSheet("Session ended — settings restored", r) else _toast.tryEmit("Gaming session ended")
+        when {
+            a.boost.lastReport.value != null -> _toast.tryEmit("Session ended — your settings were restored")
+            r.isNotEmpty() -> _sheet.value = ResultSheet("Session ended — settings restored", r)
+            else -> _toast.tryEmit("Gaming session ended")
+        }
     }
 
     fun cleanBackground() = viewModelScope.launch {

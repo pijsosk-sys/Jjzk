@@ -58,6 +58,7 @@ class SettingsRepository(private val context: Context) {
         val fps = booleanPreferencesKey("show_fps")
         val ping = booleanPreferencesKey("show_ping")
         val sessions = stringPreferencesKey("session_log")
+        val smooth = booleanPreferencesKey("smooth120")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { p ->
@@ -98,6 +99,7 @@ class SettingsRepository(private val context: Context) {
             recQuality = p[K.recQ] ?: 1,
             showFps = p[K.fps] ?: true,
             showPing = p[K.ping] ?: true,
+            smooth120 = p[K.smooth] ?: false,
         )
     }
 

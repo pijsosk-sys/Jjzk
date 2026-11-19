@@ -334,3 +334,54 @@ fun ResultsPanel(sheet: ResultSheet?, onDismiss: () -> Unit) {
         }
     }
 }
+
+
+/** Post-game summary card. Only real measurements are shown; anything not measured is left out. */
+@Composable
+fun ReportPanel(r: com.redcore.booster.booster.SessionReport?, onDismiss: () -> Unit) {
+    AnimatedVisibility(r != null, enter = fadeIn(), exit = fadeOut()) {
+        Box(Modifier.fillMaxSize().background(Color(0xCC000000)).clickable(remember { MutableInteractionSource() }, null, onClick = onDismiss))
+    }
+    AnimatedVisibility(r != null, enter = slideInVertically { it / 3 } + fadeIn(), exit = fadeOut(), modifier = Modifier.fillMaxSize()) {
+        val rep = r ?: return@AnimatedVisibility
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            val shape = RoundedCornerShape(topStart = 4.dp, topEnd = 22.dp, bottomEnd = 4.dp, bottomStart = 22.dp)
+            Column(
+                Modifier.padding(20.dp).widthIn(max = 640.dp).clip(shape)
+                    .background(Brush.verticalGradient(listOf(Color(0xFF1A1C24), RC.Black)))
+                    .border(1.dp, Brush.verticalGradient(listOf(RC.Red, RC.Stroke)), shape)
+                    .clickable(remember { MutableInteractionSource() }, null) {}
+                    .verticalScroll(rememberScrollState()).padding(20.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RedcoreLogo(26.dp); Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("SESSION REPORT", style = RCType.label.copy(fontSize = 9.sp, color = RC.Red))
+                        Text("${rep.label} · ${rep.mode} mode", style = RCType.title.copy(fontSize = 15.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    Icon(Icons.Default.Close, "Close", tint = RC.TextDim, modifier = Modifier.clickable(onClick = onDismiss))
+                }
+                Spacer(Modifier.height(14.dp))
+                val tiles = listOfNotNull(
+                    "Played" to "${rep.minutes} min",
+                    rep.batteryUsed?.let { "Battery used" to "$it%" },
+                    rep.maxTemp?.let { "Peak temp" to "%.1f°C".format(it) },
+                    rep.avgTemp?.let { "Avg temp" to "%.1f°C".format(it) },
+                    "COOL guard" to if (rep.coolEvents == 0) "Calm" else "${rep.coolEvents}× eased",
+                    rep.avgPing?.let { "Avg ping" to "$it ms" },
+                    rep.avgFps?.let { "Avg FPS" to "$it" },
+                )
+                tiles.chunked(4).forEach { row ->
+                    Row(Modifier.padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        row.forEach { (k, v) -> com.redcore.booster.ui.components.StatTile(k, v, Modifier.weight(1f)) }
+                        repeat(4 - row.size) { Spacer(Modifier.weight(1f)) }
+                    }
+                }
+                rep.advice?.let { Text("⚠ $it", style = RCType.bodyDim.copy(color = RC.Amber)); Spacer(Modifier.height(6.dp)) }
+                if (rep.maxTemp != null && rep.maxTemp >= 43f) Text("It ran hot — turn on COOL guard or try Balance mode next time.", style = RCType.bodyDim)
+                Spacer(Modifier.height(10.dp))
+                GlowButton("Nice", Modifier.fillMaxWidth(), onClick = onDismiss)
+            }
+        }
+    }
+}

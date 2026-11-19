@@ -59,6 +59,19 @@ class BoostController(
     private val _session = MutableStateFlow<GameSession?>(null)
     val session: StateFlow<GameSession?> = _session.asStateFlow()
 
+    private val _report = MutableStateFlow<SessionReport?>(null)
+    /** Summary of the last finished session, shown once in the app. */
+    val lastReport: StateFlow<SessionReport?> = _report.asStateFlow()
+    fun clearReport() { _report.value = null }
+
+    /** Smooth 120 toggled live from the app or the game menu. */
+    fun applySmooth120(on: Boolean): ActionResult {
+        val s = _session.value ?: return ActionResult("Smooth 120", ActionState.SKIPPED, if (on) "Applies when your next game starts." else "Off.")
+        return if (on) setRefresh(RefreshTarget.HIGHEST).copy(name = "Smooth 120")
+        else if (s.spec.refresh == RefreshTarget.HIGHEST) ActionResult("Smooth 120", ActionState.SKIPPED, "${s.mode.title} mode keeps the highest refresh rate anyway.")
+        else { setRefresh(s.spec.refresh); ActionResult("Smooth 120", ActionState.APPLIED, "Refresh rate back to the ${s.mode.title} setting.") }
+    }
+
     // ---------------------------------------------------------------- capability probes
 
     private fun display(): Display? = context.getSystemService(DisplayManager::class.java)?.getDisplay(Display.DEFAULT_DISPLAY)
@@ -271,7 +284,9 @@ class BoostController(
         }
         results += callsResult(calls, spec.dnd)
         results += spec.brightness?.let { setBrightness(it) } ?: ActionResult("Brightness", ActionState.SKIPPED, "Unchanged.")
-        results += setRefresh(spec.refresh)
+        results += if (cfg.smooth120) setRefresh(RefreshTarget.HIGHEST).let { r ->
+            r.copy(name = "Smooth 120", detail = if (r.state == ActionState.APPLIED) r.detail.substringBefore(" Games may") + " — games that offer 90/120 FPS can use it." else r.detail)
+        } else setRefresh(spec.refresh)
         results += if (spec.rotationLock) setRotationLock(true) else ActionResult("Rotation lock", ActionState.SKIPPED, "Not used.")
         results += if (spec.pauseSync) setSyncPaused(true) else ActionResult("Auto-sync", ActionState.SKIPPED, "Not used in ${mode.title} mode.")
         results += if (spec.cleanBackground) cleanBackground() else ActionResult("Background apps", ActionState.SKIPPED, "Not used in ${mode.title} mode.")
@@ -296,6 +311,10 @@ class BoostController(
     suspend fun endSession(): List<ActionResult> {
         val out = mutableListOf<ActionResult>()
         val ended = _session.value
+        if (ended != null) {
+            val r = effects.report(ended.label, ended.mode.title)
+            if (r.minutes >= 1 || r.maxTemp != null) { _report.value = r; postReport(r) }
+        }
         withContext(Dispatchers.Main) { effects.stop() }
         EdgeGuard.hide(context)
         BarrageBus.mode = NotifMode.ALL
@@ -303,6 +322,17 @@ class BoostController(
         if (settings.current().restoreOnExit) out += restore()
         _session.value = null
         return out
+    }
+
+    private fun postReport(r: SessionReport) {
+        val parts = listOfNotNull(
+            "${r.minutes} min", r.batteryUsed?.let { "$it% battery" }, r.maxTemp?.let { "peak %.0f°C".format(it) },
+            r.avgFps?.let { "$it FPS avg" }, r.avgPing?.let { "$it ms ping" }
+        )
+        val n = androidx.core.app.NotificationCompat.Builder(context, com.redcore.booster.RedcoreApp.CH_SESSION)
+            .setSmallIcon(com.redcore.booster.R.drawable.ic_stat).setColor(0xFFFF1E3C.toInt())
+            .setContentTitle("${r.label} · session report").setContentText(parts.joinToString(" · ")).setAutoCancel(true).build()
+        runCatching { nm.notify(63, n) }
     }
 
     private suspend fun saveRestorePoint() {

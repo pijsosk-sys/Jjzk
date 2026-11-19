@@ -166,7 +166,8 @@ object Routes {
                     bg?.map { BgApp(it.pkg, a.games.label(it.pkg), DateUtils.getRelativeTimeSpanString(it.lastUsed).toString()) },
                     Insights.performance(stats, saver, perms[Perm.USAGE] == true),
                     vm::setMode, vm::boostNow, vm::endSession, vm::cleanBackground, grant,
-                    fx = fxState, onCool = { vm.setCool(it) }, onCoolTarget = { vm.setCoolTarget(it) }
+                    fx = fxState, onCool = { vm.setCool(it) }, onCoolTarget = { vm.setCoolTarget(it) },
+                    onSmooth = { vm.setSmooth120(it) }, maxHz = remember { a.boost.supportedRefreshRates().maxOrNull()?.roundToInt() }
                 )
             }
             Dest.TOOLS -> {

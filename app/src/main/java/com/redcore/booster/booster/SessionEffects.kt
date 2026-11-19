@@ -46,6 +46,22 @@ data class EffectsState(
     val fpsSource: String? = null,
     val sessionStart: Long = 0L,
     val wifiLowLatency: Boolean = false,
+    /** Set when real game FPS shows a 60 FPS cap on a faster screen. */
+    val fpsAdvice: String? = null,
+)
+
+/** Summary shown after a game session. Every number comes from real samples; missing data stays null. */
+data class SessionReport(
+    val label: String,
+    val mode: String,
+    val minutes: Long,
+    val batteryUsed: Int?,
+    val maxTemp: Float?,
+    val avgTemp: Float?,
+    val coolEvents: Int,
+    val avgPing: Int?,
+    val avgFps: Int?,
+    val advice: String?,
 )
 
 /**
@@ -75,6 +91,19 @@ class SessionEffects(private val context: Context, private val boost: BoostContr
     private var preCoolPeak: Float? = null
     private var nextBreakAt = 0L
 
+    // session report accumulators
+    private var batStart: Int? = null
+    private var batLast: Int? = null
+    private var tempSum = 0.0
+    private var tempN = 0
+    private var tempMax: Float? = null
+    private var pingSum = 0L
+    private var pingN = 0
+    private var fpsSum = 0L
+    private var fpsN = 0
+    private var coolEvents = 0
+    private val recentFps = ArrayDeque<Int>()
+
     fun start(pkg: String?, spec: ModeSpec, settings: AppSettings): List<ActionResult> {
         stop()
         this.pkg = pkg; this.spec = spec; cfg = settings
@@ -82,6 +111,8 @@ class SessionEffects(private val context: Context, private val boost: BoostContr
         scope = sc
         val now = System.currentTimeMillis()
         _state.value = EffectsState(coolLevel = if (settings.coolGuard) CoolLevel.NORMAL else CoolLevel.OFF, sessionStart = now)
+        batStart = null; batLast = null; tempSum = 0.0; tempN = 0; tempMax = null
+        pingSum = 0; pingN = 0; fpsSum = 0; fpsN = 0; coolEvents = 0; recentFps.clear()
         nextBreakAt = if (settings.breakMinutes > 0) SystemClock.elapsedRealtime() + settings.breakMinutes * 60_000L else Long.MAX_VALUE
         val out = mutableListOf<ActionResult>()
         out += if (spec.lowLatencyWifi) acquireWifi() else ActionResult("Low-latency Wi-Fi", ActionState.SKIPPED, "Not used in this mode.")
@@ -97,7 +128,8 @@ class SessionEffects(private val context: Context, private val boost: BoostContr
             while (isActive) {
                 if (cfg.showFps) {
                     val r = withContext(Dispatchers.IO) { FpsProbe.read(context, pkg) }
-                    _state.update { it.copy(fps = r?.fps, fpsSource = r?.source) }
+                    if (r != null && r.source == "game") { fpsSum += r.fps; fpsN++ }
+                    _state.update { it.copy(fps = r?.fps, fpsSource = r?.source, fpsAdvice = r?.let { adviceFor(it) }) }
                 }
                 delay(1000)
             }
@@ -106,6 +138,7 @@ class SessionEffects(private val context: Context, private val boost: BoostContr
             while (isActive) {
                 if (cfg.showPing) {
                     val ms = withContext(Dispatchers.IO) { tcpPing() }
+                    if (ms != null) { pingSum += ms; pingN++ }
                     _state.update { it.copy(pingMs = ms) }
                 }
                 delay(4000)
@@ -150,7 +183,36 @@ class SessionEffects(private val context: Context, private val boost: BoostContr
         if (s.coolGuard && !old.coolGuard) _state.update { it.copy(coolLevel = CoolLevel.NORMAL, coolNote = "Watching temperature") }
     }
 
+    /** Real game FPS stuck at ~60 on a 90/120 Hz screen means the game's own frame-rate setting is the limit. */
+    private fun adviceFor(r: FpsProbe.Reading): String? {
+        if (r.source != "game") return null
+        recentFps.addLast(r.fps); while (recentFps.size > 15) recentFps.removeFirst()
+        if (recentFps.size < 10) return _state.value.fpsAdvice
+        val median = recentFps.sorted()[recentFps.size / 2]
+        val maxHz = boost.supportedRefreshRates().maxOrNull()?.roundToInt() ?: 60
+        return if (median in 54..62 && maxHz >= 90)
+            "Game is running at 60 FPS on a $maxHz Hz screen — set its Frame rate option to 90/120 if it has one"
+        else null
+    }
+
+    fun report(label: String, mode: String): SessionReport {
+        val start = _state.value.sessionStart
+        val adv = _state.value.fpsAdvice
+        return SessionReport(
+            label, mode,
+            minutes = if (start > 0) (System.currentTimeMillis() - start) / 60_000 else 0,
+            batteryUsed = batStart?.let { b -> batLast?.let { (b - it).takeIf { d -> d >= 0 } } },
+            maxTemp = tempMax, avgTemp = if (tempN > 0) (tempSum / tempN).toFloat() else null,
+            coolEvents = coolEvents,
+            avgPing = if (pingN > 0) (pingSum / pingN).toInt() else null,
+            avgFps = if (fpsN > 0) (fpsSum / fpsN).toInt() else null,
+            advice = adv,
+        )
+    }
+
     private fun onStats(s: LiveStats) {
+        s.batteryPct?.let { if (batStart == null && !s.charging) batStart = it; if (!s.charging) batLast = it }
+        s.batteryTempC?.let { tempSum += it; tempN++; tempMax = maxOf(tempMax ?: it, it) }
         // Break reminder
         if (SystemClock.elapsedRealtime() >= nextBreakAt) {
             val mins = cfg.breakMinutes
@@ -175,7 +237,10 @@ class SessionEffects(private val context: Context, private val boost: BoostContr
                 t <= (if (cur == CoolLevel.HOT) target + 1.5f else target - 1.5f) && thermal < 2 -> CoolLevel.entries[cur.ordinal - 1]
             else -> cur
         }
-        if (next != cur) { levelSince = now; applyLevel(next, t) }
+        if (next != cur) {
+            if (next.ordinal > cur.ordinal && next != CoolLevel.NORMAL) coolEvents++
+            levelSince = now; applyLevel(next, t)
+        }
     }
 
     private fun applyLevel(level: CoolLevel, temp: Float) {
@@ -206,7 +271,8 @@ class SessionEffects(private val context: Context, private val boost: BoostContr
         val sp = spec
         val b = sp?.brightness ?: preCoolBrightness
         if (b != null) boost.setBrightness(b)
-        preCoolPeak?.let { boost.restorePeakRefresh(it) }
+        if (sp?.refresh == com.redcore.booster.data.RefreshTarget.HIGHEST || cfg.smooth120) boost.setRefresh(com.redcore.booster.data.RefreshTarget.HIGHEST)
+        else preCoolPeak?.let { boost.restorePeakRefresh(it) }
         preCoolBrightness = null; preCoolPeak = null
     }
 

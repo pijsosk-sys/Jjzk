@@ -139,6 +139,8 @@ data class AppSettings(
     val recQuality: Int = 1, // 0 = 720p30, 1 = 1080p60, 2 = native 60
     val showFps: Boolean = true,
     val showPing: Boolean = true,
+    /** Smooth 120: hold the display at its highest refresh rate during games (needs the ADB grant). */
+    val smooth120: Boolean = false,
 ) {
     val edgeWidthDp: Int get() = when (edgeRange) { 0 -> 8; 2 -> 26; else -> 16 }
 }

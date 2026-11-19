@@ -81,9 +81,11 @@ class MainActivity : ComponentActivity() {
                         pendingDest.collect { d -> if (d != null) { nav.go(d); pendingDest.value = null } }
                     }
                     val askOpen by vm.ask.collectAsStateWithLifecycle()
-                    BackHandler(enabled = stack.size > 1 || sheet != null || askOpen != null) {
+                    val reportOpen by vm.report.collectAsStateWithLifecycle()
+                    BackHandler(enabled = stack.size > 1 || sheet != null || askOpen != null || reportOpen != null) {
                         when {
                             askOpen != null -> vm.askDeclined()
+                            reportOpen != null -> vm.dismissReport()
                             sheet != null -> vm.dismissSheet()
                             else -> nav.back()
                         }
@@ -114,6 +116,8 @@ class MainActivity : ComponentActivity() {
                         onSession = { nav.go(Dest.BOOST) },
                         overlay = {
                             ResultsPanel(sheet) { vm.dismissSheet() }
+                            val report by vm.report.collectAsStateWithLifecycle()
+                            com.redcore.booster.ui.ReportPanel(report) { vm.dismissReport() }
                             com.redcore.booster.ui.screens.PermissionDialog(ask, onAllow = { ask?.perm?.let(granter); vm.askAccepted() }, onDecline = { vm.askDeclined() })
                         },
                     ) { r -> Routes.Content(r, vm, nav) }
